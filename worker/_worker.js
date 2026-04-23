@@ -37,12 +37,10 @@ export default {
         }
 
         if (url.pathname.startsWith("/api/omdb")) {
-            // 优先使用 IMDb ID 直接查询，精准度最高
             const imdbId = url.searchParams.get("imdb");
             if (imdbId) {
                 return await handleOmdbById(imdbId);
             }
-            // 降级：用英文标题搜索
             return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"));
         }
 
@@ -64,23 +62,21 @@ function jsonResponse(data, status = 200) {
     });
 }
 
-const BROWSER_HEADERS = {
+// 豆瓣搜索 API 用简化 Headers（不要 Accept-Encoding，避免压缩问题）
+const DOUBAN_SEARCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "max-age=0",
-    "Connection": "keep-alive",
-    "DNT": "1",
-    "Sec-Ch-Ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"",
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": "\"macOS\"",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
-    "Cookie": "bid=xOqR3l3nZzE; ap_v=0,6.0; ll=\"108288\"; __utmc=30149280"
+    "Accept": "application/json,*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Referer": "https://movie.douban.com/"
+};
+
+// 豆瓣详情页用完整浏览器 Headers（需要 Cookie 绕过反爬）
+const DOUBAN_DETAIL_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "https://movie.douban.com/",
+    "Cookie": "bid=xOqR3l3nZzE; __utmc=30149280"
 };
 
 async function handleDoubanSearch(query) {
@@ -88,11 +84,14 @@ async function handleDoubanSearch(query) {
 
     try {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
-            headers: BROWSER_HEADERS
+            headers: DOUBAN_SEARCH_HEADERS
         });
-        const data = await res.json();
+        const text = await res.text();
+        // 防御：如果返回的是 JSONP 或空内容，做兼容处理
+        const data = JSON.parse(text);
         return jsonResponse(data);
     } catch (e) {
+        console.error("Douban search error:", e.message);
         return jsonResponse({ error: e.message }, 500);
     }
 }
@@ -103,11 +102,12 @@ async function handleDoubanDetail(id) {
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
         const res = await fetch(fetchUrl, {
-            headers: BROWSER_HEADERS,
+            headers: DOUBAN_DETAIL_HEADERS,
             redirect: "follow"
         });
 
         if (!res.ok) {
+            console.warn(`Douban detail ${id} returned ${res.status}`);
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
 
@@ -115,7 +115,6 @@ async function handleDoubanDetail(id) {
             rating: 0, votes: 0, genres: [], summary: "", imdbId: ""
         };
         let isParsingSummary = false;
-        let isParsingImdb = false;
 
         const rewriter = new HTMLRewriter()
             .on('strong[property="v:average"]', {
@@ -127,22 +126,10 @@ async function handleDoubanDetail(id) {
             .on('span[property="v:genre"]', {
                 text(text) { if(text.text.trim()) result.genres.push(text.text.trim()); }
             })
-            // 豆瓣简介
             .on('span[property="v:summary"]', {
                 element(el) { isParsingSummary = true; },
                 text(text) { if (isParsingSummary) result.summary += text.text; }
             })
-            .on('span[property="v:summary"].all', {
-                element(el) { result.summary = ""; isParsingSummary = true; },
-                text(text) { if (isParsingSummary) result.summary += text.text; }
-            })
-            // IMDb ID 提取：豆瓣详情页中 <span class="pl">IMDb:</span> 后面紧跟 tt 开头的 ID
-            .on('span.pl', {
-                text(text) {
-                    if (text.text.includes("IMDb")) isParsingImdb = true;
-                }
-            })
-            // IMDb ID 通常在紧跟的文本节点或 a 标签中
             .on('a[href*="imdb.com"]', {
                 element(el) {
                     const href = el.getAttribute("href");
@@ -156,11 +143,9 @@ async function handleDoubanDetail(id) {
         await rewriter.transform(res).text();
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
 
-        // 如果上面没抓到 a 标签里的 IMDb，尝试从其他位置正则补充
-        // 但 HTMLRewriter 已经处理了大部分情况
-
         return jsonResponse(result);
     } catch (e) {
+        console.error("Douban detail error:", e.message);
         return jsonResponse({ error: e.message }, 500);
     }
 }
@@ -170,7 +155,7 @@ async function handleResourceSearch(query) {
 
     try {
         const res = await fetch(`https://by669.org/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
-            headers: { "User-Agent": BROWSER_HEADERS["User-Agent"] }
+            headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
         });
 
         const data = await res.json();
@@ -188,9 +173,6 @@ async function handleResourceSearch(query) {
     }
 }
 
-/**
- * 通过 IMDb ID 直接查询 OMDb（最精准）
- */
 async function handleOmdbById(imdbId) {
     try {
         const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}`);
@@ -205,9 +187,6 @@ async function handleOmdbById(imdbId) {
     }
 }
 
-/**
- * 通过英文标题搜索 OMDb（降级方案）
- */
 async function handleOmdbSearch(title, year) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
@@ -222,7 +201,6 @@ async function handleOmdbSearch(title, year) {
             return jsonResponse(extractOmdbRatings(data));
         }
 
-        // 降级：不带年份重试
         if (year) {
             const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`);
             const fallbackData = await fallbackRes.json();
@@ -256,17 +234,13 @@ function extractOmdbRatings(data) {
     };
 }
 
-/**
- * 中文 Wikipedia 摘要
- */
 async function handleWikiZh(query) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     try {
-        // 1. 搜索中文维基
         const searchRes = await fetch(
             `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
-            { headers: { "User-Agent": BROWSER_HEADERS["User-Agent"] } }
+            { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
         const searchData = await searchRes.json();
 
@@ -276,10 +250,9 @@ async function handleWikiZh(query) {
 
         const title = searchData.query.search[0].title;
 
-        // 2. 获取中文摘要
         const summaryRes = await fetch(
             `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-            { headers: { "User-Agent": BROWSER_HEADERS["User-Agent"] } }
+            { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
         const summaryData = await summaryRes.json();
 
