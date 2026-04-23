@@ -2,7 +2,7 @@
  * API 请求封装 - Cloudflare Worker 版本
  */
 
-const API_BASE = "https://iplay.andylaw2017.workers.dev"; // 指向 Cloudflare Worker
+const API_BASE = "https://iplay.andylaw2017.workers.dev";
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();
@@ -37,18 +37,15 @@ export const DoubanAPI = {
     }
 };
 
+/**
+ * 中文 Wikipedia API (通过 Worker 代理)
+ */
 export const WikiAPI = {
     async getSummary(query) {
         try {
-            const searchRes = await fetchWithTimeout(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`);
-            if (!searchRes.query || !searchRes.query.search.length) return null;
-
-            const title = searchRes.query.search[0].title;
-            const summaryRes = await fetchWithTimeout(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
-
-            return summaryRes;
+            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}`);
         } catch (e) {
-            console.warn("Wiki fetch failed:", e);
+            console.warn("Wiki zh fetch failed:", e);
             return null;
         }
     }
@@ -66,18 +63,28 @@ export const ResourceAPI = {
 };
 
 /**
- * 全球评分聚合 (IMDb & 烂番茄)
+ * 全球评分聚合 (IMDb & Rotten Tomatoes)
+ * 优先使用 IMDb ID（最精准），降级到英文标题搜索
  */
 export const GlobalRatingAPI = {
-    async getRatings(englishTitle, year) {
-        if (!englishTitle) return null;
-        try {
-            let url = `${API_BASE}/api/omdb?title=${encodeURIComponent(englishTitle)}`;
-            if (year) url += `&year=${year}`;
-            return await fetchWithTimeout(url);
-        } catch (error) {
-            console.warn("Global ratings fetch failed:", error);
-            return null;
+    async getRatings(imdbId, englishTitle, year) {
+        if (imdbId) {
+            try {
+                return await fetchWithTimeout(`${API_BASE}/api/omdb?imdb=${imdbId}`);
+            } catch (e) {
+                console.warn("OMDb by ID failed, trying by title:", e);
+            }
         }
+        // 降级：用英文标题
+        if (englishTitle) {
+            try {
+                let url = `${API_BASE}/api/omdb?title=${encodeURIComponent(englishTitle)}`;
+                if (year) url += `&year=${year}`;
+                return await fetchWithTimeout(url);
+            } catch (e) {
+                console.warn("OMDb by title failed:", e);
+            }
+        }
+        return null;
     }
 };

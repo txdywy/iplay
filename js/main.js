@@ -13,7 +13,6 @@ const els = {
     title: document.getElementById('showTitle'),
     subTitle: document.getElementById('showSubTitle'),
 
-    // 评分区
     doubanRating: document.getElementById('doubanRating'),
     imdbRatingBox: document.getElementById('imdbRatingBox'),
     imdbRating: document.getElementById('imdbRating'),
@@ -55,7 +54,6 @@ async function handleSearch() {
     els.results.classList.add('hidden');
     els.loading.classList.remove('hidden');
 
-    // 隐藏外部评分占位
     if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
     if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
 
@@ -87,39 +85,40 @@ async function handleSearch() {
 
         showToast("Signal locked. Initiating deep scan...");
 
-        // 2. 获取 Wiki (为了拿到准确的英文名)
-        const wikiData = await WikiAPI.getSummary(show.title);
-        let hasWiki = false;
-        let englishTitle = null;
-
-        if (wikiData && wikiData.extract) {
-            hasWiki = true;
-            // 很多时候 Wiki 的 title 就是准确的英文名
-            englishTitle = wikiData.title.replace(/ \(.+\)/, ''); // 去除括号里的 (TV series) 等
-        } else {
-            // 如果 wiki 没搜到，尝试用豆瓣返回的 sub_title
-            englishTitle = show.sub_title || show.title;
-        }
-
-        // 3. 并行获取豆瓣详情、资源、以及 OMDb 全球评分
-        const [doubanDetailResult, resourceData, globalRatingData] = await Promise.allSettled([
+        // 2. 并行获取：豆瓣详情（含 IMDb ID）、中文维基、资源
+        const [doubanDetailResult, wikiData, resourceData] = await Promise.allSettled([
             DoubanAPI.getDetail(show.id),
-            ResourceAPI.search(show.title),
-            GlobalRatingAPI.getRatings(englishTitle, show.year)
+            WikiAPI.getSummary(show.title),
+            ResourceAPI.search(show.title)
         ]);
 
-        // 4. 处理豆瓣详情
-        let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "" };
+        // 3. 处理豆瓣详情
+        let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "", imdbId: "" };
         if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value && !doubanDetailResult.value.error) {
             doubanDetail = doubanDetailResult.value;
             els.doubanRating.textContent = doubanDetail.rating > 0 ? doubanDetail.rating.toFixed(1) : '-.-';
         } else {
-            console.warn("Douban detail fetch failed or rejected");
+            console.warn("Douban detail fetch failed");
             els.doubanRating.textContent = '?';
             showToast("Warning: Douban node unstable");
         }
 
-        // 5. 处理全球评分展示 (IMDb & Rotten Tomatoes)
+        // 4. 如果有 IMDb ID，直接用它查询 OMDb（最精准）
+        // 否则用豆瓣的 sub_title（通常是英文名）降级搜索
+        let globalRatingData = { status: 'rejected' };
+        if (doubanDetail.imdbId) {
+            globalRatingData = await Promise.resolve(
+                GlobalRatingAPI.getRatings(doubanDetail.imdbId)
+            ).then(v => ({ status: 'fulfilled', value: v }))
+             .catch(e => ({ status: 'rejected', reason: e }));
+        } else if (show.sub_title) {
+            globalRatingData = await Promise.resolve(
+                GlobalRatingAPI.getRatings(null, show.sub_title, show.year)
+            ).then(v => ({ status: 'fulfilled', value: v }))
+             .catch(e => ({ status: 'rejected', reason: e }));
+        }
+
+        // 5. 渲染全球评分
         if (globalRatingData.status === 'fulfilled' && globalRatingData.value) {
             const ratings = globalRatingData.value;
             if (ratings.imdb && els.imdbRatingBox) {
@@ -128,12 +127,14 @@ async function handleSearch() {
             }
             if (ratings.rottenTomatoes && els.rottenRatingBox) {
                 els.rottenRating.textContent = `${ratings.rottenTomatoes}%`;
-                // 烂番茄新鲜度颜色 (>60% 红番茄，<60% 绿番茄)
-                els.rottenRating.className = ratings.rottenTomatoes >= 60 ? "text-red-500 font-bold" : "text-green-500 font-bold";
+                els.rottenRating.className = ratings.rottenTomatoes >= 60
+                    ? "text-red-500 font-bold"
+                    : "text-green-500 font-bold";
                 els.rottenRatingBox.classList.remove('hidden');
             }
         }
 
+        // 6. 渲染类型标签
         if (doubanDetail.genres && doubanDetail.genres.length > 0) {
             els.tags.innerHTML = doubanDetail.genres.map(g =>
                 `<span class="px-3 py-1 border border-cinema-700 text-cinema-100 text-xs font-mono uppercase tracking-widest rounded-full">${g}</span>`
@@ -142,12 +143,14 @@ async function handleSearch() {
             els.tags.innerHTML = `<span class="px-3 py-1 border border-cinema-700 text-cinema-400 text-xs font-mono uppercase tracking-widest rounded-full">UNKNOWN CLASS</span>`;
         }
 
-        // 6. 处理剧情简介
-        if (hasWiki) {
+        // 7. 渲染剧情简介（中文维基优先，豆瓣中文回退）
+        let hasWiki = false;
+        if (wikiData.status === 'fulfilled' && wikiData.value && wikiData.value.extract) {
             els.wikiSummary.innerHTML = `
-                <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">WIKIPEDIA</span><br>
-                ${wikiData.extract}
+                <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">ZH.WIKIPEDIA</span><br>
+                ${wikiData.value.extract}
             `;
+            hasWiki = true;
         } else if (doubanDetail.summary) {
             els.wikiSummary.innerHTML = `
                 <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">DOUBAN</span><br>
@@ -157,7 +160,7 @@ async function handleSearch() {
             els.wikiSummary.textContent = "Classified file. No synopsis available in current sector.";
         }
 
-        // 7. 处理资源
+        // 8. 渲染资源
         els.resourceList.innerHTML = '';
         if (resourceData.status === 'fulfilled' && resourceData.value && resourceData.value.length > 0) {
             const links = resourceData.value;
@@ -173,7 +176,7 @@ async function handleSearch() {
             els.resourceList.innerHTML = '<li class="p-4 text-sm font-mono text-cinema-400">No raw resources detected.</li>';
         }
 
-        // 8. 计算推荐指数
+        // 9. 计算推荐指数
         const scoreData = calculateRecommendationScore({
             ...doubanDetail,
             hasWiki
