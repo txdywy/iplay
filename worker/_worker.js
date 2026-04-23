@@ -1,9 +1,5 @@
 /**
- * Cloudflare Worker - iPlay API 代理
- * 部署指南：
- * 1. 在 Cloudflare 中创建一个新的 Worker
- * 2. 复制此文件代码贴入
- * 3. 前端 fetch('/api/search?q=...')
+ * Cloudflare Worker - iPlay API 代理 (加强防屏蔽版)
  */
 
 export default {
@@ -52,6 +48,22 @@ function jsonResponse(data, status = 200) {
     });
 }
 
+// 模拟真实浏览器的强力 Headers
+const BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "max-age=0",
+    "Sec-Ch-Ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"",
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": "\"Windows\"",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1"
+};
+
 /**
  * 豆瓣搜索
  */
@@ -60,9 +72,7 @@ async function handleDoubanSearch(query) {
 
     try {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-            }
+            headers: BROWSER_HEADERS
         });
         const data = await res.json();
         return jsonResponse(data);
@@ -73,24 +83,27 @@ async function handleDoubanSearch(query) {
 
 /**
  * 豆瓣详情抓取 (评分、类型、简介)
- * Note: Cloudflare Worker 支持原生 HTMLRewriter，可以高效解析 HTML
  */
 async function handleDoubanDetail(id) {
     if (!id) return jsonResponse({ error: "Missing id" }, 400);
 
     try {
-        const res = await fetch(`https://movie.douban.com/subject/${id}/`, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-            }
+        const fetchUrl = `https://movie.douban.com/subject/${id}/`;
+        const res = await fetch(fetchUrl, {
+            headers: BROWSER_HEADERS,
+            // CF Worker 防止被强制重定向或缓存问题
+            redirect: "follow"
         });
 
-        if (!res.ok) throw new Error("Fetch failed");
+        if (!res.ok) {
+            // 如果豆瓣依然报 403，返回特定的错误告知前端
+            return jsonResponse({ error: `Douban rejected the request with status ${res.status}` }, res.status);
+        }
 
-        // 我们需要提取：评分(rating)、评价人数(votes)、类型(genres)、简介(summary)
         let result = { rating: 0, votes: 0, genres: [], summary: "" };
+        let isParsingSummary = false;
 
-        // 使用 Cloudflare HTMLRewriter 提取数据，这比正则更稳且不耗费太多内存
+        // 使用 HTMLRewriter
         const rewriter = new HTMLRewriter()
             .on('strong[property="v:average"]', {
                 text(text) { result.rating = parseFloat(text.text) || result.rating; }
@@ -102,10 +115,29 @@ async function handleDoubanDetail(id) {
                 text(text) { if(text.text.trim()) result.genres.push(text.text.trim()); }
             })
             .on('span[property="v:summary"]', {
-                text(text) { result.summary += text.text.trim(); }
+                element(el) { isParsingSummary = true; },
+                text(text) {
+                    if (isParsingSummary) {
+                        result.summary += text.text;
+                    }
+                }
+            })
+            .on('span[property="v:summary"].all', { // 处理折叠的长简介
+                element(el) {
+                    result.summary = ""; // 清空之前的短简介
+                    isParsingSummary = true;
+                },
+                text(text) {
+                    if (isParsingSummary) {
+                        result.summary += text.text;
+                    }
+                }
             });
 
-        await rewriter.transform(res).text(); // 触发解析
+        await rewriter.transform(res).text();
+
+        // 清理简介中的空白字符
+        result.summary = result.summary.replace(/\s+/g, ' ').trim();
 
         return jsonResponse(result);
     } catch (e) {
@@ -121,14 +153,11 @@ async function handleResourceSearch(query) {
 
     try {
         const res = await fetch(`https://by669.org/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
-            }
+            headers: { "User-Agent": BROWSER_HEADERS["User-Agent"] }
         });
 
         const data = await res.json();
 
-        // 整理返回给前端的数据结构
         const links = (data.data || [])
             .filter(item => item.attributes && item.attributes.title)
             .map(item => ({
