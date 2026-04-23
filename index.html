@@ -67,6 +67,10 @@
         }
         @keyframes fillBar { from { width: 0; } }
         .progress-bar { animation: fillBar 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .scroll-surface::-webkit-scrollbar { width: 8px; }
+        .scroll-surface::-webkit-scrollbar-track { background: transparent; }
+        .scroll-surface::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
+        .scroll-surface::-webkit-scrollbar-thumb:hover { background: rgba(229, 9, 20, 0.34); }
 
         /* 聚合评分 Box 样式 */
         .rating-box {
@@ -86,7 +90,7 @@
     <div class="film-grain"></div>
     <div class="ambient-glow"></div>
 
-    <header class="w-full max-w-5xl px-6 pt-24 pb-12 flex flex-col items-center relative z-10 text-center">
+    <header class="w-full max-w-[88rem] px-6 md:px-8 pt-20 md:pt-24 pb-10 md:pb-12 flex flex-col items-center relative z-10 text-center">
         <h1 class="text-6xl md:text-8xl font-black tracking-tighter mb-4 text-transparent bg-clip-text bg-gradient-to-b from-white to-cinema-400">
             iPlay<span class="text-accent-red">.</span>
         </h1>
@@ -104,7 +108,7 @@
         </form>
     </header>
 
-    <main class="w-full max-w-5xl px-6 pb-24 relative z-10">
+    <main class="w-full max-w-[92rem] px-6 md:px-8 pb-24 relative z-10">
         <div id="loadingState" class="hidden flex flex-col items-center justify-center py-20 fade-up">
             <div class="w-12 h-12 border-2 border-cinema-700 border-t-accent-red rounded-full animate-spin mb-6"></div>
             <p class="font-mono text-cinema-400 text-sm tracking-widest uppercase">Connecting to satellites<span class="cursor-blink">_</span></p>
@@ -237,33 +241,35 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.18fr)_minmax(340px,0.82fr)] gap-8 fade-up delay-200">
+            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)] gap-8 xl:gap-10 fade-up delay-200 items-start">
                 <div class="space-y-6 min-w-0">
                     <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 border-l-2 border-accent-red pl-3">Synopsis</h3>
                     <div id="wikiSummary" class="text-cinema-100 leading-relaxed text-sm md:text-base opacity-80 font-light bg-cinema-800/35 border border-cinema-700 rounded-3xl p-5 md:p-6"></div>
                 </div>
 
-                <div class="space-y-5 min-w-0 xl:sticky xl:top-8 self-start">
-                    <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
-                        <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
-                            <div>
-                                <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Urls</h3>
-                                <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Direct links extracted from resource pages</p>
+                <div class="space-y-4 min-w-0 xl:sticky xl:top-8 self-start">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-4">
+                        <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
+                            <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
+                                <div>
+                                    <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Urls</h3>
+                                    <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Direct links extracted from resource pages</p>
+                                </div>
+                                <i class="fas fa-cloud text-accent-red/80"></i>
                             </div>
-                            <i class="fas fa-cloud text-accent-red/80"></i>
+                            <ul id="quarkUrlList" class="divide-y divide-cinema-700/50 max-h-[28rem] overflow-y-auto scroll-surface pr-1"></ul>
                         </div>
-                        <ul id="quarkUrlList" class="divide-y divide-cinema-700/50"></ul>
-                    </div>
 
-                    <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
-                        <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
-                            <div>
-                                <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Resources</h3>
-                                <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Source pages that contain the download links</p>
+                        <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
+                            <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
+                                <div>
+                                    <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Resources</h3>
+                                    <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Source pages that contain the download links</p>
+                                </div>
+                                <i class="fas fa-link text-[#0099ff]"></i>
                             </div>
-                            <i class="fas fa-link text-[#0099ff]"></i>
+                            <ul id="resourceList" class="divide-y divide-cinema-700/50 max-h-[28rem] overflow-y-auto scroll-surface pr-1"></ul>
                         </div>
-                        <ul id="resourceList" class="divide-y divide-cinema-700/50"></ul>
                     </div>
                 </div>
             </div>

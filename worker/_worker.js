@@ -445,28 +445,28 @@ async function handleResourceSearch(query) {
             });
         }
 
-        const quarkCandidates = resources.filter(entry => entry.isQuark);
-        const quarkSources = quarkCandidates.length > 0 ? quarkCandidates : resources.slice(0, 3);
-        const quarkUrlGroups = await Promise.allSettled(
-            quarkSources.map(entry => fetchResourcePageQuarkUrls(entry.url, entry.title))
-        );
-
         const quarkUrls = [];
-        for (const group of quarkUrlGroups) {
-            if (group.status === "fulfilled" && Array.isArray(group.value)) {
-                quarkUrls.push(...group.value);
+        const seenQuarkUrls = new Set();
+        const batchSize = 5;
+
+        for (let index = 0; index < resources.length; index += batchSize) {
+            const batch = resources.slice(index, index + batchSize);
+            const quarkUrlGroups = await Promise.allSettled(
+                batch.map(entry => fetchResourcePageQuarkUrls(entry.url, entry.title))
+            );
+
+            for (const group of quarkUrlGroups) {
+                if (group.status !== "fulfilled" || !Array.isArray(group.value)) continue;
+
+                for (const item of group.value) {
+                    if (!item.url || seenQuarkUrls.has(item.url)) continue;
+                    seenQuarkUrls.add(item.url);
+                    quarkUrls.push(item);
+                }
             }
         }
 
-        const uniqueQuarkUrls = [];
-        const seen = new Set();
-        for (const item of quarkUrls) {
-            if (!item.url || seen.has(item.url)) continue;
-            seen.add(item.url);
-            uniqueQuarkUrls.push(item);
-        }
-
-        return jsonResponse({ resources, quarkUrls: uniqueQuarkUrls });
+        return jsonResponse({ resources, quarkUrls });
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }

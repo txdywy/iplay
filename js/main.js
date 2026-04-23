@@ -460,7 +460,7 @@ function renderQuarkUrls(quarkUrls) {
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
         sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
-        limit: 10
+        limit: 50
     });
 }
 
