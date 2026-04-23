@@ -89,6 +89,19 @@ function pickBestTmdbMatch(results, query) {
     return results[0];
 }
 
+function pickBestDoubanMatch(results, query) {
+    if (!Array.isArray(results) || results.length === 0) return null;
+
+    const normalizedQuery = normalizeText(query);
+    const exact = results.find(item => normalizeText(item.title) === normalizedQuery);
+    if (exact) return exact;
+
+    const loose = results.find(item => normalizeText(item.title).includes(normalizedQuery) || normalizedQuery.includes(normalizeText(item.title)));
+    if (loose) return loose;
+
+    return results[0];
+}
+
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
 
 function loadPoster(posterUrl) {
@@ -577,9 +590,9 @@ async function handleSearch() {
 
         showToast('Signal locked. Initiating deep scan...');
 
-        const [tmdbDetailResult, doubanDetailResult, wikiData, resourceData, posterData] = await Promise.allSettled([
+        const [tmdbDetailResult, doubanSearchResult, wikiData, resourceData, posterData] = await Promise.allSettled([
             TmdbAPI.getDetail(candidate.id, candidate.mediaType),
-            DoubanAPI.getDetail(candidate.id),
+            DoubanAPI.search(query),
             WikiAPI.getSummary(candidate.title),
             ResourceAPI.search(candidate.title),
             PosterAPI.getPoster(candidate.title, candidate.year)
@@ -589,8 +602,12 @@ async function handleSearch() {
             ? tmdbDetailResult.value
             : null;
 
-        const doubanResult = doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value && !doubanDetailResult.value.error
-            ? doubanDetailResult.value
+        const doubanCandidates = doubanSearchResult.status === 'fulfilled' && Array.isArray(doubanSearchResult.value)
+            ? doubanSearchResult.value
+            : [];
+        const doubanMatch = pickBestDoubanMatch(doubanCandidates, query);
+        const doubanResult = doubanMatch && doubanMatch.id
+            ? await DoubanAPI.getDetail(doubanMatch.id).catch(() => null)
             : null;
         const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
         const resourceResult = resourceData.status === 'fulfilled' ? resourceData.value : null;
