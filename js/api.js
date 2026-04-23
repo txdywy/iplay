@@ -2,10 +2,8 @@
  * API 请求封装 - Cloudflare Worker 版本
  */
 
-// 当使用 Cloudflare Pages 高级功能 (Functions / _worker.js) 时，
-// 前端和 Worker 是同源的 (同一个域名)。
-// 所以这里不需要写死完整的域名，直接使用空字符串，走相对路径即可。
-const API_BASE = "";
+// 指向你部署成功的 Cloudflare Worker 域名
+const API_BASE = "https://iplay.andylaw2017.workers.dev";
 
 /**
  * 带有超时机制的 fetch
