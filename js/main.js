@@ -20,6 +20,11 @@ const els = {
     recBar: document.getElementById('recBar'),
     scoreDetails: document.getElementById('scoreDetails'),
 
+    // 新增：推荐报告UI元素
+    reportArea: document.getElementById('reportArea'),
+    prosList: document.getElementById('prosList'),
+    consList: document.getElementById('consList'),
+
     wikiSummary: document.getElementById('wikiSummary'),
     resourceList: document.getElementById('resourceList'),
     toast: document.getElementById('toast')
@@ -61,19 +66,28 @@ async function handleSearch() {
 
         els.title.textContent = show.title;
         els.subTitle.textContent = `${show.year} // ${show.type === 'movie' ? 'FILM' : 'SERIES'} // ID:${show.id}`;
-        if (show.img) els.cover.src = show.img.replace('s_ratio_poster', 'l_ratio_poster');
+
+        // 尝试加载高清海报，如果失败则回退到普清
+        if (show.img) {
+            const hqImg = show.img.replace('s_ratio_poster', 'l_ratio_poster');
+            els.cover.src = hqImg;
+            els.cover.onerror = () => {
+                els.cover.src = show.img; // 高清图加载失败回退
+                els.cover.onerror = null;
+            };
+        }
 
         showToast("Signal locked. Initiating deep scan...");
 
         // 2. 并行获取详情数据
         const [doubanDetailResult, wikiData, resourceData] = await Promise.allSettled([
-            DoubanAPI.getDetail(show.id), // 现在直接返回解析好的 JSON
+            DoubanAPI.getDetail(show.id),
             WikiAPI.getSummary(show.title),
-            ResourceAPI.search(show.title) // 也是返回解析好的 JSON Array
+            ResourceAPI.search(show.title)
         ]);
 
         // 3. 处理豆瓣详情
-        let doubanDetail = { rating: 0, votes: 0, genres: [] };
+        let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "" };
         if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value) {
             doubanDetail = doubanDetailResult.value;
             els.doubanRating.textContent = doubanDetail.rating > 0 ? doubanDetail.rating.toFixed(1) : '-.-';
@@ -91,13 +105,23 @@ async function handleSearch() {
             els.tags.innerHTML = `<span class="px-3 py-1 border border-cinema-700 text-cinema-400 text-xs font-mono uppercase tracking-widest rounded-full">UNKNOWN CLASS</span>`;
         }
 
-        // 4. 处理 Wiki
+        // 4. 处理剧情简介 (双重来源判断)
         let hasWiki = false;
         if (wikiData.status === 'fulfilled' && wikiData.value && wikiData.value.extract) {
-            els.wikiSummary.textContent = wikiData.value.extract;
+            // 优先使用 Wiki 英文简介
+            els.wikiSummary.innerHTML = `
+                <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">WIKIPEDIA</span><br>
+                ${wikiData.value.extract}
+            `;
             hasWiki = true;
+        } else if (doubanDetail.summary) {
+            // 如果 Wiki 没有，回退到豆瓣中文简介
+            els.wikiSummary.innerHTML = `
+                <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">DOUBAN</span><br>
+                ${doubanDetail.summary}
+            `;
         } else {
-            els.wikiSummary.textContent = doubanDetail.summary || "Classified file. No synopsis available in current sector.";
+            els.wikiSummary.textContent = "Classified file. No synopsis available in current sector.";
         }
 
         // 5. 处理资源 (by669)
@@ -146,10 +170,20 @@ async function handleSearch() {
             <span>PRF: ${scoreData.details.preference}</span>
         `;
 
+        // 7. 渲染 AI 推荐理由报告
+        if (els.reportArea) {
+            els.prosList.innerHTML = scoreData.report.pros.length > 0
+                ? scoreData.report.pros.map(p => `<li class="flex gap-2 items-start"><i class="fas fa-plus text-green-500 mt-1"></i> <span>${p}</span></li>`).join('')
+                : '<li class="text-cinema-400 italic">暂无突出亮点</li>';
+
+            els.consList.innerHTML = scoreData.report.cons.length > 0
+                ? scoreData.report.cons.map(c => `<li class="flex gap-2 items-start"><i class="fas fa-minus text-accent-red mt-1"></i> <span>${c}</span></li>`).join('')
+                : '<li class="text-cinema-400 italic">暂无明显缺点</li>';
+        }
+
         els.results.classList.remove('hidden');
 
     } catch (err) {
-        // 判断是否是 Worker 连接失败
         if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
              els.errorMsg.textContent = "Unable to connect to Cloudflare Worker. Make sure the API_BASE is correctly configured and the Worker is deployed.";
         } else {
