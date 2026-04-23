@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, GlobalRatingAPI, PosterAPI } from './api.js';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 
 const els = {
@@ -12,8 +12,10 @@ const els = {
     title: document.getElementById('showTitle'),
     subTitle: document.getElementById('showSubTitle'),
 
-    primaryRating: document.getElementById('doubanRating'),
-    primaryRatingLabel: document.getElementById('doubanRatingLabel'),
+    primaryRating: document.getElementById('tmdbRatingValue'),
+    primaryRatingMobile: document.getElementById('tmdbRatingValueMobile'),
+    primaryRatingLabel: document.getElementById('tmdbRatingLabel'),
+    primaryRatingLabelMobile: document.getElementById('tmdbRatingLabelMobile'),
     doubanBackupBox: document.getElementById('doubanBackupBox'),
     doubanBackupRating: document.getElementById('doubanBackupRating'),
 
@@ -21,6 +23,11 @@ const els = {
     imdbRating: document.getElementById('imdbRating'),
     rottenRatingBox: document.getElementById('rottenRatingBox'),
     rottenRating: document.getElementById('rottenRating'),
+
+    tmdbFacts: document.getElementById('tmdbFacts'),
+    tmdbOverview: document.getElementById('tmdbOverview'),
+    omdbPanel: document.getElementById('omdbPanel'),
+    omdbFields: document.getElementById('omdbFields'),
 
     tags: document.getElementById('showTags'),
 
@@ -112,11 +119,25 @@ function appendBadgeList(container, values, emptyLabel) {
 }
 
 function renderPrimaryRating(value, sourceLabel) {
-    if (!els.primaryRating) return;
-    els.primaryRating.textContent = value > 0 ? value.toFixed(1) : '-.-';
-    els.primaryRating.className = `text-2xl font-mono font-bold ${sourceLabel === 'TMDB' ? 'text-accent-gold' : 'text-green-500'}`;
+    const text = value > 0 ? value.toFixed(1) : '-.-';
+    const colorClass = sourceLabel === 'TMDB' ? 'text-accent-gold' : 'text-green-500';
+
+    if (els.primaryRating) {
+        els.primaryRating.textContent = text;
+        els.primaryRating.className = `text-2xl font-mono font-bold ${colorClass}`;
+    }
+
+    if (els.primaryRatingMobile) {
+        els.primaryRatingMobile.textContent = text;
+        els.primaryRatingMobile.className = `text-2xl font-mono font-bold ${colorClass}`;
+    }
+
     if (els.primaryRatingLabel) {
         els.primaryRatingLabel.textContent = sourceLabel;
+    }
+
+    if (els.primaryRatingLabelMobile) {
+        els.primaryRatingLabelMobile.textContent = sourceLabel;
     }
 }
 
@@ -130,8 +151,165 @@ function renderBackupDoubanRating(value) {
     }
 }
 
+function formatValue(value, fallback = '—') {
+    if (value === null || value === undefined || value === '') return fallback;
+    if (Array.isArray(value)) {
+        return value.length > 0 ? value.join(' / ') : fallback;
+    }
+    return String(value);
+}
+
+function formatCount(value) {
+    if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return '—';
+    return new Intl.NumberFormat('en-US').format(value);
+}
+
+function createInfoCard(label, value, { wide = false, muted = false } = {}) {
+    const card = document.createElement('div');
+    card.className = `${wide ? 'sm:col-span-2' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
+
+    const meta = document.createElement('div');
+    meta.className = 'text-[10px] uppercase tracking-[0.35em] text-cinema-400';
+    meta.textContent = label;
+
+    const body = document.createElement('div');
+    body.className = `mt-2 text-sm leading-relaxed ${muted ? 'text-cinema-400 italic' : 'text-cinema-100'} break-words`;
+    body.textContent = formatValue(value);
+
+    card.appendChild(meta);
+    card.appendChild(body);
+    return card;
+}
+
 function renderGenres(genres) {
     appendBadgeList(els.tags, genres, 'UNKNOWN CLASS');
+}
+
+function renderTmdbFacts(tmdbDetail, candidate, overviewText) {
+    if (!els.tmdbFacts) return;
+
+    clearNode(els.tmdbFacts);
+
+    const title = tmdbDetail?.title || candidate?.title || '—';
+    const originalTitle = tmdbDetail?.originalTitle || candidate?.originalTitle || '—';
+    const mediaType = tmdbDetail?.mediaType || candidate?.mediaType || candidate?.type || '—';
+    const year = tmdbDetail?.year || candidate?.year || '—';
+    const tmdbId = tmdbDetail?.id || candidate?.id || candidate?.tmdbId || '—';
+    const imdbId = tmdbDetail?.imdbId || candidate?.imdbId || '—';
+    const votes = formatCount(tmdbDetail?.tmdbVotes || candidate?.tmdbVotes || candidate?.votes || 0);
+    const popularity = typeof tmdbDetail?.popularity === 'number'
+        ? tmdbDetail.popularity.toFixed(1)
+        : typeof candidate?.popularity === 'number'
+            ? candidate.popularity.toFixed(1)
+            : '—';
+
+    [
+        createInfoCard('Title', title),
+        createInfoCard('Original', originalTitle),
+        createInfoCard('Type', mediaType === 'movie' ? 'FILM' : mediaType === 'tv' ? 'SERIES' : mediaType),
+        createInfoCard('Year', year),
+        createInfoCard('TMDB ID', `#${tmdbId}`),
+        createInfoCard('IMDb ID', imdbId),
+        createInfoCard('Votes', votes),
+        createInfoCard('Popularity', popularity)
+    ].forEach(card => els.tmdbFacts.appendChild(card));
+
+    if (els.tmdbOverview) {
+        els.tmdbOverview.textContent = overviewText && overviewText.trim() ? overviewText : '暂无 TMDB 概述';
+        els.tmdbOverview.classList.toggle('italic', !overviewText || !overviewText.trim());
+        els.tmdbOverview.classList.toggle('text-cinema-400', !overviewText || !overviewText.trim());
+    }
+}
+
+function renderOmdbProfile(omdbProfile) {
+    if (!els.omdbPanel || !els.omdbFields) return;
+
+    const profile = omdbProfile && typeof omdbProfile === 'object' ? omdbProfile : null;
+    clearNode(els.omdbFields);
+
+    if (!profile) {
+        els.omdbPanel.classList.add('hidden');
+        if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
+        if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
+        return;
+    }
+
+    const cards = [];
+    const type = profile.type === 'movie' ? 'FILM' : profile.type === 'series' ? 'SERIES' : formatValue(profile.type);
+
+    if (profile.rated || profile.released || profile.runtime) {
+        cards.push(createInfoCard('Rated', profile.rated));
+        cards.push(createInfoCard('Released', profile.released));
+        cards.push(createInfoCard('Runtime', profile.runtime ? `${profile.runtime} min` : '—'));
+    }
+
+    if (profile.metascore) {
+        cards.push(createInfoCard('Metascore', `${profile.metascore}/100`));
+    }
+
+    if (profile.genres && profile.genres.length > 0) {
+        cards.push(createInfoCard('Genre', profile.genres));
+    }
+
+    cards.push(createInfoCard('Language', profile.language));
+    cards.push(createInfoCard('Country', profile.country));
+    cards.push(createInfoCard('Director', profile.director));
+    cards.push(createInfoCard('Writer', profile.writer));
+    cards.push(createInfoCard('Cast', profile.actors, { wide: true }));
+    cards.push(createInfoCard('Plot', profile.plot, { wide: true }));
+    cards.push(createInfoCard('Awards', profile.awards, { wide: true }));
+    cards.push(createInfoCard('Box Office', profile.boxOffice));
+    cards.push(createInfoCard('Production', profile.production));
+    cards.push(createInfoCard('Title', profile.title));
+    cards.push(createInfoCard('Year', profile.year));
+    cards.push(createInfoCard('Type', type));
+    cards.push(createInfoCard('IMDb ID', profile.imdbId));
+    cards.push(createInfoCard('IMDb Votes', profile.imdbVotes));
+
+    cards.forEach(card => els.omdbFields.appendChild(card));
+
+    const hasProfileData = Boolean(
+        profile.rated ||
+        profile.released ||
+        profile.runtime ||
+        profile.metascore ||
+        (profile.genres && profile.genres.length > 0) ||
+        profile.language ||
+        profile.country ||
+        profile.director ||
+        profile.writer ||
+        profile.actors ||
+        profile.plot ||
+        profile.awards ||
+        profile.boxOffice ||
+        profile.production ||
+        profile.imdb ||
+        profile.imdbVotes ||
+        profile.imdbId
+    );
+    els.omdbPanel.classList.toggle('hidden', !hasProfileData);
+
+    const imdbScore = typeof profile.imdb === 'number' ? profile.imdb : null;
+    if (els.imdbRatingBox && els.imdbRating) {
+        if (imdbScore && imdbScore > 0) {
+            els.imdbRating.textContent = imdbScore.toFixed(1);
+            els.imdbRating.className = 'text-2xl font-mono font-bold text-accent-gold';
+            els.imdbRatingBox.classList.remove('hidden');
+        } else {
+            els.imdbRatingBox.classList.add('hidden');
+        }
+    }
+
+    const rottenScore = typeof profile.rottenTomatoes === 'number' ? profile.rottenTomatoes : null;
+    if (els.rottenRatingBox && els.rottenRating) {
+        if (rottenScore && rottenScore > 0) {
+            els.rottenRating.textContent = `${rottenScore}%`;
+            els.rottenRating.className = `text-2xl font-mono font-bold ${rottenScore >= 75 ? 'text-green-500' : rottenScore >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
+            els.rottenRatingBox.classList.remove('hidden');
+        } else {
+            els.rottenRatingBox.classList.add('hidden');
+        }
+    }
 }
 
 function renderSynopsis(sourceLabel, text) {
@@ -203,11 +381,11 @@ function renderScore(data, sourceLabel) {
 
     const labelInfo = getRecommendationLabel(scoreData.score);
     els.recScore.textContent = scoreData.score;
-    els.recScore.className = `text-5xl md:text-7xl font-black font-mono ${labelInfo.color}`;
-
     els.recLabel.textContent = labelInfo.label;
-    els.recLabel.className = `text-lg font-bold tracking-wider ${labelInfo.color}`;
 
+    const scoreClass = `text-5xl md:text-7xl font-black font-mono ${labelInfo.color}`;
+    els.recScore.className = scoreClass;
+    els.recLabel.className = `text-lg font-bold tracking-wider ${labelInfo.color}`;
     els.recBar.style.animation = 'none';
     els.recBar.offsetHeight;
     els.recBar.style.width = `${scoreData.score}%`;
@@ -297,6 +475,7 @@ async function safeDoubanFallback(query) {
     }
 }
 
+
 function resetRatingBoxes() {
     if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
     if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
@@ -330,12 +509,11 @@ async function handleSearch() {
             setText(els.title, candidate.title);
             setText(els.subTitle, `${candidate.year || '????'} // ${candidate.mediaType === 'movie' ? 'FILM' : 'SERIES'} // TMDB:${candidate.id}`);
 
-            const [tmdbDetailResult, wikiData, resourceData, posterData, doubanSearchResult] = await Promise.allSettled([
+            const [tmdbDetailResult, wikiData, resourceData, posterData] = await Promise.allSettled([
                 TmdbAPI.getDetail(candidate.id, candidate.mediaType),
                 WikiAPI.getSummary(candidate.title),
                 ResourceAPI.search(candidate.title),
-                PosterAPI.getPoster(candidate.title, candidate.year),
-                DoubanAPI.search(query)
+                PosterAPI.getPoster(candidate.title, candidate.year)
             ]);
 
             const tmdbDetail = tmdbDetailResult.status === 'fulfilled' && tmdbDetailResult.value && !tmdbDetailResult.value.error
@@ -343,15 +521,18 @@ async function handleSearch() {
                 : null;
 
             let doubanDetail = null;
-            const doubanSearchData = doubanSearchResult.status === 'fulfilled' ? doubanSearchResult.value : null;
             const needsDoubanFallback = !tmdbDetail || !tmdbDetail.summary || !tmdbDetail.genres || tmdbDetail.genres.length === 0 || !tmdbDetail.tmdbRating;
-            if (needsDoubanFallback && Array.isArray(doubanSearchData) && doubanSearchData.length > 0) {
-                doubanDetail = await DoubanAPI.getDetail(doubanSearchData[0].id).catch(() => null);
+            if (needsDoubanFallback) {
+                const doubanSearchData = await DoubanAPI.search(query).catch(() => null);
+                if (Array.isArray(doubanSearchData) && doubanSearchData.length > 0) {
+                    doubanDetail = await DoubanAPI.getDetail(doubanSearchData[0].id).catch(() => null);
+                }
             }
 
             const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
             const resourceResult = resourceData.status === 'fulfilled' ? resourceData.value : [];
             const posterResult = posterData.status === 'fulfilled' ? posterData.value : null;
+            const omdbProfile = posterResult && posterResult.omdb ? posterResult : null;
 
             const summary = (tmdbDetail && tmdbDetail.summary) || (wikiResult && wikiResult.extract) || (doubanDetail && doubanDetail.summary) || candidate.summary || '';
             const genres = tmdbDetail && tmdbDetail.genres && tmdbDetail.genres.length > 0
@@ -368,35 +549,8 @@ async function handleSearch() {
             renderSynopsis(wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : tmdbDetail && tmdbDetail.summary ? 'TMDB' : doubanDetail && doubanDetail.summary ? 'DOUBAN' : 'NO DATA', summary);
             renderResources(resourceResult);
             loadPoster(posterUrl);
-
-            let externalRatings = null;
-            if (imdbId) {
-                externalRatings = await GlobalRatingAPI.getRatings(imdbId, tmdbDetail ? tmdbDetail.originalTitle : candidate.originalTitle, tmdbDetail ? tmdbDetail.year : candidate.year).catch(() => null);
-            }
-
-            const posterIsTmdb = Boolean(posterResult && posterResult.tmdb);
-            const imdbScore = externalRatings && externalRatings.imdb
-                ? externalRatings.imdb
-                : !posterIsTmdb && posterResult && posterResult.imdb
-                    ? posterResult.imdb
-                    : null;
-            const rottenScore = externalRatings && externalRatings.rottenTomatoes
-                ? externalRatings.rottenTomatoes
-                : !posterIsTmdb && posterResult && posterResult.rottenTomatoes
-                    ? posterResult.rottenTomatoes
-                    : null;
-
-            if (imdbScore && els.imdbRatingBox) {
-                els.imdbRating.textContent = imdbScore.toFixed(1);
-                els.imdbRatingBox.classList.remove('hidden');
-            }
-            if (rottenScore && els.rottenRatingBox) {
-                els.rottenRating.textContent = `${rottenScore}%`;
-                els.rottenRating.className = rottenScore >= 60
-                    ? 'text-red-500 font-bold'
-                    : 'text-green-500 font-bold';
-                els.rottenRatingBox.classList.remove('hidden');
-            }
+            renderTmdbFacts(tmdbDetail, candidate, summary);
+            renderOmdbProfile(omdbProfile);
 
             renderScore({
                 rating,
@@ -441,18 +595,8 @@ async function handleSearch() {
         renderSynopsis(wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : doubanDetail.summary ? 'DOUBAN' : 'NO DATA', summary);
         renderResources(resourceResult);
         loadPoster(posterUrl);
-
-        if (posterResult && posterResult.imdb && els.imdbRatingBox) {
-            els.imdbRating.textContent = posterResult.imdb.toFixed(1);
-            els.imdbRatingBox.classList.remove('hidden');
-        }
-        if (posterResult && posterResult.rottenTomatoes && els.rottenRatingBox) {
-            els.rottenRating.textContent = `${posterResult.rottenTomatoes}%`;
-            els.rottenRating.className = posterResult.rottenTomatoes >= 60
-                ? 'text-red-500 font-bold'
-                : 'text-green-500 font-bold';
-            els.rottenRatingBox.classList.remove('hidden');
-        }
+        renderTmdbFacts(null, show, summary);
+        renderOmdbProfile(posterResult && posterResult.omdb ? posterResult : null);
 
         renderScore({
             rating: doubanDetail.rating || 0,

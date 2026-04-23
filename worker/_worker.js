@@ -246,6 +246,11 @@ async function handleDoubanSearch(query) {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
             headers: DOUBAN_SEARCH_HEADERS
         });
+
+        if (!res.ok) {
+            return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
+        }
+
         const text = await res.text();
         const data = JSON.parse(text);
         return jsonResponse(data);
@@ -321,6 +326,10 @@ async function handleResourceSearch(query) {
             headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
         });
 
+        if (!res.ok) {
+            return jsonResponse({ error: `By669 rejected with status ${res.status}` }, res.status);
+        }
+
         const data = await res.json();
         const links = (data.data || [])
             .filter(item => item.attributes && item.attributes.title)
@@ -339,10 +348,15 @@ async function handleResourceSearch(query) {
 async function handleOmdbById(imdbId, env) {
     try {
         const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${getOmdbApiKey(env)}`);
+
+        if (!res.ok) {
+            return jsonResponse({ error: `OMDb rejected with status ${res.status}` }, res.status);
+        }
+
         const data = await res.json();
 
         if (data.Response === "True") {
-            return jsonResponse(extractOmdbRatings(data));
+            return jsonResponse(extractOmdbProfile(data));
         }
         return jsonResponse({ error: "OMDb: Not found" }, 404);
     } catch (e) {
@@ -358,17 +372,22 @@ async function handleOmdbSearch(title, year, env) {
         if (year) url += `&y=${year}`;
 
         const res = await fetch(url);
+
+        if (!res.ok) {
+            return jsonResponse({ error: `OMDb rejected with status ${res.status}` }, res.status);
+        }
+
         const data = await res.json();
 
         if (data.Response === "True") {
-            return jsonResponse(extractOmdbRatings(data));
+            return jsonResponse(extractOmdbProfile(data));
         }
 
         if (year) {
             const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
             const fallbackData = await fallbackRes.json();
             if (fallbackData.Response === "True") {
-                return jsonResponse(extractOmdbRatings(fallbackData));
+                return jsonResponse(extractOmdbProfile(fallbackData));
             }
         }
 
@@ -378,22 +397,56 @@ async function handleOmdbSearch(title, year, env) {
     }
 }
 
-function extractOmdbRatings(data) {
-    const imdb = data.imdbRating && data.imdbRating !== "N/A" ? parseFloat(data.imdbRating) : null;
-    let rotten = null;
+function cleanOmdbValue(value) {
+    return value && value !== "N/A" ? value : null;
+}
 
-    if (data.Ratings) {
-        const rTomato = data.Ratings.find(r => r.Source === "Rotten Tomatoes");
-        if (rTomato) {
-            rotten = parseInt(rTomato.Value.replace('%', ''));
-        }
-    }
+function cleanOmdbFloat(value) {
+    const clean = cleanOmdbValue(value);
+    return clean ? Number.parseFloat(clean) : null;
+}
 
+function cleanOmdbInt(value) {
+    const clean = cleanOmdbValue(value);
+    return clean ? Number.parseInt(clean, 10) : null;
+}
+
+function splitOmdbList(value) {
+    const clean = cleanOmdbValue(value);
+    return clean ? clean.split(",").map(item => item.trim()).filter(Boolean) : [];
+}
+
+function extractRottenTomato(ratings) {
+    if (!Array.isArray(ratings)) return null;
+    const rTomato = ratings.find(r => r.Source === "Rotten Tomatoes");
+    return rTomato ? Number.parseInt(rTomato.Value.replace('%', ''), 10) : null;
+}
+
+function extractOmdbProfile(data) {
     return {
-        imdb,
-        imdbVotes: data.imdbVotes,
-        rottenTomatoes: rotten,
-        poster: data.Poster && data.Poster !== "N/A" ? data.Poster : null
+        omdb: true,
+        imdb: cleanOmdbFloat(data.imdbRating),
+        imdbVotes: cleanOmdbValue(data.imdbVotes),
+        rottenTomatoes: extractRottenTomato(data.Ratings),
+        poster: cleanOmdbValue(data.Poster),
+        title: cleanOmdbValue(data.Title),
+        year: cleanOmdbValue(data.Year),
+        type: cleanOmdbValue(data.Type),
+        rated: cleanOmdbValue(data.Rated),
+        released: cleanOmdbValue(data.Released),
+        runtime: cleanOmdbValue(data.Runtime),
+        genres: splitOmdbList(data.Genre),
+        director: cleanOmdbValue(data.Director),
+        writer: cleanOmdbValue(data.Writer),
+        actors: cleanOmdbValue(data.Actors),
+        plot: cleanOmdbValue(data.Plot),
+        language: cleanOmdbValue(data.Language),
+        country: cleanOmdbValue(data.Country),
+        awards: cleanOmdbValue(data.Awards),
+        boxOffice: cleanOmdbValue(data.BoxOffice),
+        production: cleanOmdbValue(data.Production),
+        metascore: cleanOmdbInt(data.Metascore),
+        imdbId: cleanOmdbValue(data.imdbID)
     };
 }
 
@@ -401,10 +454,19 @@ async function handlePosterSearch(title, year, env) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     try {
-        const tmdbPoster = await tryTmdbForPoster(title, year, env);
-        if (tmdbPoster) return jsonResponse(tmdbPoster);
+        const tmdbPromise = tryTmdbForPoster(title, year, env);
+        const omdbPromise = tryOmdbForPoster(title, year, env);
 
-        let result = await tryOmdbForPoster(title, year, env);
+        const tmdbPoster = await tmdbPromise;
+        if (tmdbPoster) {
+            const omdbProfile = await omdbPromise.catch(() => null);
+            return jsonResponse({
+                ...tmdbPoster,
+                omdb: omdbProfile
+            });
+        }
+
+        let result = await omdbPromise;
         if (result) return jsonResponse(result);
 
         const enTitle = await getEnglishTitleFromWiki(title);
@@ -455,29 +517,21 @@ async function tryOmdbForPoster(title, year, env) {
     if (year) url += `&y=${year}`;
 
     const res = await fetch(url);
+    if (!res.ok) return null;
+
     const data = await res.json();
 
     if (data.Response === "True" && data.Poster && data.Poster !== "N/A") {
-        return {
-            poster: data.Poster,
-            imdb: data.imdbRating && data.imdbRating !== "N/A" ? parseFloat(data.imdbRating) : null,
-            imdbVotes: data.imdbVotes,
-            rottenTomatoes: extractRottenTomato(data.Ratings),
-            imdbId: data.imdbID
-        };
+        return extractOmdbProfile(data);
     }
 
     if (year) {
         const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
+        if (!fallbackRes.ok) return null;
+
         const fallbackData = await fallbackRes.json();
         if (fallbackData.Response === "True" && fallbackData.Poster && fallbackData.Poster !== "N/A") {
-            return {
-                poster: fallbackData.Poster,
-                imdb: fallbackData.imdbRating && fallbackData.imdbRating !== "N/A" ? parseFloat(fallbackData.imdbRating) : null,
-                imdbVotes: fallbackData.imdbVotes,
-                rottenTomatoes: extractRottenTomato(fallbackData.Ratings),
-                imdbId: fallbackData.imdbID
-            };
+            return extractOmdbProfile(fallbackData);
         }
     }
 
@@ -486,15 +540,8 @@ async function tryOmdbForPoster(title, year, env) {
 
 async function getEnglishTitleFromWiki(zhTitle) {
     try {
-        const searchRes = await fetch(
-            `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(zhTitle)}&format=json&origin=*`,
-            { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
-        );
-        const searchData = await searchRes.json();
-
-        if (!searchData.query || !searchData.query.search.length) return null;
-
-        const title = searchData.query.search[0].title;
+        const title = await searchZhWikiTitle(zhTitle);
+        if (!title) return null;
 
         const pageRes = await fetch(
             `https://zh.wikipedia.org/w/api.php?action=query&prop=langlinks&titles=${encodeURIComponent(title)}&lllang=en&format=json&origin=*`,
@@ -517,10 +564,15 @@ async function getEnglishTitleFromWiki(zhTitle) {
     }
 }
 
-function extractRottenTomato(ratings) {
-    if (!ratings) return null;
-    const rTomato = ratings.find(r => r.Source === "Rotten Tomatoes");
-    return rTomato ? parseInt(rTomato.Value.replace('%', '')) : null;
+async function searchZhWikiTitle(query) {
+    const searchRes = await fetch(
+        `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
+        { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
+    );
+    const searchData = await searchRes.json();
+
+    if (!searchData.query || !searchData.query.search.length) return null;
+    return searchData.query.search[0].title;
 }
 
 async function handleWikiZh(query) {
