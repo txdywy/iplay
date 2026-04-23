@@ -1,4 +1,4 @@
-import { DoubanAPI, WikiAPI, ResourceAPI, GlobalRatingAPI } from './api.js';
+import { DoubanAPI, WikiAPI, ResourceAPI, GlobalRatingAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 
 // DOM Elements
@@ -46,35 +46,14 @@ function showToast(msg) {
 }
 
 /**
- * 智能加载海报图片
- * 优先级：OMDb > 豆瓣高清 > 豆瓣普清 > Placeholder
+ * 加载海报 - 只从 OMDb 获取
  */
-function loadPoster(doubanImg, omdbPoster) {
-    const candidates = [];
-
-    if (omdbPoster) {
-        candidates.push(omdbPoster); // IMDb 官方海报，质量最高
+function loadPoster(posterUrl) {
+    if (posterUrl) {
+        els.cover.src = posterUrl;
+    } else {
+        els.cover.src = 'https://via.placeholder.com/400x600/141417/333333?text=NO+POSTER';
     }
-    if (doubanImg) {
-        candidates.push(doubanImg.replace('s_ratio_poster', 'l_ratio_poster')); // 豆瓣高清
-        candidates.push(doubanImg); // 豆瓣普清
-    }
-    candidates.push('https://via.placeholder.com/400x600/141417/333333?text=NO+POSTER');
-
-    let index = 0;
-
-    function tryLoad() {
-        if (index >= candidates.length) return;
-        els.cover.src = candidates[index];
-        index++;
-    }
-
-    // 清除之前的 onerror，设置新的错误处理链
-    els.cover.onerror = () => {
-        tryLoad();
-    };
-
-    tryLoad();
 }
 
 // Main Process
@@ -108,67 +87,47 @@ async function handleSearch() {
 
         showToast("Signal locked. Initiating deep scan...");
 
-        // 2. 并行获取所有数据（包括 OMDb，不再串行！）
-        const [doubanDetailResult, wikiData, resourceData, omdbData] = await Promise.allSettled([
+        // 2. 并行获取所有数据
+        const [doubanDetailResult, wikiData, resourceData, posterData] = await Promise.allSettled([
             DoubanAPI.getDetail(show.id),
             WikiAPI.getSummary(show.title),
             ResourceAPI.search(show.title),
-            // OMDb：优先用 IMDb ID，否则用英文标题
-            (async () => {
-                // 先等豆瓣详情，如果有 IMDb ID 就直接用
-                // 但这里我们不能等，所以要先假设没有 IMDb ID，用英文标题搜
-                // 如果豆瓣详情先返回了 IMDb ID，我们再重试？
-                // 不，这样太复杂。我们先同时用英文标题搜 OMDb，如果豆瓣返回了 IMDb ID 我们再补充查询
-                const byTitle = await GlobalRatingAPI.getRatings(null, show.sub_title, show.year);
-                return byTitle;
-            })()
+            PosterAPI.getPoster(show.title, show.year) // 专用海报接口，会智能获取英文名
         ]);
 
         // 3. 处理豆瓣详情
         let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "", imdbId: "" };
-        let omdbPoster = null;
 
         if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value && !doubanDetailResult.value.error) {
             doubanDetail = doubanDetailResult.value;
             els.doubanRating.textContent = doubanDetail.rating > 0 ? doubanDetail.rating.toFixed(1) : '-.-';
-
-            // 如果豆瓣详情有 IMDb ID，且之前的 OMDb 用标题搜失败了，用 IMDb ID 再搜一次
-            if (doubanDetail.imdbId && omdbData.status === 'fulfilled' && !omdbData.value) {
-                try {
-                    const byId = await GlobalRatingAPI.getRatings(doubanDetail.imdbId);
-                    if (byId) {
-                        omdbData.value = byId;
-                    }
-                } catch (e) {
-                    console.warn("OMDb by ID retry failed:", e);
-                }
-            }
         } else {
             console.warn("Douban detail fetch failed:", doubanDetailResult);
             els.doubanRating.textContent = '?';
             showToast("Warning: Douban node unstable");
         }
 
-        // 4. 处理 OMDb 数据（评分 + 海报）
-        if (omdbData.status === 'fulfilled' && omdbData.value) {
-            const ratings = omdbData.value;
-            omdbPoster = ratings.poster || null;
+        // 4. 处理海报 + 全球评分（全部来自 OMDb）
+        let posterUrl = null;
+        if (posterData.status === 'fulfilled' && posterData.value && !posterData.value.error) {
+            const data = posterData.value;
+            posterUrl = data.poster || null;
 
-            if (ratings.imdb && els.imdbRatingBox) {
-                els.imdbRating.textContent = ratings.imdb.toFixed(1);
+            if (data.imdb && els.imdbRatingBox) {
+                els.imdbRating.textContent = data.imdb.toFixed(1);
                 els.imdbRatingBox.classList.remove('hidden');
             }
-            if (ratings.rottenTomatoes && els.rottenRatingBox) {
-                els.rottenRating.textContent = `${ratings.rottenTomatoes}%`;
-                els.rottenRating.className = ratings.rottenTomatoes >= 60
+            if (data.rottenTomatoes && els.rottenRatingBox) {
+                els.rottenRating.textContent = `${data.rottenTomatoes}%`;
+                els.rottenRating.className = data.rottenTomatoes >= 60
                     ? "text-red-500 font-bold"
                     : "text-green-500 font-bold";
                 els.rottenRatingBox.classList.remove('hidden');
             }
         }
 
-        // 5. 加载海报（数据驱动，所有数据都拿到了再决定）
-        loadPoster(show.img, omdbPoster);
+        // 5. 加载海报（纯 OMDb）
+        loadPoster(posterUrl);
 
         // 6. 渲染类型标签
         if (doubanDetail.genres && doubanDetail.genres.length > 0) {

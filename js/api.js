@@ -88,3 +88,18 @@ export const GlobalRatingAPI = {
         return null;
     }
 };
+
+/**
+ * 海报专用接口：优先 OMDb，智能获取英文名
+ */
+export const PosterAPI = {
+    async getPoster(title, year) {
+        if (!title) return null;
+        try {
+            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${year || ''}`);
+        } catch (e) {
+            console.warn("Poster fetch failed:", e);
+            return null;
+        }
+    }
+};
