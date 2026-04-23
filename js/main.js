@@ -74,11 +74,11 @@ async function handleSearch() {
         els.title.textContent = show.title;
         els.subTitle.textContent = `${show.year} // ${show.type === 'movie' ? 'FILM' : 'SERIES'} // ID:${show.id}`;
 
+        // 海报加载策略：先挂豆瓣的，等 OMDb 返回后再替换为 IMDb 高清海报
         if (show.img) {
-            const hqImg = show.img.replace('s_ratio_poster', 'l_ratio_poster');
-            els.cover.src = hqImg;
+            els.cover.src = show.img.replace('s_ratio_poster', 'l_ratio_poster');
             els.cover.onerror = () => {
-                els.cover.src = show.img;
+                els.cover.src = show.img; // 回退到普清
                 els.cover.onerror = null;
             };
         }
@@ -118,9 +118,15 @@ async function handleSearch() {
              .catch(e => ({ status: 'rejected', reason: e }));
         }
 
-        // 5. 渲染全球评分
+        // 5. 渲染全球评分 + IMDb 海报
         if (globalRatingData.status === 'fulfilled' && globalRatingData.value) {
             const ratings = globalRatingData.value;
+
+            // IMDb 海报优先
+            if (ratings.poster) {
+                els.cover.src = ratings.poster;
+            }
+
             if (ratings.imdb && els.imdbRatingBox) {
                 els.imdbRating.textContent = ratings.imdb.toFixed(1);
                 els.imdbRatingBox.classList.remove('hidden');
@@ -145,10 +151,13 @@ async function handleSearch() {
 
         // 7. 渲染剧情简介（中文维基优先，豆瓣中文回退）
         let hasWiki = false;
-        if (wikiData.status === 'fulfilled' && wikiData.value && wikiData.value.extract) {
+        const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
+
+        // 检查中文维基返回是否有效（有 extract 且没有 error）
+        if (wikiResult && wikiResult.extract && !wikiResult.error) {
             els.wikiSummary.innerHTML = `
                 <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">ZH.WIKIPEDIA</span><br>
-                ${wikiData.value.extract}
+                ${wikiResult.extract}
             `;
             hasWiki = true;
         } else if (doubanDetail.summary) {
@@ -157,7 +166,10 @@ async function handleSearch() {
                 ${doubanDetail.summary}
             `;
         } else {
-            els.wikiSummary.textContent = "Classified file. No synopsis available in current sector.";
+            els.wikiSummary.innerHTML = `
+                <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">NO DATA</span><br>
+                <span class="text-cinema-400 italic">暂无剧情简介</span>
+            `;
         }
 
         // 8. 渲染资源

@@ -239,7 +239,8 @@ function extractOmdbRatings(data) {
     return {
         imdb,
         imdbVotes: data.imdbVotes,
-        rottenTomatoes: rotten
+        rottenTomatoes: rotten,
+        poster: data.Poster && data.Poster !== "N/A" ? data.Poster : null
     };
 }
 
