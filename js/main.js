@@ -1,4 +1,4 @@
-import { DoubanAPI, WikiAPI, ResourceAPI } from './api.js';
+import { DoubanAPI, WikiAPI, ResourceAPI, GlobalRatingAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 
 // DOM Elements
@@ -12,7 +12,14 @@ const els = {
     cover: document.getElementById('showCover'),
     title: document.getElementById('showTitle'),
     subTitle: document.getElementById('showSubTitle'),
+
+    // 评分区
     doubanRating: document.getElementById('doubanRating'),
+    imdbRatingBox: document.getElementById('imdbRatingBox'),
+    imdbRating: document.getElementById('imdbRating'),
+    rottenRatingBox: document.getElementById('rottenRatingBox'),
+    rottenRating: document.getElementById('rottenRating'),
+
     tags: document.getElementById('showTags'),
 
     recScore: document.getElementById('recScore'),
@@ -20,7 +27,6 @@ const els = {
     recBar: document.getElementById('recBar'),
     scoreDetails: document.getElementById('scoreDetails'),
 
-    // 新增：推荐报告UI元素
     reportArea: document.getElementById('reportArea'),
     prosList: document.getElementById('prosList'),
     consList: document.getElementById('consList'),
@@ -49,15 +55,18 @@ async function handleSearch() {
     els.results.classList.add('hidden');
     els.loading.classList.remove('hidden');
 
-    // Reset Animations
+    // 隐藏外部评分占位
+    if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
+    if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
+
     els.results.querySelectorAll('.fade-up').forEach(el => {
         el.style.animation = 'none';
-        el.offsetHeight; /* trigger reflow */
+        el.offsetHeight;
         el.style.animation = null;
     });
 
     try {
-        // 1. 豆瓣基础搜索 (经由 Worker)
+        // 1. 豆瓣基础搜索
         const searchData = await DoubanAPI.search(query);
         if (!searchData || searchData.length === 0) {
             throw new Error(`Satellite signal lost: No matching records for "${query}"`);
@@ -67,34 +76,62 @@ async function handleSearch() {
         els.title.textContent = show.title;
         els.subTitle.textContent = `${show.year} // ${show.type === 'movie' ? 'FILM' : 'SERIES'} // ID:${show.id}`;
 
-        // 尝试加载高清海报，如果失败则回退到普清
         if (show.img) {
             const hqImg = show.img.replace('s_ratio_poster', 'l_ratio_poster');
             els.cover.src = hqImg;
             els.cover.onerror = () => {
-                els.cover.src = show.img; // 高清图加载失败回退
+                els.cover.src = show.img;
                 els.cover.onerror = null;
             };
         }
 
         showToast("Signal locked. Initiating deep scan...");
 
-        // 2. 并行获取详情数据
-        const [doubanDetailResult, wikiData, resourceData] = await Promise.allSettled([
+        // 2. 获取 Wiki (为了拿到准确的英文名)
+        const wikiData = await WikiAPI.getSummary(show.title);
+        let hasWiki = false;
+        let englishTitle = null;
+
+        if (wikiData && wikiData.extract) {
+            hasWiki = true;
+            // 很多时候 Wiki 的 title 就是准确的英文名
+            englishTitle = wikiData.title.replace(/ \(.+\)/, ''); // 去除括号里的 (TV series) 等
+        } else {
+            // 如果 wiki 没搜到，尝试用豆瓣返回的 sub_title
+            englishTitle = show.sub_title || show.title;
+        }
+
+        // 3. 并行获取豆瓣详情、资源、以及 OMDb 全球评分
+        const [doubanDetailResult, resourceData, globalRatingData] = await Promise.allSettled([
             DoubanAPI.getDetail(show.id),
-            WikiAPI.getSummary(show.title),
-            ResourceAPI.search(show.title)
+            ResourceAPI.search(show.title),
+            GlobalRatingAPI.getRatings(englishTitle, show.year)
         ]);
 
-        // 3. 处理豆瓣详情
+        // 4. 处理豆瓣详情
         let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "" };
-        if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value) {
+        if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value && !doubanDetailResult.value.error) {
             doubanDetail = doubanDetailResult.value;
             els.doubanRating.textContent = doubanDetail.rating > 0 ? doubanDetail.rating.toFixed(1) : '-.-';
         } else {
-            console.warn("Douban detail fetch failed");
+            console.warn("Douban detail fetch failed or rejected");
             els.doubanRating.textContent = '?';
             showToast("Warning: Douban node unstable");
+        }
+
+        // 5. 处理全球评分展示 (IMDb & Rotten Tomatoes)
+        if (globalRatingData.status === 'fulfilled' && globalRatingData.value) {
+            const ratings = globalRatingData.value;
+            if (ratings.imdb && els.imdbRatingBox) {
+                els.imdbRating.textContent = ratings.imdb.toFixed(1);
+                els.imdbRatingBox.classList.remove('hidden');
+            }
+            if (ratings.rottenTomatoes && els.rottenRatingBox) {
+                els.rottenRating.textContent = `${ratings.rottenTomatoes}%`;
+                // 烂番茄新鲜度颜色 (>60% 红番茄，<60% 绿番茄)
+                els.rottenRating.className = ratings.rottenTomatoes >= 60 ? "text-red-500 font-bold" : "text-green-500 font-bold";
+                els.rottenRatingBox.classList.remove('hidden');
+            }
         }
 
         if (doubanDetail.genres && doubanDetail.genres.length > 0) {
@@ -105,17 +142,13 @@ async function handleSearch() {
             els.tags.innerHTML = `<span class="px-3 py-1 border border-cinema-700 text-cinema-400 text-xs font-mono uppercase tracking-widest rounded-full">UNKNOWN CLASS</span>`;
         }
 
-        // 4. 处理剧情简介 (双重来源判断)
-        let hasWiki = false;
-        if (wikiData.status === 'fulfilled' && wikiData.value && wikiData.value.extract) {
-            // 优先使用 Wiki 英文简介
+        // 6. 处理剧情简介
+        if (hasWiki) {
             els.wikiSummary.innerHTML = `
                 <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">WIKIPEDIA</span><br>
-                ${wikiData.value.extract}
+                ${wikiData.extract}
             `;
-            hasWiki = true;
         } else if (doubanDetail.summary) {
-            // 如果 Wiki 没有，回退到豆瓣中文简介
             els.wikiSummary.innerHTML = `
                 <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">DOUBAN</span><br>
                 ${doubanDetail.summary}
@@ -124,7 +157,7 @@ async function handleSearch() {
             els.wikiSummary.textContent = "Classified file. No synopsis available in current sector.";
         }
 
-        // 5. 处理资源 (by669)
+        // 7. 处理资源
         els.resourceList.innerHTML = '';
         if (resourceData.status === 'fulfilled' && resourceData.value && resourceData.value.length > 0) {
             const links = resourceData.value;
@@ -140,13 +173,12 @@ async function handleSearch() {
             els.resourceList.innerHTML = '<li class="p-4 text-sm font-mono text-cinema-400">No raw resources detected.</li>';
         }
 
-        // 6. 计算推荐指数
+        // 8. 计算推荐指数
         const scoreData = calculateRecommendationScore({
             ...doubanDetail,
             hasWiki
         });
 
-        // 渲染推荐指数
         const labelInfo = getRecommendationLabel(scoreData.score);
         els.recScore.textContent = scoreData.score;
         els.recScore.className = `text-5xl md:text-7xl font-black font-mono ${labelInfo.color}`;
@@ -170,7 +202,6 @@ async function handleSearch() {
             <span>PRF: ${scoreData.details.preference}</span>
         `;
 
-        // 7. 渲染 AI 推荐理由报告
         if (els.reportArea) {
             els.prosList.innerHTML = scoreData.report.pros.length > 0
                 ? scoreData.report.pros.map(p => `<li class="flex gap-2 items-start"><i class="fas fa-plus text-green-500 mt-1"></i> <span>${p}</span></li>`).join('')

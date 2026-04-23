@@ -1,10 +1,11 @@
 /**
- * Cloudflare Worker - iPlay API 代理 (加强防屏蔽版)
+ * Cloudflare Worker - iPlay API 代理 (加强防屏蔽版 + OMDb 全球评分聚合)
  */
+
+const OMDB_API_KEY = "80077e97"; // 用户提供的 OMDb API Key
 
 export default {
     async fetch(request, env, ctx) {
-        // 1. 处理 CORS 预检请求 (Options)
         if (request.method === "OPTIONS") {
             return new Response(null, {
                 headers: {
@@ -18,7 +19,6 @@ export default {
 
         const url = new URL(request.url);
 
-        // 2. 路由处理
         if (url.pathname.startsWith("/api/douban/search")) {
             return await handleDoubanSearch(url.searchParams.get("q"));
         }
@@ -31,13 +31,15 @@ export default {
             return await handleResourceSearch(url.searchParams.get("q"));
         }
 
+        if (url.pathname.startsWith("/api/omdb")) {
+            // 需要英文标题和年份来提高准确率
+            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"));
+        }
+
         return new Response("Not Found", { status: 404 });
     }
 };
 
-/**
- * 通用响应生成器 (带 CORS 头)
- */
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status: status,
@@ -48,25 +50,13 @@ function jsonResponse(data, status = 200) {
     });
 }
 
-// 模拟真实浏览器的强力 Headers
 const BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Cache-Control": "max-age=0",
-    "Sec-Ch-Ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"",
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": "\"Windows\"",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1"
+    "Cache-Control": "max-age=0"
 };
 
-/**
- * 豆瓣搜索
- */
 async function handleDoubanSearch(query) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
@@ -81,9 +71,6 @@ async function handleDoubanSearch(query) {
     }
 }
 
-/**
- * 豆瓣详情抓取 (评分、类型、简介)
- */
 async function handleDoubanDetail(id) {
     if (!id) return jsonResponse({ error: "Missing id" }, 400);
 
@@ -91,19 +78,16 @@ async function handleDoubanDetail(id) {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
         const res = await fetch(fetchUrl, {
             headers: BROWSER_HEADERS,
-            // CF Worker 防止被强制重定向或缓存问题
             redirect: "follow"
         });
 
         if (!res.ok) {
-            // 如果豆瓣依然报 403，返回特定的错误告知前端
             return jsonResponse({ error: `Douban rejected the request with status ${res.status}` }, res.status);
         }
 
         let result = { rating: 0, votes: 0, genres: [], summary: "" };
         let isParsingSummary = false;
 
-        // 使用 HTMLRewriter
         const rewriter = new HTMLRewriter()
             .on('strong[property="v:average"]', {
                 text(text) { result.rating = parseFloat(text.text) || result.rating; }
@@ -117,26 +101,20 @@ async function handleDoubanDetail(id) {
             .on('span[property="v:summary"]', {
                 element(el) { isParsingSummary = true; },
                 text(text) {
-                    if (isParsingSummary) {
-                        result.summary += text.text;
-                    }
+                    if (isParsingSummary) result.summary += text.text;
                 }
             })
-            .on('span[property="v:summary"].all', { // 处理折叠的长简介
+            .on('span[property="v:summary"].all', {
                 element(el) {
-                    result.summary = ""; // 清空之前的短简介
+                    result.summary = "";
                     isParsingSummary = true;
                 },
                 text(text) {
-                    if (isParsingSummary) {
-                        result.summary += text.text;
-                    }
+                    if (isParsingSummary) result.summary += text.text;
                 }
             });
 
         await rewriter.transform(res).text();
-
-        // 清理简介中的空白字符
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
 
         return jsonResponse(result);
@@ -145,9 +123,6 @@ async function handleDoubanDetail(id) {
     }
 }
 
-/**
- * by669 夸克资源搜索
- */
 async function handleResourceSearch(query) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
@@ -157,7 +132,6 @@ async function handleResourceSearch(query) {
         });
 
         const data = await res.json();
-
         const links = (data.data || [])
             .filter(item => item.attributes && item.attributes.title)
             .map(item => ({
@@ -170,4 +144,55 @@ async function handleResourceSearch(query) {
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
+}
+
+/**
+ * 聚合全球评分 (IMDb & Rotten Tomatoes)
+ */
+async function handleOmdbSearch(title, year) {
+    if (!title) return jsonResponse({ error: "Missing title" }, 400);
+
+    try {
+        // 先尝试带年份搜索（更精确）
+        let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`;
+        if (year) url += `&y=${year}`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (data.Response === "True") {
+            return jsonResponse(extractOmdbRatings(data));
+        }
+
+        // 如果带年份没找到，可能年份有差，尝试不带年份
+        if (year) {
+            const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`);
+            const fallbackData = await fallbackRes.json();
+            if (fallbackData.Response === "True") {
+                return jsonResponse(extractOmdbRatings(fallbackData));
+            }
+        }
+
+        return jsonResponse({ error: "Not found on OMDb" }, 404);
+    } catch (e) {
+        return jsonResponse({ error: e.message }, 500);
+    }
+}
+
+function extractOmdbRatings(data) {
+    let imdb = data.imdbRating && data.imdbRating !== "N/A" ? parseFloat(data.imdbRating) : null;
+    let rotten = null;
+
+    if (data.Ratings) {
+        const rTomato = data.Ratings.find(r => r.Source === "Rotten Tomatoes");
+        if (rTomato) {
+            rotten = parseInt(rTomato.Value.replace('%', ''));
+        }
+    }
+
+    return {
+        imdb,
+        imdbVotes: data.imdbVotes,
+        rottenTomatoes: rotten
+    };
 }

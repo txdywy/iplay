@@ -2,12 +2,8 @@
  * API 请求封装 - Cloudflare Worker 版本
  */
 
-// 指向你部署成功的 Cloudflare Worker 域名
-const API_BASE = "https://iplay.andylaw2017.workers.dev";
+const API_BASE = "https://iplay.andylaw2017.workers.dev"; // 指向 Cloudflare Worker
 
-/**
- * 带有超时机制的 fetch
- */
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -32,27 +28,19 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     }
 }
 
-/**
- * 豆瓣 API 接口 (通过我们的 Worker 代理)
- */
 export const DoubanAPI = {
     async search(query) {
         return fetchWithTimeout(`${API_BASE}/api/douban/search?q=${encodeURIComponent(query)}`);
     },
-
     async getDetail(id) {
         return fetchWithTimeout(`${API_BASE}/api/douban/detail?id=${id}`);
     }
 };
 
-/**
- * Wikipedia API (原生支持 CORS，不需要走 Worker)
- */
 export const WikiAPI = {
     async getSummary(query) {
         try {
             const searchRes = await fetchWithTimeout(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`);
-
             if (!searchRes.query || !searchRes.query.search.length) return null;
 
             const title = searchRes.query.search[0].title;
@@ -66,9 +54,6 @@ export const WikiAPI = {
     }
 };
 
-/**
- * by669 资源 API (通过 Worker 代理)
- */
 export const ResourceAPI = {
     async search(query) {
         try {
@@ -76,6 +61,23 @@ export const ResourceAPI = {
         } catch (error) {
             console.error("Resource fetch failed:", error);
             return [];
+        }
+    }
+};
+
+/**
+ * 全球评分聚合 (IMDb & 烂番茄)
+ */
+export const GlobalRatingAPI = {
+    async getRatings(englishTitle, year) {
+        if (!englishTitle) return null;
+        try {
+            let url = `${API_BASE}/api/omdb?title=${encodeURIComponent(englishTitle)}`;
+            if (year) url += `&year=${year}`;
+            return await fetchWithTimeout(url);
+        } catch (error) {
+            console.warn("Global ratings fetch failed:", error);
+            return null;
         }
     }
 };
