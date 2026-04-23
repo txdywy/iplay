@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
+import { TmdbAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 
 const els = {
@@ -72,6 +72,13 @@ function pickBestTmdbMatch(results, query) {
         return title === normalizedQuery || originalTitle === normalizedQuery;
     });
     if (exact) return exact;
+
+    const loose = results.find(item => {
+        const title = normalizeText(item.title);
+        const originalTitle = normalizeText(item.originalTitle);
+        return title.includes(normalizedQuery) || originalTitle.includes(normalizedQuery) || normalizedQuery.includes(title) || normalizedQuery.includes(originalTitle);
+    });
+    if (loose) return loose;
 
     const yearMatch = results.find(item => item.year && String(query).includes(String(item.year)));
     if (yearMatch) return yearMatch;
@@ -164,9 +171,36 @@ function formatCount(value) {
     return new Intl.NumberFormat('en-US').format(value);
 }
 
+function appendInfoCards(container, cards) {
+    if (!container || !Array.isArray(cards)) return;
+    cards.forEach(card => container.appendChild(card));
+}
+
+function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
+    const detail = tmdbDetail && typeof tmdbDetail === 'object' ? tmdbDetail : null;
+    const source = detail || candidate || {};
+    const omdbProfile = posterResult && posterResult.omdb
+        ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult)
+        : null;
+
+    return {
+        detail,
+        candidate: candidate || {},
+        title: source.title || candidate?.title || '—',
+        subtitle: `${source.year || candidate?.year || '????'} // ${source.mediaType === 'movie' ? 'FILM' : source.mediaType === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
+        summary: source.summary || (wikiResult && wikiResult.extract) || candidate?.summary || '',
+        genres: Array.isArray(source.genres) && source.genres.length > 0 ? source.genres : [],
+        rating: source.tmdbRating || candidate?.tmdbRating || 0,
+        votes: source.tmdbVotes || candidate?.tmdbVotes || candidate?.votes || 0,
+        posterUrl: source.poster || candidate?.poster || (posterResult && !posterResult.tmdb ? posterResult.poster : null),
+        omdbProfile,
+        overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : detail && detail.summary ? 'TMDB' : 'NO DATA'
+    };
+}
+
 function createInfoCard(label, value, { wide = false, muted = false } = {}) {
     const card = document.createElement('div');
-    card.className = `${wide ? 'sm:col-span-2' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
+    card.className = `${wide ? 'md:col-span-2' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
 
     const meta = document.createElement('div');
     meta.className = 'text-[10px] uppercase tracking-[0.35em] text-cinema-400';
@@ -185,130 +219,98 @@ function renderGenres(genres) {
     appendBadgeList(els.tags, genres, 'UNKNOWN CLASS');
 }
 
-function renderTmdbFacts(tmdbDetail, candidate, overviewText) {
+function renderTmdbFacts(viewModel) {
     if (!els.tmdbFacts) return;
 
     clearNode(els.tmdbFacts);
 
-    const title = tmdbDetail?.title || candidate?.title || '—';
-    const originalTitle = tmdbDetail?.originalTitle || candidate?.originalTitle || '—';
-    const mediaType = tmdbDetail?.mediaType || candidate?.mediaType || candidate?.type || '—';
-    const year = tmdbDetail?.year || candidate?.year || '—';
-    const tmdbId = tmdbDetail?.id || candidate?.id || candidate?.tmdbId || '—';
-    const imdbId = tmdbDetail?.imdbId || candidate?.imdbId || '—';
-    const votes = formatCount(tmdbDetail?.tmdbVotes || candidate?.tmdbVotes || candidate?.votes || 0);
-    const popularity = typeof tmdbDetail?.popularity === 'number'
-        ? tmdbDetail.popularity.toFixed(1)
-        : typeof candidate?.popularity === 'number'
-            ? candidate.popularity.toFixed(1)
-            : '—';
+    const candidate = viewModel?.candidate || {};
+    const detail = viewModel?.detail || {};
+    const mediaType = detail.mediaType || candidate.mediaType || candidate.type || '—';
 
-    [
-        createInfoCard('Title', title),
-        createInfoCard('Original', originalTitle),
+    appendInfoCards(els.tmdbFacts, [
+        createInfoCard('Title', viewModel?.title || candidate.title),
+        createInfoCard('Original', detail.originalTitle || candidate.originalTitle),
         createInfoCard('Type', mediaType === 'movie' ? 'FILM' : mediaType === 'tv' ? 'SERIES' : mediaType),
-        createInfoCard('Year', year),
-        createInfoCard('TMDB ID', `#${tmdbId}`),
-        createInfoCard('IMDb ID', imdbId),
-        createInfoCard('Votes', votes),
-        createInfoCard('Popularity', popularity)
-    ].forEach(card => els.tmdbFacts.appendChild(card));
+        createInfoCard('Year', detail.year || candidate.year),
+        createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
+        createInfoCard('IMDb ID', detail.imdbId || candidate.imdbId || '—'),
+        createInfoCard('Votes', formatCount(detail.tmdbVotes || candidate.tmdbVotes || candidate.votes || 0)),
+        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—')
+    ]);
 
     if (els.tmdbOverview) {
-        els.tmdbOverview.textContent = overviewText && overviewText.trim() ? overviewText : '暂无 TMDB 概述';
-        els.tmdbOverview.classList.toggle('italic', !overviewText || !overviewText.trim());
-        els.tmdbOverview.classList.toggle('text-cinema-400', !overviewText || !overviewText.trim());
+        els.tmdbOverview.textContent = viewModel?.summary && viewModel.summary.trim() ? viewModel.summary : '暂无 TMDB 概述';
+        els.tmdbOverview.classList.toggle('italic', !viewModel?.summary || !viewModel.summary.trim());
+        els.tmdbOverview.classList.toggle('text-cinema-400', !viewModel?.summary || !viewModel.summary.trim());
     }
 }
 
-function renderOmdbProfile(omdbProfile) {
+function renderTmdbProfile(viewModel) {
     if (!els.omdbPanel || !els.omdbFields) return;
 
-    const profile = omdbProfile && typeof omdbProfile === 'object' ? omdbProfile : null;
+    const vm = viewModel && typeof viewModel === 'object' ? viewModel : null;
     clearNode(els.omdbFields);
 
-    if (!profile) {
+    if (!vm) {
         els.omdbPanel.classList.add('hidden');
         if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
         if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
         return;
     }
 
-    const cards = [];
-    const type = profile.type === 'movie' ? 'FILM' : profile.type === 'series' ? 'SERIES' : formatValue(profile.type);
+    const detail = vm.detail || {};
+    const candidate = vm.candidate || {};
+    const genres = Array.isArray(vm.genres) ? vm.genres : [];
+    const cast = Array.isArray(detail.cast) ? detail.cast : [];
+    const directors = Array.isArray(detail.director) ? detail.director : [];
+    const writers = Array.isArray(detail.writer) ? detail.writer : [];
 
-    if (profile.rated || profile.released || profile.runtime) {
-        cards.push(createInfoCard('Rated', profile.rated));
-        cards.push(createInfoCard('Released', profile.released));
-        cards.push(createInfoCard('Runtime', profile.runtime ? `${profile.runtime} min` : '—'));
-    }
+    appendInfoCards(els.omdbFields, [
+        createInfoCard('Title', vm.title || candidate.title),
+        createInfoCard('Original', detail.originalTitle || candidate.originalTitle),
+        createInfoCard('Type', detail.mediaType === 'movie' ? 'FILM' : detail.mediaType === 'tv' ? 'SERIES' : formatValue(detail.mediaType || candidate.type)),
+        createInfoCard('Year', detail.year || candidate.year),
+        createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
+        createInfoCard('Runtime', detail.runtime ? `${detail.runtime} min` : '—'),
+        createInfoCard('Status', detail.status || '—'),
+        createInfoCard('Language', detail.originalLanguage || '—'),
+        createInfoCard('Votes', formatCount(vm.votes)),
+        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—')
+    ]);
 
-    if (profile.metascore) {
-        cards.push(createInfoCard('Metascore', `${profile.metascore}/100`));
-    }
-
-    if (profile.genres && profile.genres.length > 0) {
-        cards.push(createInfoCard('Genre', profile.genres));
-    }
-
-    cards.push(createInfoCard('Language', profile.language));
-    cards.push(createInfoCard('Country', profile.country));
-    cards.push(createInfoCard('Director', profile.director));
-    cards.push(createInfoCard('Writer', profile.writer));
-    cards.push(createInfoCard('Cast', profile.actors, { wide: true }));
-    cards.push(createInfoCard('Plot', profile.plot, { wide: true }));
-    cards.push(createInfoCard('Awards', profile.awards, { wide: true }));
-    cards.push(createInfoCard('Box Office', profile.boxOffice));
-    cards.push(createInfoCard('Production', profile.production));
-    cards.push(createInfoCard('Title', profile.title));
-    cards.push(createInfoCard('Year', profile.year));
-    cards.push(createInfoCard('Type', type));
-    cards.push(createInfoCard('IMDb ID', profile.imdbId));
-    cards.push(createInfoCard('IMDb Votes', profile.imdbVotes));
-
-    cards.forEach(card => els.omdbFields.appendChild(card));
+    appendInfoCards(els.omdbFields, [
+        vm.summary ? createInfoCard('Overview', vm.summary, { wide: true }) : null,
+        genres.length > 0 ? createInfoCard('Genres', genres, { wide: true }) : null,
+        detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('Production Companies', detail.productionCompanies, { wide: true }) : null,
+        detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('Production Countries', detail.productionCountries, { wide: true }) : null,
+        cast.length > 0 ? createInfoCard('Cast', cast, { wide: true }) : null,
+        directors.length > 0 ? createInfoCard('Director', directors, { wide: true }) : null,
+        writers.length > 0 ? createInfoCard('Writer', writers, { wide: true }) : null,
+        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
+        detail.tmdbRating ? createInfoCard('TMDB Score', `${detail.tmdbRating.toFixed(1)}/10`) : null
+    ].filter(Boolean));
 
     const hasProfileData = Boolean(
-        profile.rated ||
-        profile.released ||
-        profile.runtime ||
-        profile.metascore ||
-        (profile.genres && profile.genres.length > 0) ||
-        profile.language ||
-        profile.country ||
-        profile.director ||
-        profile.writer ||
-        profile.actors ||
-        profile.plot ||
-        profile.awards ||
-        profile.boxOffice ||
-        profile.production ||
-        profile.imdb ||
-        profile.imdbVotes ||
-        profile.imdbId
+        vm.title || detail.originalTitle || vm.summary || genres.length > 0 || cast.length > 0 || directors.length > 0 || writers.length > 0 || detail.imdbId || detail.tmdbRating || detail.tmdbVotes || detail.popularity
     );
     els.omdbPanel.classList.toggle('hidden', !hasProfileData);
 
-    const imdbScore = typeof profile.imdb === 'number' ? profile.imdb : null;
-    if (els.imdbRatingBox && els.imdbRating) {
-        if (imdbScore && imdbScore > 0) {
-            els.imdbRating.textContent = imdbScore.toFixed(1);
-            els.imdbRating.className = 'text-2xl font-mono font-bold text-accent-gold';
-            els.imdbRatingBox.classList.remove('hidden');
-        } else {
-            els.imdbRatingBox.classList.add('hidden');
-        }
+    if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
+    if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
+
+    renderPrimaryRating(vm.rating, 'TMDB');
+
+    if (vm.omdbProfile && vm.omdbProfile.imdb && els.imdbRating && els.imdbRatingBox) {
+        els.imdbRating.textContent = vm.omdbProfile.imdb.toFixed(1);
+        els.imdbRating.className = 'text-2xl font-mono font-bold text-accent-gold';
+        els.imdbRatingBox.classList.remove('hidden');
     }
 
-    const rottenScore = typeof profile.rottenTomatoes === 'number' ? profile.rottenTomatoes : null;
-    if (els.rottenRatingBox && els.rottenRating) {
-        if (rottenScore && rottenScore > 0) {
-            els.rottenRating.textContent = `${rottenScore}%`;
-            els.rottenRating.className = `text-2xl font-mono font-bold ${rottenScore >= 75 ? 'text-green-500' : rottenScore >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
-            els.rottenRatingBox.classList.remove('hidden');
-        } else {
-            els.rottenRatingBox.classList.add('hidden');
-        }
+    if (vm.omdbProfile && vm.omdbProfile.rottenTomatoes && els.rottenRating && els.rottenRatingBox) {
+        els.rottenRating.textContent = `${vm.omdbProfile.rottenTomatoes}%`;
+        els.rottenRating.className = `text-2xl font-mono font-bold ${vm.omdbProfile.rottenTomatoes >= 75 ? 'text-green-500' : vm.omdbProfile.rottenTomatoes >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
+        els.rottenRatingBox.classList.remove('hidden');
     }
 }
 
@@ -461,21 +463,6 @@ async function safeTmdbSearch(query) {
     }
 }
 
-async function safeDoubanFallback(query) {
-    try {
-        const searchData = await DoubanAPI.search(query);
-        if (!searchData || searchData.length === 0) return null;
-
-        const show = searchData[0];
-        const detail = await DoubanAPI.getDetail(show.id).catch(() => null);
-        return { show, detail };
-    } catch (error) {
-        console.warn('Douban fallback failed:', error);
-        return null;
-    }
-}
-
-
 function resetRatingBoxes() {
     if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
     if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
@@ -501,111 +488,49 @@ async function handleSearch() {
         const tmdbSearch = await safeTmdbSearch(query);
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
 
-        if (tmdbResults.length > 0) {
-            const candidate = pickBestTmdbMatch(tmdbResults, query);
-            if (!candidate) throw new Error(`Satellite signal lost: No matching records for "${query}"`);
-
-            showToast('Signal locked. Initiating deep scan...');
-            setText(els.title, candidate.title);
-            setText(els.subTitle, `${candidate.year || '????'} // ${candidate.mediaType === 'movie' ? 'FILM' : 'SERIES'} // TMDB:${candidate.id}`);
-
-            const [tmdbDetailResult, wikiData, resourceData, posterData] = await Promise.allSettled([
-                TmdbAPI.getDetail(candidate.id, candidate.mediaType),
-                WikiAPI.getSummary(candidate.title),
-                ResourceAPI.search(candidate.title),
-                PosterAPI.getPoster(candidate.title, candidate.year)
-            ]);
-
-            const tmdbDetail = tmdbDetailResult.status === 'fulfilled' && tmdbDetailResult.value && !tmdbDetailResult.value.error
-                ? tmdbDetailResult.value
-                : null;
-
-            let doubanDetail = null;
-            const needsDoubanFallback = !tmdbDetail || !tmdbDetail.summary || !tmdbDetail.genres || tmdbDetail.genres.length === 0 || !tmdbDetail.tmdbRating;
-            if (needsDoubanFallback) {
-                const doubanSearchData = await DoubanAPI.search(query).catch(() => null);
-                if (Array.isArray(doubanSearchData) && doubanSearchData.length > 0) {
-                    doubanDetail = await DoubanAPI.getDetail(doubanSearchData[0].id).catch(() => null);
-                }
-            }
-
-            const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
-            const resourceResult = resourceData.status === 'fulfilled' ? resourceData.value : [];
-            const posterResult = posterData.status === 'fulfilled' ? posterData.value : null;
-            const omdbProfile = posterResult && posterResult.omdb ? posterResult : null;
-
-            const summary = (tmdbDetail && tmdbDetail.summary) || (wikiResult && wikiResult.extract) || (doubanDetail && doubanDetail.summary) || candidate.summary || '';
-            const genres = tmdbDetail && tmdbDetail.genres && tmdbDetail.genres.length > 0
-                ? tmdbDetail.genres
-                : doubanDetail && doubanDetail.genres ? doubanDetail.genres : [];
-            const rating = (tmdbDetail && tmdbDetail.tmdbRating) || (doubanDetail && doubanDetail.rating) || candidate.tmdbRating || 0;
-            const votes = (tmdbDetail && tmdbDetail.tmdbVotes) || (doubanDetail && doubanDetail.votes) || candidate.tmdbVotes || 0;
-            const imdbId = (tmdbDetail && tmdbDetail.imdbId) || (doubanDetail && doubanDetail.imdbId) || candidate.imdbId || null;
-            const posterUrl = (tmdbDetail && tmdbDetail.poster) || candidate.poster || (posterResult && !posterResult.tmdb ? posterResult.poster : null);
-
-            renderPrimaryRating(rating, 'TMDB');
-            renderBackupDoubanRating(doubanDetail && doubanDetail.rating ? doubanDetail.rating : 0);
-            renderGenres(genres);
-            renderSynopsis(wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : tmdbDetail && tmdbDetail.summary ? 'TMDB' : doubanDetail && doubanDetail.summary ? 'DOUBAN' : 'NO DATA', summary);
-            renderResources(resourceResult);
-            loadPoster(posterUrl);
-            renderTmdbFacts(tmdbDetail, candidate, summary);
-            renderOmdbProfile(omdbProfile);
-
-            renderScore({
-                rating,
-                votes,
-                genres,
-                hasWiki: Boolean(wikiResult && wikiResult.extract),
-                summary,
-                source: 'tmdb'
-            }, 'TMDB');
-
-            els.results.classList.remove('hidden');
-            return;
+        if (tmdbResults.length === 0) {
+            throw new Error(`TMDB 未找到“${query}”的结果`);
         }
 
-        const doubanFallback = await safeDoubanFallback(query);
-        if (!doubanFallback || !doubanFallback.show) {
-            throw new Error(`Satellite signal lost: No matching records for "${query}"`);
-        }
+        const candidate = pickBestTmdbMatch(tmdbResults, query);
+        if (!candidate) throw new Error(`TMDB 未找到“${query}”的匹配结果`);
 
-        const show = doubanFallback.show;
-        const doubanDetail = doubanFallback.detail && !doubanFallback.detail.error ? doubanFallback.detail : { rating: 0, votes: 0, genres: [], summary: '', imdbId: '' };
+        showToast('Signal locked. Initiating deep scan...');
 
-        showToast('TMDB unavailable. Falling back to Douban...');
-        setText(els.title, show.title);
-        setText(els.subTitle, `${show.year || '????'} // ${show.type === 'movie' ? 'FILM' : 'SERIES'} // DOUBAN:${show.id}`);
-
-        const [wikiData, resourceData, posterData] = await Promise.allSettled([
-            WikiAPI.getSummary(show.title),
-            ResourceAPI.search(show.title),
-            PosterAPI.getPoster(show.title, show.year)
+        const [tmdbDetailResult, wikiData, resourceData, posterData] = await Promise.allSettled([
+            TmdbAPI.getDetail(candidate.id, candidate.mediaType),
+            WikiAPI.getSummary(candidate.title),
+            ResourceAPI.search(candidate.title),
+            PosterAPI.getPoster(candidate.title, candidate.year)
         ]);
+
+        const tmdbDetail = tmdbDetailResult.status === 'fulfilled' && tmdbDetailResult.value && !tmdbDetailResult.value.error
+            ? tmdbDetailResult.value
+            : null;
 
         const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
         const resourceResult = resourceData.status === 'fulfilled' ? resourceData.value : [];
         const posterResult = posterData.status === 'fulfilled' ? posterData.value : null;
-        const summary = (wikiResult && wikiResult.extract) || doubanDetail.summary || '';
-        const posterUrl = posterResult && posterResult.poster ? posterResult.poster : null;
+        const viewModel = buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult);
 
-        renderPrimaryRating(doubanDetail.rating || 0, 'DOUBAN');
+        setText(els.title, viewModel.title);
+        setText(els.subTitle, viewModel.subtitle);
         renderBackupDoubanRating(0);
-        renderGenres(doubanDetail.genres || []);
-        renderSynopsis(wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : doubanDetail.summary ? 'DOUBAN' : 'NO DATA', summary);
+        renderGenres(viewModel.genres);
+        renderSynopsis(viewModel.overviewSource, viewModel.summary);
         renderResources(resourceResult);
-        loadPoster(posterUrl);
-        renderTmdbFacts(null, show, summary);
-        renderOmdbProfile(posterResult && posterResult.omdb ? posterResult : null);
+        loadPoster(viewModel.posterUrl);
+        renderTmdbFacts(viewModel);
+        renderTmdbProfile(viewModel);
 
         renderScore({
-            rating: doubanDetail.rating || 0,
-            votes: doubanDetail.votes || 0,
-            genres: doubanDetail.genres || [],
+            rating: viewModel.rating,
+            votes: viewModel.votes,
+            genres: viewModel.genres,
             hasWiki: Boolean(wikiResult && wikiResult.extract),
-            summary,
-            source: 'douban'
-        }, 'DOUBAN');
+            summary: viewModel.summary,
+            source: 'tmdb'
+        }, 'TMDB');
 
         els.results.classList.remove('hidden');
     } catch (err) {

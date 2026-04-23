@@ -122,6 +122,19 @@ function normalizeTmdbDetail(data, type) {
     const title = data.title || data.name || "";
     const originalTitle = data.original_title || data.original_name || title;
     const year = parseYear(data.release_date || data.first_air_date);
+    const credits = data.credits || {};
+    const cast = Array.isArray(credits.cast) ? credits.cast.slice(0, 8).map(person => person.name).filter(Boolean) : [];
+    const crew = Array.isArray(credits.crew) ? credits.crew : [];
+    const director = [];
+    const writer = [];
+
+    for (const person of crew) {
+        if (person.job === "Director" || person.department === "Directing") director.push(person.name);
+        if (["Writer", "Screenplay", "Story"].includes(person.job)) writer.push(person.name);
+    }
+
+    const cleanDirector = director.filter(Boolean);
+    const cleanWriter = writer.filter(Boolean);
 
     return {
         id: data.id,
@@ -133,6 +146,14 @@ function normalizeTmdbDetail(data, type) {
         backdrop: tmdbImage(data.backdrop_path, "w780"),
         summary: data.overview || "",
         genres: Array.isArray(data.genres) ? data.genres.map(g => g.name).filter(Boolean) : [],
+        runtime: data.runtime ?? null,
+        status: data.status || null,
+        originalLanguage: data.original_language || null,
+        productionCompanies: Array.isArray(data.production_companies) ? data.production_companies.map(c => c.name).filter(Boolean) : [],
+        productionCountries: Array.isArray(data.production_countries) ? data.production_countries.map(c => c.name).filter(Boolean) : [],
+        cast,
+        director: cleanDirector,
+        writer: cleanWriter,
         tmdbRating: data.vote_average ?? null,
         tmdbVotes: data.vote_count ?? 0,
         imdbId: data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : null,
@@ -174,25 +195,44 @@ async function fetchTmdbJson(path, params, env) {
     return data;
 }
 
+async function fetchTmdbSearch(query, language, env) {
+    return fetchTmdbJson("/search/multi", {
+        query,
+        language,
+        include_adult: "false",
+        page: "1"
+    }, env);
+}
+
 async function handleTmdbSearch(query, env) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     try {
-        const data = await fetchTmdbJson("/search/multi", {
-            query,
-            language: "zh-CN",
-            include_adult: "false",
-            page: "1"
-        }, env);
+        const zhData = await fetchTmdbSearch(query, "zh-CN", env).catch(() => null);
+        let data = zhData;
 
-        const results = (data.results || [])
-            .filter(item => item.media_type === "movie" || item.media_type === "tv")
-            .map(normalizeTmdbItem)
-            .sort((a, b) => (b.tmdbVotes || 0) - (a.tmdbVotes || 0) || (b.popularity || 0) - (a.popularity || 0));
+        const usableZh = data && Array.isArray(data.results) ? data.results.some(item => item.media_type === "movie" || item.media_type === "tv") : false;
+        if (!usableZh) {
+            data = await fetchTmdbSearch(query, "en-US", env).catch(() => null);
+        }
+
+        const results = [];
+        const seen = new Set();
+
+        if (data && Array.isArray(data.results)) {
+            for (const item of data.results) {
+                if (item.media_type !== "movie" && item.media_type !== "tv") continue;
+                if (seen.has(item.id)) continue;
+                seen.add(item.id);
+                results.push(normalizeTmdbItem(item));
+            }
+        }
+
+        results.sort((a, b) => (b.tmdbVotes || 0) - (a.tmdbVotes || 0) || (b.popularity || 0) - (a.popularity || 0));
 
         return jsonResponse({
-            page: data.page || 1,
-            totalResults: data.total_results || results.length,
+            page: data && data.page ? data.page : 1,
+            totalResults: data && data.total_results ? data.total_results : results.length,
             results
         });
     } catch (e) {
@@ -212,7 +252,7 @@ async function handleTmdbDetail(id, type, env) {
         try {
             const data = await fetchTmdbJson(`/${candidateType}/${id}`, {
                 language: "zh-CN",
-                append_to_response: "external_ids"
+                append_to_response: "external_ids,credits"
             }, env);
 
             return jsonResponse(normalizeTmdbDetail(data, candidateType));
