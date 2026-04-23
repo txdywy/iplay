@@ -45,6 +45,38 @@ function showToast(msg) {
     }, 3000);
 }
 
+/**
+ * 智能加载海报图片
+ * 优先级：OMDb > 豆瓣高清 > 豆瓣普清 > Placeholder
+ */
+function loadPoster(doubanImg, omdbPoster) {
+    const candidates = [];
+
+    if (omdbPoster) {
+        candidates.push(omdbPoster); // IMDb 官方海报，质量最高
+    }
+    if (doubanImg) {
+        candidates.push(doubanImg.replace('s_ratio_poster', 'l_ratio_poster')); // 豆瓣高清
+        candidates.push(doubanImg); // 豆瓣普清
+    }
+    candidates.push('https://via.placeholder.com/400x600/141417/333333?text=NO+POSTER');
+
+    let index = 0;
+
+    function tryLoad() {
+        if (index >= candidates.length) return;
+        els.cover.src = candidates[index];
+        index++;
+    }
+
+    // 清除之前的 onerror，设置新的错误处理链
+    els.cover.onerror = () => {
+        tryLoad();
+    };
+
+    tryLoad();
+}
+
 // Main Process
 async function handleSearch() {
     const query = els.input.value.trim();
@@ -74,58 +106,53 @@ async function handleSearch() {
         els.title.textContent = show.title;
         els.subTitle.textContent = `${show.year} // ${show.type === 'movie' ? 'FILM' : 'SERIES'} // ID:${show.id}`;
 
-        // 海报加载策略：先挂豆瓣的，等 OMDb 返回后再替换为 IMDb 高清海报
-        if (show.img) {
-            els.cover.src = show.img.replace('s_ratio_poster', 'l_ratio_poster');
-            els.cover.onerror = () => {
-                els.cover.src = show.img; // 回退到普清
-                els.cover.onerror = null;
-            };
-        }
-
         showToast("Signal locked. Initiating deep scan...");
 
-        // 2. 并行获取：豆瓣详情（含 IMDb ID）、中文维基、资源
-        const [doubanDetailResult, wikiData, resourceData] = await Promise.allSettled([
+        // 2. 并行获取所有数据（包括 OMDb，不再串行！）
+        const [doubanDetailResult, wikiData, resourceData, omdbData] = await Promise.allSettled([
             DoubanAPI.getDetail(show.id),
             WikiAPI.getSummary(show.title),
-            ResourceAPI.search(show.title)
+            ResourceAPI.search(show.title),
+            // OMDb：优先用 IMDb ID，否则用英文标题
+            (async () => {
+                // 先等豆瓣详情，如果有 IMDb ID 就直接用
+                // 但这里我们不能等，所以要先假设没有 IMDb ID，用英文标题搜
+                // 如果豆瓣详情先返回了 IMDb ID，我们再重试？
+                // 不，这样太复杂。我们先同时用英文标题搜 OMDb，如果豆瓣返回了 IMDb ID 我们再补充查询
+                const byTitle = await GlobalRatingAPI.getRatings(null, show.sub_title, show.year);
+                return byTitle;
+            })()
         ]);
 
         // 3. 处理豆瓣详情
         let doubanDetail = { rating: 0, votes: 0, genres: [], summary: "", imdbId: "" };
+        let omdbPoster = null;
+
         if (doubanDetailResult.status === 'fulfilled' && doubanDetailResult.value && !doubanDetailResult.value.error) {
             doubanDetail = doubanDetailResult.value;
             els.doubanRating.textContent = doubanDetail.rating > 0 ? doubanDetail.rating.toFixed(1) : '-.-';
+
+            // 如果豆瓣详情有 IMDb ID，且之前的 OMDb 用标题搜失败了，用 IMDb ID 再搜一次
+            if (doubanDetail.imdbId && omdbData.status === 'fulfilled' && !omdbData.value) {
+                try {
+                    const byId = await GlobalRatingAPI.getRatings(doubanDetail.imdbId);
+                    if (byId) {
+                        omdbData.value = byId;
+                    }
+                } catch (e) {
+                    console.warn("OMDb by ID retry failed:", e);
+                }
+            }
         } else {
-            console.warn("Douban detail fetch failed");
+            console.warn("Douban detail fetch failed:", doubanDetailResult);
             els.doubanRating.textContent = '?';
             showToast("Warning: Douban node unstable");
         }
 
-        // 4. 如果有 IMDb ID，直接用它查询 OMDb（最精准）
-        // 否则用豆瓣的 sub_title（通常是英文名）降级搜索
-        let globalRatingData = { status: 'rejected' };
-        if (doubanDetail.imdbId) {
-            globalRatingData = await Promise.resolve(
-                GlobalRatingAPI.getRatings(doubanDetail.imdbId)
-            ).then(v => ({ status: 'fulfilled', value: v }))
-             .catch(e => ({ status: 'rejected', reason: e }));
-        } else if (show.sub_title) {
-            globalRatingData = await Promise.resolve(
-                GlobalRatingAPI.getRatings(null, show.sub_title, show.year)
-            ).then(v => ({ status: 'fulfilled', value: v }))
-             .catch(e => ({ status: 'rejected', reason: e }));
-        }
-
-        // 5. 渲染全球评分 + IMDb 海报
-        if (globalRatingData.status === 'fulfilled' && globalRatingData.value) {
-            const ratings = globalRatingData.value;
-
-            // IMDb 海报优先
-            if (ratings.poster) {
-                els.cover.src = ratings.poster;
-            }
+        // 4. 处理 OMDb 数据（评分 + 海报）
+        if (omdbData.status === 'fulfilled' && omdbData.value) {
+            const ratings = omdbData.value;
+            omdbPoster = ratings.poster || null;
 
             if (ratings.imdb && els.imdbRatingBox) {
                 els.imdbRating.textContent = ratings.imdb.toFixed(1);
@@ -140,6 +167,9 @@ async function handleSearch() {
             }
         }
 
+        // 5. 加载海报（数据驱动，所有数据都拿到了再决定）
+        loadPoster(show.img, omdbPoster);
+
         // 6. 渲染类型标签
         if (doubanDetail.genres && doubanDetail.genres.length > 0) {
             els.tags.innerHTML = doubanDetail.genres.map(g =>
@@ -153,7 +183,6 @@ async function handleSearch() {
         let hasWiki = false;
         const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
 
-        // 检查中文维基返回是否有效（有 extract 且没有 error）
         if (wikiResult && wikiResult.extract && !wikiResult.error) {
             els.wikiSummary.innerHTML = `
                 <span class="text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block">ZH.WIKIPEDIA</span><br>
