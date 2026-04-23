@@ -358,6 +358,68 @@ async function handleDoubanDetail(id) {
     }
 }
 
+const QUARK_URL_PATTERN = /https?:\/\/(?:pan|drive)\.quark\.cn\/[^\s"'<>）)]+/gi;
+const QUARK_SHORT_PATTERN = /(?:pan|drive)\.quark\.cn\/[^\s"'<>）)]+/gi;
+
+function normalizeQuarkUrl(rawUrl) {
+    if (!rawUrl) return null;
+
+    const cleaned = rawUrl
+        .replace(/&amp;/g, "&")
+        .replace(/[。．｡]$/g, "")
+        .replace(/[),.；;]+$/g, "");
+
+    try {
+        return new URL(cleaned.startsWith("http") ? cleaned : `https://${cleaned}`).toString();
+    } catch {
+        return cleaned.startsWith("http") ? cleaned : `https://${cleaned}`;
+    }
+}
+
+function collectQuarkUrls(text) {
+    if (!text) return [];
+
+    const matches = new Set();
+
+    for (const pattern of [QUARK_URL_PATTERN, QUARK_SHORT_PATTERN]) {
+        const found = text.match(pattern) || [];
+        for (const item of found) {
+            const url = normalizeQuarkUrl(item);
+            if (url) matches.add(url);
+        }
+    }
+
+    return Array.from(matches);
+}
+
+async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle) {
+    try {
+        const res = await fetch(resourceUrl, {
+            headers: {
+                "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Referer": "https://by669.org/"
+            },
+            redirect: "follow"
+        });
+
+        if (!res.ok) return [];
+
+        const text = await res.text();
+        const quarkUrls = collectQuarkUrls(text);
+
+        return quarkUrls.map(url => ({
+            title: resourceTitle,
+            url,
+            sourceUrl: resourceUrl,
+            sourceTitle: resourceTitle
+        }));
+    } catch {
+        return [];
+    }
+}
+
 async function handleResourceSearch(query) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
@@ -371,15 +433,40 @@ async function handleResourceSearch(query) {
         }
 
         const data = await res.json();
-        const links = (data.data || [])
-            .filter(item => item.attributes && item.attributes.title)
-            .map(item => ({
+        const resources = [];
+
+        for (const item of data.data || []) {
+            if (!item.attributes || !item.attributes.title) continue;
+
+            resources.push({
                 title: item.attributes.title,
                 url: `https://by669.org/d/${item.id}`,
                 isQuark: item.attributes.title.includes('夸') || item.attributes.title.toLowerCase().includes('quark')
-            }));
+            });
+        }
 
-        return jsonResponse(links);
+        const quarkCandidates = resources.filter(entry => entry.isQuark);
+        const quarkSources = quarkCandidates.length > 0 ? quarkCandidates : resources.slice(0, 3);
+        const quarkUrlGroups = await Promise.allSettled(
+            quarkSources.map(entry => fetchResourcePageQuarkUrls(entry.url, entry.title))
+        );
+
+        const quarkUrls = [];
+        for (const group of quarkUrlGroups) {
+            if (group.status === "fulfilled" && Array.isArray(group.value)) {
+                quarkUrls.push(...group.value);
+            }
+        }
+
+        const uniqueQuarkUrls = [];
+        const seen = new Set();
+        for (const item of quarkUrls) {
+            if (!item.url || seen.has(item.url)) continue;
+            seen.add(item.url);
+            uniqueQuarkUrls.push(item);
+        }
+
+        return jsonResponse({ resources, quarkUrls: uniqueQuarkUrls });
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
