@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iPlay · 沉浸式观影指南</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'serif': ['"Noto Serif SC"', 'serif'],
+                        'mono': ['"Space Mono"', 'monospace'],
+                    },
+                    colors: {
+                        cinema: {
+                            900: '#0a0a0c',
+                            800: '#141417',
+                            700: '#1e1e24',
+                            400: '#a3a3a8',
+                            100: '#e0e0e0'
+                        },
+                        accent: {
+                            red: '#e50914', // Netflix style red
+                            gold: '#ffd700'
+                        }
+                    },
+                    backgroundImage: {
+                        'noise': "url('data:image/svg+xml,%3Csvg viewBox=\"0 0 200 200\" xmlns=\"http://www.w3.org/2000/svg\"%3E%3Cfilter id=\"noiseFilter\"%3E%3CfeTurbulence type=\"fractalNoise\" baseFrequency=\"0.65\" numOctaves=\"3\" stitchTiles=\"stitch\"/%3E%3C/filter%3E%3Crect width=\"100%25\" height=\"100%25\" filter=\"url(%23noiseFilter)\"/%3E%3C/svg%3E')",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0a0a0c;
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+
+        /* 胶片噪点蒙版 */
+        .film-grain {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: var(--tw-gradient-stops), url('data:image/svg+xml,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)"/%3E%3C/svg%3E');
+            opacity: 0.04;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        /* 环境光晕 */
+        .ambient-glow {
+            position: absolute;
+            top: 0; left: 50%;
+            transform: translateX(-50%);
+            width: 100vw; height: 50vh;
+            background: radial-gradient(circle at top, rgba(229, 9, 20, 0.15) 0%, rgba(10, 10, 12, 0) 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* 优雅的输入框 */
+        .search-input {
+            background: rgba(30, 30, 36, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .search-input:focus {
+            background: rgba(30, 30, 36, 0.9);
+            border-color: rgba(229, 9, 20, 0.5);
+            box-shadow: 0 0 30px rgba(229, 9, 20, 0.15);
+            outline: none;
+        }
+
+        /* 打字机光标动画 */
+        .cursor-blink { animation: blink 1s step-end infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* 卡片渐显动画 */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
+        .delay-100 { animation-delay: 100ms; }
+        .delay-200 { animation-delay: 200ms; }
+        .delay-300 { animation-delay: 300ms; }
+
+        /* 剧照毛玻璃投影 */
+        .poster-glow {
+            position: relative;
+        }
+        .poster-glow::after {
+            content: '';
+            position: absolute;
+            top: 10%; left: 5%; right: 5%; bottom: -5%;
+            background: inherit;
+            filter: blur(20px) saturate(1.5);
+            z-index: -1;
+            opacity: 0.6;
+        }
+
+        /* 进度条动画 */
+        @keyframes fillBar { from { width: 0; } }
+        .progress-bar { animation: fillBar 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    </style>
+</head>
+<body class="font-serif min-h-screen flex flex-col items-center relative">
+    <div class="film-grain"></div>
+    <div class="ambient-glow"></div>
+
+    <!-- Header & Search -->
+    <header class="w-full max-w-5xl px-6 pt-24 pb-12 flex flex-col items-center relative z-10 text-center">
+        <h1 class="text-6xl md:text-8xl font-black tracking-tighter mb-4 text-transparent bg-clip-text bg-gradient-to-b from-white to-cinema-400">
+            iPlay<span class="text-accent-red">.</span>
+        </h1>
+        <p class="font-mono text-cinema-400 tracking-widest text-xs md:text-sm uppercase mb-12">
+            Curated Cinematic Experience
+        </p>
+
+        <div class="w-full max-w-2xl relative group">
+            <input type="text" id="searchInput" placeholder="搜索剧集 / 电影..."
+                   class="search-input w-full px-8 py-5 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/50 text-center">
+            <div class="absolute right-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <i class="fas fa-search text-accent-red"></i>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="w-full max-w-5xl px-6 pb-24 relative z-10">
+        <!-- State: Loading -->
+        <div id="loadingState" class="hidden flex flex-col items-center justify-center py-20 fade-up">
+            <div class="w-12 h-12 border-2 border-cinema-700 border-t-accent-red rounded-full animate-spin mb-6"></div>
+            <p class="font-mono text-cinema-400 text-sm tracking-widest uppercase">Connecting to satellites<span class="cursor-blink">_</span></p>
+        </div>
+
+        <!-- State: Error -->
+        <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center">
+            <i class="fas fa-exclamation-triangle text-accent-red text-3xl mb-4"></i>
+            <p id="errorMsg" class="text-cinema-100 font-mono text-sm"></p>
+            <p class="text-cinema-400 text-xs mt-2 mt-4">网络代理存在波动，请稍后重试。</p>
+        </div>
+
+        <!-- Results Area -->
+        <div id="resultsArea" class="hidden space-y-12">
+            <!-- 顶部：海报与核心信息 -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-8 lg:gap-16 items-center fade-up">
+                <!-- 海报 -->
+                <div class="md:col-span-5 lg:col-span-4 relative group">
+                    <div class="poster-glow transition-transform duration-700 group-hover:scale-105" id="posterWrapper">
+                        <img id="showCover" src="" alt="Poster" class="w-full rounded-xl shadow-2xl object-cover aspect-[2/3] border border-cinema-700">
+                    </div>
+                </div>
+
+                <!-- 信息 -->
+                <div class="md:col-span-7 lg:col-span-8 flex flex-col justify-center">
+                    <div class="flex items-end justify-between mb-2">
+                        <h2 id="showTitle" class="text-4xl md:text-6xl font-black leading-tight"></h2>
+                        <div class="text-right">
+                            <div class="flex items-baseline gap-1">
+                                <span id="doubanRating" class="text-4xl md:text-5xl font-mono font-bold text-accent-gold"></span>
+                                <span class="text-cinema-400 font-mono text-sm">/10</span>
+                            </div>
+                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">Douban</div>
+                        </div>
+                    </div>
+
+                    <p id="showSubTitle" class="text-cinema-400 font-mono text-sm uppercase tracking-widest mb-8 border-b border-cinema-700 pb-4"></p>
+
+                    <!-- 标签 -->
+                    <div id="showTags" class="flex flex-wrap gap-3 mb-10">
+                        <!-- JS 填充 -->
+                    </div>
+
+                    <!-- 推荐算法模块 -->
+                    <div class="bg-cinema-800/50 border border-cinema-700 rounded-2xl p-6 relative overflow-hidden">
+                        <div class="absolute top-0 right-0 p-4 opacity-10">
+                            <i class="fas fa-microchip text-6xl"></i>
+                        </div>
+                        <h3 class="font-mono text-xs uppercase tracking-widest text-cinema-400 mb-4">iPlay AI Recommendation Score</h3>
+                        <div class="flex items-baseline gap-4 mb-3">
+                            <span id="recScore" class="text-5xl font-black font-mono"></span>
+                            <span id="recLabel" class="text-lg font-bold tracking-wider"></span>
+                        </div>
+                        <div class="w-full h-1 bg-cinema-700 rounded-full overflow-hidden">
+                            <div id="recBar" class="h-full bg-accent-red progress-bar"></div>
+                        </div>
+                        <div id="scoreDetails" class="mt-4 flex gap-6 text-xs font-mono text-cinema-400">
+                            <!-- JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部：两列内容 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 fade-up delay-200">
+                <!-- 左列：剧情简介 -->
+                <div class="space-y-6">
+                    <h3 class="font-mono text-xs uppercase tracking-widest text-cinema-400 border-l-2 border-accent-red pl-3">Synopsis</h3>
+                    <p id="wikiSummary" class="text-cinema-100 leading-relaxed text-lg opacity-80 font-light">
+                        加载中...
+                    </p>
+                </div>
+
+                <!-- 右列：夸克资源 -->
+                <div class="space-y-6">
+                    <h3 class="font-mono text-xs uppercase tracking-widest text-cinema-400 border-l-2 border-[#0099ff] pl-3">Quark Resources</h3>
+                    <div class="bg-cinema-800/30 border border-cinema-700 rounded-xl p-2">
+                        <ul id="resourceList" class="divide-y divide-cinema-700/50">
+                            <!-- JS 填充 -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 提示框组件 -->
+    <div id="toast" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-all duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50">
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>

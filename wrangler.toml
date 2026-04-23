@@ -1,0 +1,9 @@
+name = "iplay-worker"
+main = "worker/_worker.js"
+compatibility_date = "2024-04-23"
+
+# 如果前端也用 Cloudflare Pages 部署，这个配置可以帮你在同一个项目中管理 Worker
+# [build]
+# command = "npm run build"
+# cwd = ""
+# watch_dir = ""
