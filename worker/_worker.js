@@ -1,13 +1,10 @@
 /**
- * Cloudflare Worker - iPlay API 代理 (终极版)
- * 功能：
- * 1. 豆瓣搜索 + 详情抓取（含评分、类型、简介、IMDb ID）
- * 2. 通过 IMDb ID 直接查询 OMDb 获取 IMDb & 烂番茄评分
- * 3. 夸克资源搜索
- * 4. 中文 Wikipedia 剧情简介
+ * Cloudflare Worker - iPlay API proxy
  */
 
-const OMDB_API_KEY = "80077e97";
+const DEFAULT_OMDB_API_KEY = "80077e97";
+const TMDB_BASE = "https://api.themoviedb.org/3";
+const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 
 export default {
     async fetch(request, env, ctx) {
@@ -24,6 +21,18 @@ export default {
 
         const url = new URL(request.url);
 
+        if (url.pathname.startsWith("/api/tmdb/search")) {
+            return await handleTmdbSearch(url.searchParams.get("q"), env);
+        }
+
+        if (url.pathname.startsWith("/api/tmdb/detail")) {
+            return await handleTmdbDetail(
+                url.searchParams.get("id"),
+                url.searchParams.get("type"),
+                env
+            );
+        }
+
         if (url.pathname.startsWith("/api/douban/search")) {
             return await handleDoubanSearch(url.searchParams.get("q"));
         }
@@ -39,14 +48,13 @@ export default {
         if (url.pathname.startsWith("/api/omdb")) {
             const imdbId = url.searchParams.get("imdb");
             if (imdbId) {
-                return await handleOmdbById(imdbId);
+                return await handleOmdbById(imdbId, env);
             }
-            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"));
+            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env);
         }
 
-        // 新增：专门的海报获取接口，优先 OMDb
         if (url.pathname.startsWith("/api/poster")) {
-            return await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"));
+            return await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env);
         }
 
         if (url.pathname.startsWith("/api/wiki/zh")) {
@@ -59,7 +67,7 @@ export default {
 
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
-        status: status,
+        status,
         headers: {
             "Content-Type": "application/json;charset=UTF-8",
             "Access-Control-Allow-Origin": "*"
@@ -67,7 +75,155 @@ function jsonResponse(data, status = 200) {
     });
 }
 
-// 豆瓣搜索 API 用简化 Headers（不要 Accept-Encoding，避免压缩问题）
+function getTmdbAuth(env) {
+    if (env && env.TMDB_ACCESS_TOKEN) {
+        return { type: "bearer", value: env.TMDB_ACCESS_TOKEN };
+    }
+    if (env && env.TMDB_API_KEY) {
+        return { type: "api_key", value: env.TMDB_API_KEY };
+    }
+    return null;
+}
+
+function getOmdbApiKey(env) {
+    return env && env.OMDB_API_KEY ? env.OMDB_API_KEY : DEFAULT_OMDB_API_KEY;
+}
+
+function tmdbImage(path, size = "w500") {
+    return path ? `${TMDB_IMAGE_BASE}/${size}${path}` : null;
+}
+
+function parseYear(date) {
+    return date ? date.slice(0, 4) : null;
+}
+
+function normalizeTmdbItem(item) {
+    const title = item.title || item.name || "";
+    const originalTitle = item.original_title || item.original_name || title;
+    const year = parseYear(item.release_date || item.first_air_date);
+
+    return {
+        id: item.id,
+        mediaType: item.media_type || (item.title ? "movie" : "tv"),
+        title,
+        originalTitle,
+        year,
+        poster: tmdbImage(item.poster_path, "w342"),
+        backdrop: tmdbImage(item.backdrop_path, "w780"),
+        summary: item.overview || "",
+        tmdbRating: item.vote_average ?? null,
+        tmdbVotes: item.vote_count ?? 0,
+        popularity: item.popularity ?? 0,
+        imdbId: null
+    };
+}
+
+function normalizeTmdbDetail(data, type) {
+    const title = data.title || data.name || "";
+    const originalTitle = data.original_title || data.original_name || title;
+    const year = parseYear(data.release_date || data.first_air_date);
+
+    return {
+        id: data.id,
+        mediaType: type,
+        title,
+        originalTitle,
+        year,
+        poster: tmdbImage(data.poster_path),
+        backdrop: tmdbImage(data.backdrop_path, "w780"),
+        summary: data.overview || "",
+        genres: Array.isArray(data.genres) ? data.genres.map(g => g.name).filter(Boolean) : [],
+        tmdbRating: data.vote_average ?? null,
+        tmdbVotes: data.vote_count ?? 0,
+        imdbId: data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : null,
+        popularity: data.popularity ?? 0
+    };
+}
+
+async function fetchTmdbJson(path, params, env) {
+    const auth = getTmdbAuth(env);
+    if (!auth) {
+        throw new Error("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY");
+    }
+
+    const url = new URL(`${TMDB_BASE}${path}`);
+    Object.entries(params || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+            url.searchParams.set(key, value);
+        }
+    });
+
+    const headers = {
+        "Accept": "application/json"
+    };
+
+    if (auth.type === "bearer") {
+        headers.Authorization = `Bearer ${auth.value}`;
+    } else {
+        url.searchParams.set("api_key", auth.value);
+    }
+
+    const res = await fetch(url.toString(), { headers });
+
+    const data = await res.json();
+    if (!res.ok) {
+        const message = data && data.status_message ? data.status_message : `TMDB HTTP ${res.status}`;
+        throw new Error(message);
+    }
+
+    return data;
+}
+
+async function handleTmdbSearch(query, env) {
+    if (!query) return jsonResponse({ error: "Missing query" }, 400);
+
+    try {
+        const data = await fetchTmdbJson("/search/multi", {
+            query,
+            language: "zh-CN",
+            include_adult: "false",
+            page: "1"
+        }, env);
+
+        const results = (data.results || [])
+            .filter(item => item.media_type === "movie" || item.media_type === "tv")
+            .map(normalizeTmdbItem)
+            .sort((a, b) => (b.tmdbVotes || 0) - (a.tmdbVotes || 0) || (b.popularity || 0) - (a.popularity || 0));
+
+        return jsonResponse({
+            page: data.page || 1,
+            totalResults: data.total_results || results.length,
+            results
+        });
+    } catch (e) {
+        console.error("TMDB search error:", e.message);
+        return jsonResponse({ error: e.message }, 500);
+    }
+}
+
+async function handleTmdbDetail(id, type, env) {
+    if (!id) return jsonResponse({ error: "Missing id" }, 400);
+
+    const apiType = type === "tv" ? "tv" : "movie";
+    const attemptOrder = apiType === "tv" ? ["tv", "movie"] : ["movie", "tv"];
+    let lastError = null;
+
+    for (const candidateType of attemptOrder) {
+        try {
+            const data = await fetchTmdbJson(`/${candidateType}/${id}`, {
+                language: "zh-CN",
+                append_to_response: "external_ids"
+            }, env);
+
+            return jsonResponse(normalizeTmdbDetail(data, candidateType));
+        } catch (e) {
+            lastError = e;
+        }
+    }
+
+    return jsonResponse({ error: lastError ? lastError.message : "TMDB detail not found" }, 500);
+}
+
 const DOUBAN_SEARCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json,*/*",
@@ -75,7 +231,6 @@ const DOUBAN_SEARCH_HEADERS = {
     "Referer": "https://movie.douban.com/"
 };
 
-// 豆瓣详情页用完整浏览器 Headers（需要 Cookie 绕过反爬）
 const DOUBAN_DETAIL_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -92,7 +247,6 @@ async function handleDoubanSearch(query) {
             headers: DOUBAN_SEARCH_HEADERS
         });
         const text = await res.text();
-        // 防御：如果返回的是 JSONP 或空内容，做兼容处理
         const data = JSON.parse(text);
         return jsonResponse(data);
     } catch (e) {
@@ -117,7 +271,11 @@ async function handleDoubanDetail(id) {
         }
 
         let result = {
-            rating: 0, votes: 0, genres: [], summary: "", imdbId: ""
+            rating: 0,
+            votes: 0,
+            genres: [],
+            summary: "",
+            imdbId: ""
         };
         let isParsingSummary = false;
 
@@ -129,10 +287,10 @@ async function handleDoubanDetail(id) {
                 text(text) { result.votes = parseInt(text.text) || result.votes; }
             })
             .on('span[property="v:genre"]', {
-                text(text) { if(text.text.trim()) result.genres.push(text.text.trim()); }
+                text(text) { if (text.text.trim()) result.genres.push(text.text.trim()); }
             })
             .on('span[property="v:summary"]', {
-                element(el) { isParsingSummary = true; },
+                element() { isParsingSummary = true; },
                 text(text) { if (isParsingSummary) result.summary += text.text; }
             })
             .on('a[href*="imdb.com"]', {
@@ -178,9 +336,9 @@ async function handleResourceSearch(query) {
     }
 }
 
-async function handleOmdbById(imdbId) {
+async function handleOmdbById(imdbId, env) {
     try {
-        const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}`);
+        const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${getOmdbApiKey(env)}`);
         const data = await res.json();
 
         if (data.Response === "True") {
@@ -192,11 +350,11 @@ async function handleOmdbById(imdbId) {
     }
 }
 
-async function handleOmdbSearch(title, year) {
+async function handleOmdbSearch(title, year, env) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     try {
-        let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`;
+        let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
         if (year) url += `&y=${year}`;
 
         const res = await fetch(url);
@@ -207,7 +365,7 @@ async function handleOmdbSearch(title, year) {
         }
 
         if (year) {
-            const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`);
+            const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
             const fallbackData = await fallbackRes.json();
             if (fallbackData.Response === "True") {
                 return jsonResponse(extractOmdbRatings(fallbackData));
@@ -221,7 +379,7 @@ async function handleOmdbSearch(title, year) {
 }
 
 function extractOmdbRatings(data) {
-    let imdb = data.imdbRating && data.imdbRating !== "N/A" ? parseFloat(data.imdbRating) : null;
+    const imdb = data.imdbRating && data.imdbRating !== "N/A" ? parseFloat(data.imdbRating) : null;
     let rotten = null;
 
     if (data.Ratings) {
@@ -239,22 +397,19 @@ function extractOmdbRatings(data) {
     };
 }
 
-/**
- * 专门的海报获取接口
- * 策略：用 OMDb 获取海报，如果标题搜不到，尝试从中文维基获取英文名再搜
- */
-async function handlePosterSearch(title, year) {
+async function handlePosterSearch(title, year, env) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     try {
-        // 1. 直接尝试用提供的标题搜 OMDb
-        let result = await tryOmdbForPoster(title, year);
+        const tmdbPoster = await tryTmdbForPoster(title, year, env);
+        if (tmdbPoster) return jsonResponse(tmdbPoster);
+
+        let result = await tryOmdbForPoster(title, year, env);
         if (result) return jsonResponse(result);
 
-        // 2. 如果失败，尝试从中文维基获取英文名
         const enTitle = await getEnglishTitleFromWiki(title);
         if (enTitle && enTitle !== title) {
-            result = await tryOmdbForPoster(enTitle, year);
+            result = await tryOmdbForPoster(enTitle, year, env);
             if (result) return jsonResponse(result);
         }
 
@@ -264,8 +419,39 @@ async function handlePosterSearch(title, year) {
     }
 }
 
-async function tryOmdbForPoster(title, year) {
-    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`;
+async function tryTmdbForPoster(title, year, env) {
+    try {
+        const searchData = await fetchTmdbJson("/search/multi", {
+            query: title,
+            language: "zh-CN",
+            include_adult: "false",
+            page: "1"
+        }, env);
+
+        const candidates = (searchData.results || [])
+            .filter(item => (item.media_type === "movie" || item.media_type === "tv") && item.poster_path)
+            .map(normalizeTmdbItem)
+            .filter(item => !year || item.year === year || String(item.year || "").startsWith(year));
+
+        if (candidates.length === 0) return null;
+
+        const best = candidates[0];
+        return {
+            poster: best.poster,
+            imdb: best.tmdbRating,
+            imdbVotes: best.tmdbVotes,
+            rottenTomatoes: null,
+            tmdb: true,
+            tmdbId: best.id,
+            mediaType: best.mediaType
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function tryOmdbForPoster(title, year, env) {
+    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
     if (year) url += `&y=${year}`;
 
     const res = await fetch(url);
@@ -281,9 +467,8 @@ async function tryOmdbForPoster(title, year) {
         };
     }
 
-    // 降级：不带年份重试
     if (year) {
-        const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${OMDB_API_KEY}`);
+        const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
         const fallbackData = await fallbackRes.json();
         if (fallbackData.Response === "True" && fallbackData.Poster && fallbackData.Poster !== "N/A") {
             return {
@@ -311,7 +496,6 @@ async function getEnglishTitleFromWiki(zhTitle) {
 
         const title = searchData.query.search[0].title;
 
-        // 获取维基页面，从中提取英文名（通常在括号里）
         const pageRes = await fetch(
             `https://zh.wikipedia.org/w/api.php?action=query&prop=langlinks&titles=${encodeURIComponent(title)}&lllang=en&format=json&origin=*`,
             { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
@@ -323,7 +507,7 @@ async function getEnglishTitleFromWiki(zhTitle) {
         const langlinks = pages[pageId].langlinks;
 
         if (langlinks && langlinks.length > 0) {
-            return langlinks[0]["*"]; // 英文标题
+            return langlinks[0]["*"];
         }
 
         return null;

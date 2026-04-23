@@ -28,6 +28,17 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     }
 }
 
+export const TmdbAPI = {
+    async search(query) {
+        return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}`);
+    },
+    async getDetail(id, type) {
+        let url = `${API_BASE}/api/tmdb/detail?id=${id}`;
+        if (type) url += `&type=${encodeURIComponent(type)}`;
+        return fetchWithTimeout(url);
+    }
+};
+
 export const DoubanAPI = {
     async search(query) {
         return fetchWithTimeout(`${API_BASE}/api/douban/search?q=${encodeURIComponent(query)}`);
@@ -75,7 +86,6 @@ export const GlobalRatingAPI = {
                 console.warn("OMDb by ID failed, trying by title:", e);
             }
         }
-        // 降级：用英文标题
         if (englishTitle) {
             try {
                 let url = `${API_BASE}/api/omdb?title=${encodeURIComponent(englishTitle)}`;
@@ -90,7 +100,7 @@ export const GlobalRatingAPI = {
 };
 
 /**
- * 海报专用接口：优先 OMDb，智能获取英文名
+ * 海报专用接口：优先 TMDB，再向 OMDb 兜底
  */
 export const PosterAPI = {
     async getPoster(title, year) {

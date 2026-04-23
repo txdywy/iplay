@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iPlay · 沉浸式观影指南</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
@@ -118,7 +119,7 @@
             <div class="grid grid-cols-1 md:grid-cols-12 gap-8 lg:gap-16 items-center fade-up">
                 <div class="md:col-span-5 lg:col-span-4 relative group">
                     <div class="poster-glow transition-transform duration-700 group-hover:scale-105" id="posterWrapper">
-                        <img id="showCover" src="" alt="Poster" class="w-full rounded-xl shadow-2xl object-cover aspect-[2/3] border border-cinema-700 bg-cinema-800" onerror="this.src='https://via.placeholder.com/400x600/141417/333333?text=NO+POSTER'">
+                        <img id="showCover" src="" alt="Poster" class="w-full rounded-xl shadow-2xl object-cover aspect-[2/3] border border-cinema-700 bg-cinema-800" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22600%22 viewBox=%220 0 400 600%22%3E%3Crect width=%22400%22 height=%22600%22 fill=%22%23141417%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23333333%22 font-family=%22monospace%22 font-size=%2228%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22%3ENO POSTER%3C/text%3E%3C/svg%3E'">
                     </div>
                 </div>
 
@@ -130,11 +131,20 @@
                         </div>
 
                         <!-- 聚合评分面板 -->
-                        <div class="flex gap-3 mt-4 md:mt-0">
-                            <!-- Douban -->
-                            <div class="rating-box">
+                        <div class="flex gap-3 mt-4 md:mt-0 flex-wrap">
+                            <!-- Primary: TMDB -->
+                            <div id="tmdbRatingBox" class="rating-box">
                                 <div class="flex items-baseline gap-1">
-                                    <span id="doubanRating" class="text-2xl font-mono font-bold text-green-500"></span>
+                                    <span id="doubanRating" class="text-2xl font-mono font-bold text-accent-gold"></span>
+                                    <span class="text-cinema-400 font-mono text-[10px]">/10</span>
+                                </div>
+                                <div id="doubanRatingLabel" class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">TMDB</div>
+                            </div>
+
+                            <!-- Douban fallback -->
+                            <div id="doubanBackupBox" class="rating-box hidden">
+                                <div class="flex items-baseline gap-1">
+                                    <span id="doubanBackupRating" class="text-2xl font-mono font-bold text-green-500"></span>
                                     <span class="text-cinema-400 font-mono text-[10px]">/10</span>
                                 </div>
                                 <div class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">Douban</div>
