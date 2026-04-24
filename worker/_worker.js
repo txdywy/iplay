@@ -194,8 +194,13 @@ async function fetchTmdbJson(path, params, env, ctx) {
         response = await fetch(url.toString(), { headers });
         if (response.ok) {
             const clonedResponse = response.clone();
-            const cacheResponse = new Response(clonedResponse.body, clonedResponse);
-            cacheResponse.headers.set('Cache-Control', 'public, max-age=86400');
+            const newHeaders = new Headers(clonedResponse.headers);
+            newHeaders.set('Cache-Control', 'public, max-age=86400');
+            const cacheResponse = new Response(clonedResponse.body, {
+                status: clonedResponse.status,
+                statusText: clonedResponse.statusText,
+                headers: newHeaders
+            });
             ctx.waitUntil(cache.put(cacheKey, cacheResponse));
         }
     }
@@ -319,9 +324,13 @@ async function handleDoubanSearch(query, ctx) {
     const cache = caches.default;
     const cachedResponse = await cache.match(cacheKey);
     if (cachedResponse) {
-        const response = new Response(cachedResponse.body, cachedResponse);
-        response.headers.set("Access-Control-Allow-Origin", "*");
-        return response;
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
     }
 
     try {
@@ -354,9 +363,13 @@ async function handleDoubanDetail(id, ctx) {
     const cache = caches.default;
     const cachedResponse = await cache.match(cacheKey);
     if (cachedResponse) {
-        const response = new Response(cachedResponse.body, cachedResponse);
-        response.headers.set("Access-Control-Allow-Origin", "*");
-        return response;
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
     }
 
     try {
