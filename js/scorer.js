@@ -38,7 +38,7 @@ export function calculateRecommendationScore(data) {
     const ratingLabel = getRatingLabel(source);
     const safeRating = rating > 0 ? rating : 0;
 
-    let baseScore = 0;
+    let baseScore;
     if (safeRating >= 9.0) {
         baseScore = 55 + (safeRating - 9.0) * 5;
         report.pros.push(`${ratingLabel}极高 (${safeRating.toFixed(1)})`);

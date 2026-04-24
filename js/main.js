@@ -62,7 +62,7 @@ function showToast(msg) {
 function normalizeText(value) {
     return (value || '')
         .toLowerCase()
-        .replace(/[\s\-_:,.!?()\[\]{}'"“”‘’·、，。·/\\]/g, '');
+        .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。·/\\]/g, '');
 }
 
 function pickBestTmdbMatch(results, query) {
@@ -563,10 +563,11 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     }
 }
 
-async function safeTmdbSearch(query) {
+async function safeTmdbSearch(query, options = {}) {
     try {
-        return await TmdbAPI.search(query);
+        return await TmdbAPI.search(query, options);
     } catch (error) {
+        if (error.name === 'AbortError') throw error;
         console.warn('TMDB search failed:', error);
         return null;
     }
@@ -579,10 +580,17 @@ function resetRatingBoxes() {
 }
 
 let currentSearchId = 0;
+let currentAbortController = null;
 
 async function handleSearch() {
     const query = els.input.value.trim();
     if (!query) return;
+
+    if (currentAbortController) {
+        currentAbortController.abort();
+    }
+    currentAbortController = new AbortController();
+    const searchOptions = { signal: currentAbortController.signal };
 
     const searchId = ++currentSearchId;
 
@@ -598,7 +606,7 @@ async function handleSearch() {
     });
 
     try {
-        const tmdbSearch = await safeTmdbSearch(query);
+        const tmdbSearch = await safeTmdbSearch(query, searchOptions);
         if (searchId !== currentSearchId) return;
 
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
@@ -612,7 +620,10 @@ async function handleSearch() {
 
         showToast('Signal locked. Initiating deep scan...');
 
-        const tmdbDetail = await TmdbAPI.getDetail(candidate.id, candidate.mediaType).catch(() => null);
+        const tmdbDetail = await TmdbAPI.getDetail(candidate.id, candidate.mediaType, searchOptions).catch(e => {
+            if (e.name === 'AbortError') throw e;
+            return null;
+        });
         if (searchId !== currentSearchId) return;
 
         let viewModel = buildTmdbViewModel(candidate, tmdbDetail, null, null);
@@ -637,19 +648,22 @@ async function handleSearch() {
         els.results.classList.remove('hidden');
         els.loading.classList.add('hidden');
 
-        DoubanAPI.search(query).then(async doubanSearchResult => {
+        DoubanAPI.search(query, searchOptions).then(async doubanSearchResult => {
             if (searchId !== currentSearchId) return;
             const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
             const doubanMatch = pickBestDoubanMatch(doubanCandidates, query);
             if (doubanMatch && doubanMatch.id) {
-                const doubanResult = await DoubanAPI.getDetail(doubanMatch.id).catch(() => null);
+                const doubanResult = await DoubanAPI.getDetail(doubanMatch.id, searchOptions).catch(e => {
+                    if (e.name === 'AbortError') throw e;
+                    return null;
+                });
                 if (searchId !== currentSearchId || !doubanResult) return;
                 viewModel.doubanRating = doubanResult.rating;
                 renderBackupDoubanRating(viewModel.doubanRating);
             }
-        }).catch(() => {});
+        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
 
-        WikiAPI.getSummary(candidate.title).then(wikiResult => {
+        WikiAPI.getSummary(candidate.title, searchOptions).then(wikiResult => {
             if (searchId !== currentSearchId || !wikiResult) return;
             viewModel.summary = wikiResult.extract || viewModel.summary;
             viewModel.overviewSource = wikiResult.extract ? 'ZH.WIKIPEDIA' : viewModel.overviewSource;
@@ -663,23 +677,24 @@ async function handleSearch() {
                 summary: viewModel.summary,
                 source: 'tmdb'
             }, 'TMDB', true);
-        }).catch(() => {});
+        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
 
-        ResourceAPI.search(candidate.title).then(resourceResult => {
+        ResourceAPI.search(candidate.title, searchOptions).then(resourceResult => {
             if (searchId !== currentSearchId || !resourceResult) return;
             renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
             renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        }).catch(() => {});
+        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
 
-        PosterAPI.getPoster(candidate.title, candidate.year).then(posterResult => {
+        PosterAPI.getPoster(candidate.title, candidate.year, searchOptions).then(posterResult => {
             if (searchId !== currentSearchId || !posterResult) return;
             viewModel.omdbProfile = posterResult.omdb ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult) : viewModel.omdbProfile;
             viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
             loadPoster(viewModel.posterUrl);
             renderTmdbProfile(viewModel);
-        }).catch(() => {});
+        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
 
     } catch (err) {
+        if (err.name === 'AbortError') return;
         if (searchId !== currentSearchId) return;
         if (err && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))) {
             els.errorMsg.textContent = 'Unable to connect to Cloudflare Worker. Make sure the API_BASE is correctly configured and the Worker is deployed.';

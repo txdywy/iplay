@@ -43,15 +43,15 @@ export default {
         }
 
         if (url.pathname.startsWith("/api/resource")) {
-            return await handleResourceSearch(url.searchParams.get("q"));
+            return await handleResourceSearch(url.searchParams.get("q"), ctx);
         }
 
         if (url.pathname.startsWith("/api/omdb")) {
             const imdbId = url.searchParams.get("imdb");
             if (imdbId) {
-                return await handleOmdbById(imdbId, env);
+                return await handleOmdbById(imdbId, env, ctx);
             }
-            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env);
+            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx);
         }
 
         if (url.pathname.startsWith("/api/poster")) {
@@ -59,7 +59,7 @@ export default {
         }
 
         if (url.pathname.startsWith("/api/wiki/zh")) {
-            return await handleWikiZh(url.searchParams.get("q"));
+            return await handleWikiZh(url.searchParams.get("q"), ctx);
         }
 
         return new Response("Not Found", { status: 404 });
@@ -431,8 +431,8 @@ async function handleDoubanDetail(id, ctx) {
     }
 }
 
-const QUARK_URL_PATTERN = /https?:\/\/(?:pan|drive)\.quark\.cn\/[^\s"'<>）)]+/gi;
-const QUARK_SHORT_PATTERN = /(?:pan|drive)\.quark\.cn\/[^\s"'<>）)]+/gi;
+const QUARK_URL_PATTERN = /https?:\/\/(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
+const QUARK_SHORT_PATTERN = /(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
 
 function normalizeQuarkUrl(rawUrl) {
     if (!rawUrl) return null;
@@ -493,8 +493,21 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle) {
     }
 }
 
-async function handleResourceSearch(query) {
+async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
+
+    const cacheKey = new Request(`https://resource-search-cache.local/?q=${encodeURIComponent(query)}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
+    }
 
     try {
         const res = await fetch(`https://by669.org/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
@@ -540,13 +553,31 @@ async function handleResourceSearch(query) {
             }
         }
 
-        return jsonResponse({ resources, quarkUrls });
+        const result = { resources, quarkUrls };
+        const responseToCache = jsonResponse(result);
+        responseToCache.headers.set('Cache-Control', 'public, max-age=43200');
+        if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
+
+        return jsonResponse(result);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
 }
 
-async function handleOmdbById(imdbId, env) {
+async function handleOmdbById(imdbId, env, ctx) {
+    const cacheKey = new Request(`https://omdb-cache.local/id/${imdbId}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
+    }
+
     try {
         const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${getOmdbApiKey(env)}`);
 
@@ -557,6 +588,9 @@ async function handleOmdbById(imdbId, env) {
         const data = await res.json();
 
         if (data.Response === "True") {
+            const responseToCache = jsonResponse(extractOmdbProfile(data));
+            responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+            if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
             return jsonResponse(extractOmdbProfile(data));
         }
         return jsonResponse({ error: "OMDb: Not found" }, 404);
@@ -565,8 +599,21 @@ async function handleOmdbById(imdbId, env) {
     }
 }
 
-async function handleOmdbSearch(title, year, env) {
+async function handleOmdbSearch(title, year, env, ctx) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
+
+    const cacheKey = new Request(`https://omdb-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
+    }
 
     try {
         let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
@@ -581,6 +628,9 @@ async function handleOmdbSearch(title, year, env) {
         const data = await res.json();
 
         if (data.Response === "True") {
+            const responseToCache = jsonResponse(extractOmdbProfile(data));
+            responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+            if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
             return jsonResponse(extractOmdbProfile(data));
         }
 
@@ -588,6 +638,9 @@ async function handleOmdbSearch(title, year, env) {
             const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
             const fallbackData = await fallbackRes.json();
             if (fallbackData.Response === "True") {
+                const responseToCache = jsonResponse(extractOmdbProfile(fallbackData));
+                responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+                if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
                 return jsonResponse(extractOmdbProfile(fallbackData));
             }
         }
@@ -651,11 +704,11 @@ function extractOmdbProfile(data) {
     };
 }
 
-async function handlePosterSearch(title, year, env) {
+async function handlePosterSearch(title, year, env, ctx) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     try {
-        const tmdbPromise = tryTmdbForPoster(title, year, env);
+        const tmdbPromise = tryTmdbForPoster(title, year, env, ctx);
         const omdbPromise = tryOmdbForPoster(title, year, env);
 
         const tmdbPoster = await tmdbPromise;
@@ -682,14 +735,14 @@ async function handlePosterSearch(title, year, env) {
     }
 }
 
-async function tryTmdbForPoster(title, year, env) {
+async function tryTmdbForPoster(title, year, env, ctx) {
     try {
         const searchData = await fetchTmdbJson("/search/multi", {
             query: title,
             language: "zh-CN",
             include_adult: "false",
             page: "1"
-        }, env);
+        }, env, ctx);
 
         const candidates = (searchData.results || [])
             .filter(item => (item.media_type === "movie" || item.media_type === "tv") && item.poster_path)
@@ -776,17 +829,35 @@ async function searchZhWikiTitle(query) {
     return searchData.query.search[0].title;
 }
 
-async function handleWikiZh(query) {
+async function handleWikiZh(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
+
+    const cacheKey = new Request(`https://wiki-zh-cache.local/?q=${encodeURIComponent(query)}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+        const newHeaders = new Headers(cachedResponse.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        return new Response(cachedResponse.body, {
+            status: cachedResponse.status,
+            statusText: cachedResponse.statusText,
+            headers: newHeaders
+        });
+    }
 
     try {
         const searchRes = await fetch(
             `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
             { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
+
+        if (!searchRes.ok) {
+            return jsonResponse({ error: `Wiki search failed: ${searchRes.status}` }, searchRes.status);
+        }
+
         const searchData = await searchRes.json();
 
-        if (!searchData.query || !searchData.query.search.length) {
+        if (!searchData.query || !searchData.query.search || !searchData.query.search.length) {
             return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
         }
 
@@ -796,13 +867,24 @@ async function handleWikiZh(query) {
             `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
             { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
+
+        if (!summaryRes.ok) {
+             return jsonResponse({ error: `Wiki summary failed: ${summaryRes.status}` }, summaryRes.status);
+        }
+
         const summaryData = await summaryRes.json();
 
-        return jsonResponse({
+        const result = {
             title: summaryData.title,
             extract: summaryData.extract,
             thumbnail: summaryData.thumbnail || null
-        });
+        };
+
+        const responseToCache = jsonResponse(result);
+        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+        if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
+
+        return jsonResponse(result);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
