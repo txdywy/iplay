@@ -193,9 +193,9 @@ async function fetchTmdbJson(path, params, env, ctx) {
 
         response = await fetch(url.toString(), { headers });
         if (response.ok) {
-            const cacheResponse = response.clone();
+            const cacheResponse = new Response(response.body, response);
             cacheResponse.headers.set('Cache-Control', 'public, max-age=86400');
-            ctx.waitUntil(cache.put(cacheKey, cacheResponse));
+            ctx.waitUntil(cache.put(cacheKey, cacheResponse.clone()));
         }
     }
 
