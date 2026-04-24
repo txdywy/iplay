@@ -79,7 +79,9 @@ function pickBestTmdbMatch(results, query) {
     const loose = results.find(item => {
         const title = normalizeText(item.title);
         const originalTitle = normalizeText(item.originalTitle);
-        return title.includes(normalizedQuery) || originalTitle.includes(normalizedQuery) || normalizedQuery.includes(title) || normalizedQuery.includes(originalTitle);
+        return title.includes(normalizedQuery) || originalTitle.includes(normalizedQuery)
+            || (title.length >= 2 && normalizedQuery.includes(title))
+            || (originalTitle.length >= 2 && normalizedQuery.includes(originalTitle));
     });
     if (loose) return loose;
 
@@ -205,8 +207,8 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         subtitle: `${source.year || candidate?.year || '????'} // ${source.mediaType === 'movie' ? 'FILM' : source.mediaType === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
         summary: source.summary || (wikiResult && wikiResult.extract) || candidate?.summary || '',
         genres: Array.isArray(source.genres) && source.genres.length > 0 ? source.genres : [],
-        rating: source.tmdbRating || candidate?.tmdbRating || 0,
-        votes: source.tmdbVotes || candidate?.tmdbVotes || candidate?.votes || 0,
+        rating: source.tmdbRating ?? candidate?.tmdbRating ?? 0,
+        votes: source.tmdbVotes ?? candidate?.tmdbVotes ?? candidate?.votes ?? 0,
         posterUrl: source.poster || candidate?.poster || (posterResult && !posterResult.tmdb ? posterResult.poster : null),
         omdbProfile,
         overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : detail && detail.summary ? 'TMDB' : 'NO DATA'

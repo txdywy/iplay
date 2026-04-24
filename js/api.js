@@ -68,34 +68,8 @@ export const ResourceAPI = {
             return await fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`);
         } catch (error) {
             console.error("Resource fetch failed:", error);
-            return [];
+            return { resources: [], quarkUrls: [] };
         }
-    }
-};
-
-/**
- * 全球评分聚合 (IMDb & Rotten Tomatoes)
- * 优先使用 IMDb ID（最精准），降级到英文标题搜索
- */
-export const GlobalRatingAPI = {
-    async getRatings(imdbId, englishTitle, year) {
-        if (imdbId) {
-            try {
-                return await fetchWithTimeout(`${API_BASE}/api/omdb?imdb=${imdbId}`);
-            } catch (e) {
-                console.warn("OMDb by ID failed, trying by title:", e);
-            }
-        }
-        if (englishTitle) {
-            try {
-                let url = `${API_BASE}/api/omdb?title=${encodeURIComponent(englishTitle)}`;
-                if (year) url += `&year=${year}`;
-                return await fetchWithTimeout(url);
-            } catch (e) {
-                console.warn("OMDb by title failed:", e);
-            }
-        }
-        return null;
     }
 };
 

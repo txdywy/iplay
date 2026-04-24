@@ -271,13 +271,24 @@ const DOUBAN_SEARCH_HEADERS = {
     "Referer": "https://movie.douban.com/"
 };
 
-const DOUBAN_DETAIL_HEADERS = {
+function randomBid() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({ length: 11 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+const DOUBAN_DETAIL_HEADERS_BASE = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Referer": "https://movie.douban.com/",
-    "Cookie": "bid=xOqR3l3nZzE; __utmc=30149280"
+    "Referer": "https://movie.douban.com/"
 };
+
+function getDoubanDetailHeaders() {
+    return {
+        ...DOUBAN_DETAIL_HEADERS_BASE,
+        "Cookie": `bid=${randomBid()}`
+    };
+}
 
 async function handleDoubanSearch(query) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
@@ -306,7 +317,7 @@ async function handleDoubanDetail(id) {
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
         const res = await fetch(fetchUrl, {
-            headers: DOUBAN_DETAIL_HEADERS,
+            headers: getDoubanDetailHeaders(),
             redirect: "follow"
         });
 
@@ -449,8 +460,9 @@ async function handleResourceSearch(query) {
         const seenQuarkUrls = new Set();
         const batchSize = 5;
 
-        for (let index = 0; index < resources.length; index += batchSize) {
-            const batch = resources.slice(index, index + batchSize);
+        const maxPages = Math.min(resources.length, 10);
+        for (let index = 0; index < maxPages; index += batchSize) {
+            const batch = resources.slice(index, Math.min(index + batchSize, maxPages));
             const quarkUrlGroups = await Promise.allSettled(
                 batch.map(entry => fetchResourcePageQuarkUrls(entry.url, entry.title))
             );
@@ -627,8 +639,8 @@ async function tryTmdbForPoster(title, year, env) {
         const best = candidates[0];
         return {
             poster: best.poster,
-            imdb: best.tmdbRating,
-            imdbVotes: best.tmdbVotes,
+            tmdbRating: best.tmdbRating,
+            tmdbVotes: best.tmdbVotes,
             rottenTomatoes: null,
             tmdb: true,
             tmdbId: best.id,
