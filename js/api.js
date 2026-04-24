@@ -7,10 +7,14 @@ const API_BASE = "https://iplayw.hackx64.eu.org";
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
+    let abortListener = null;
 
     if (options.signal) {
         if (options.signal.aborted) controller.abort();
-        else options.signal.addEventListener('abort', () => controller.abort());
+        else {
+            abortListener = () => controller.abort();
+            options.signal.addEventListener('abort', abortListener, { once: true });
+        }
     }
 
     try {
@@ -33,6 +37,11 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
             throw new Error(`Request timeout: ${url}`, { cause: error });
         }
         throw error;
+    } finally {
+        clearTimeout(id);
+        if (options.signal && abortListener) {
+            options.signal.removeEventListener('abort', abortListener);
+        }
     }
 }
 
@@ -65,7 +74,7 @@ export const WikiAPI = {
             return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}`, options);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
-            console.warn("Wiki zh fetch failed:", e);
+            console.debug("Wiki zh fetch failed:", e);
             return null;
         }
     }
@@ -77,7 +86,7 @@ export const ResourceAPI = {
             return await fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options);
         } catch (error) {
             if (error.name === 'AbortError') throw error;
-            console.error("Resource fetch failed:", error);
+            console.debug("Resource fetch failed:", error);
             return { resources: [], quarkUrls: [] };
         }
     }
@@ -93,7 +102,7 @@ export const PosterAPI = {
             return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${year || ''}`, options);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
-            console.warn("Poster fetch failed:", e);
+            console.debug("Poster fetch failed:", e);
             return null;
         }
     }

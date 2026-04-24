@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iPlay · 沉浸式观影指南</title>
     <meta name="description" content="iPlay 沉浸式观影指南 — 聚合 TMDB、豆瓣、IMDb、OMDb、Wikipedia 多源评分与剧情信息，AI 个性化推荐，一键获取资源链接。">
-    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
-    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="/css/output.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
@@ -77,7 +78,7 @@
         </p>
 
         <form id="searchForm" class="w-full max-w-2xl relative group flex" autocomplete="off">
-            <input type="text" id="searchInput" placeholder="搜索剧集 / 电影..."
+            <input type="text" id="searchInput" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影"
                    class="search-input w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/50 text-center leading-[normal]">
             <button type="submit" id="searchButton" aria-label="搜索"
                     class="absolute right-4 top-1/2 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-all hover:border-accent-red hover:bg-accent-red/10 active:scale-95 md:opacity-0 md:group-hover:opacity-100">
@@ -87,12 +88,12 @@
     </header>
 
     <main class="w-full max-w-[92rem] px-6 md:px-8 pb-24 relative z-10">
-        <div id="loadingState" class="hidden flex flex-col items-center justify-center py-20 fade-up">
+        <div id="loadingState" class="hidden flex flex-col items-center justify-center py-20 fade-up" role="status" aria-live="polite">
             <div class="w-12 h-12 border-2 border-cinema-700 border-t-accent-red rounded-full animate-spin mb-6"></div>
             <p class="font-mono text-cinema-400 text-sm tracking-widest uppercase">Connecting to satellites<span class="cursor-blink">_</span></p>
         </div>
 
-        <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center">
+        <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center" role="alert">
             <i class="fas fa-exclamation-triangle text-accent-red text-3xl mb-4"></i>
             <p id="errorMsg" class="text-cinema-100 font-mono text-sm"></p>
             <p class="text-cinema-400 text-xs mt-4">网络存在波动，请稍后重试。</p>

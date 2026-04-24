@@ -380,11 +380,25 @@ function renderSynopsis(sourceLabel, text) {
 }
 
 function safeHostname(url) {
-    if (!url) return '—';
+    const safeUrl = toSafeHttpUrl(url);
+    if (!safeUrl) return '—';
     try {
-        return new URL(url).hostname.replace(/^www\./, '');
+        return new URL(safeUrl).hostname.replace(/^www\./, '');
     } catch {
-        return url;
+        return '—';
+    }
+}
+
+function toSafeHttpUrl(rawUrl) {
+    if (typeof rawUrl !== 'string') return null;
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return null;
+
+    try {
+        const parsed = new URL(trimmed);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+    } catch {
+        return null;
     }
 }
 
@@ -392,7 +406,13 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
     if (!container) return;
     clearNode(container);
 
-    if (!Array.isArray(items) || items.length === 0) {
+    const safeItems = Array.isArray(items)
+        ? items
+            .map(item => ({ ...item, url: toSafeHttpUrl(item?.url) }))
+            .filter(item => item.url)
+        : [];
+
+    if (safeItems.length === 0) {
         const li = document.createElement('li');
         li.className = 'p-4 text-sm font-mono text-cinema-400';
         li.textContent = emptyLabel;
@@ -401,14 +421,14 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
     }
 
     const frag = document.createDocumentFragment();
-    items.slice(0, limit).forEach(item => {
+    safeItems.slice(0, limit).forEach(item => {
         const li = document.createElement('li');
         li.className = itemClass;
 
         const a = document.createElement('a');
         a.href = item.url;
         a.target = '_blank';
-        a.rel = 'noreferrer';
+        a.rel = 'noopener noreferrer';
         a.className = cardClass;
 
         const row = document.createElement('div');
@@ -579,6 +599,14 @@ function resetRatingBoxes() {
     if (els.doubanBackupBox) els.doubanBackupBox.classList.add('hidden');
 }
 
+function setSearching(isSearching) {
+    if (!els.searchButton) return;
+    els.searchButton.disabled = isSearching;
+    els.searchButton.setAttribute('aria-busy', String(isSearching));
+    els.searchButton.classList.toggle('opacity-60', isSearching);
+    els.searchButton.classList.toggle('cursor-wait', isSearching);
+}
+
 let currentSearchId = 0;
 let currentAbortController = null;
 
@@ -598,6 +626,7 @@ async function handleSearch() {
     els.results.classList.add('hidden');
     els.loading.classList.remove('hidden');
     resetRatingBoxes();
+    setSearching(true);
 
     els.results.querySelectorAll('.fade-up').forEach(el => {
         el.style.animation = 'none';
@@ -647,6 +676,7 @@ async function handleSearch() {
 
         els.results.classList.remove('hidden');
         els.loading.classList.add('hidden');
+        if (searchId === currentSearchId) setSearching(false);
 
         DoubanAPI.search(query, searchOptions).then(async doubanSearchResult => {
             if (searchId !== currentSearchId) return;
@@ -661,7 +691,7 @@ async function handleSearch() {
                 viewModel.doubanRating = doubanResult.rating;
                 renderBackupDoubanRating(viewModel.doubanRating);
             }
-        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
+        }).catch(e => { if (e.name !== 'AbortError') console.debug('Douban enrichment skipped:', e); });
 
         WikiAPI.getSummary(candidate.title, searchOptions).then(wikiResult => {
             if (searchId !== currentSearchId || !wikiResult) return;
@@ -677,13 +707,13 @@ async function handleSearch() {
                 summary: viewModel.summary,
                 source: 'tmdb'
             }, 'TMDB', true);
-        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
+        }).catch(e => { if (e.name !== 'AbortError') console.debug('Wiki enrichment skipped:', e); });
 
         ResourceAPI.search(candidate.title, searchOptions).then(resourceResult => {
             if (searchId !== currentSearchId || !resourceResult) return;
             renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
             renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
+        }).catch(e => { if (e.name !== 'AbortError') console.debug('Resource enrichment skipped:', e); });
 
         PosterAPI.getPoster(candidate.title, candidate.year, searchOptions).then(posterResult => {
             if (searchId !== currentSearchId || !posterResult) return;
@@ -691,7 +721,7 @@ async function handleSearch() {
             viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
             loadPoster(viewModel.posterUrl);
             renderTmdbProfile(viewModel);
-        }).catch(e => { if (e.name !== 'AbortError') console.error(e); });
+        }).catch(e => { if (e.name !== 'AbortError') console.debug('Poster enrichment skipped:', e); });
 
     } catch (err) {
         if (err.name === 'AbortError') return;
@@ -703,6 +733,9 @@ async function handleSearch() {
         }
         els.error.classList.remove('hidden');
         els.loading.classList.add('hidden');
+        setSearching(false);
+    } finally {
+        if (searchId === currentSearchId) setSearching(false);
     }
 }
 

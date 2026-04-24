@@ -4,8 +4,9 @@
   "description": "> 一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "npx @tailwindcss/cli -i css/input.css -o css/output.css --minify"
+    "lint": "eslint .",
+    "test": "npm run lint && npm run build",
+    "build": "tailwindcss -i css/input.css -o css/output.css --minify"
   },
   "repository": {
     "type": "git",
@@ -21,6 +22,7 @@
   "homepage": "https://github.com/txdywy/iplay#readme",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tailwindcss/cli": "^4.2.4",
     "eslint": "^10.2.1",
     "tailwindcss": "^4.2.4"
   }
