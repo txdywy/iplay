@@ -6,7 +6,7 @@
 
 iPlay 是一款拥有独特"暗黑电影院"复古美学的前端应用，结合个人观影偏好算法与互联网公开数据（TMDB、豆瓣、Wikipedia 剧情、夸克网盘资源），为你生成个性化的剧集推荐指数。
 
-![iPlay 截图演示](https://via.placeholder.com/800x400/0a0a0c/e50914?text=iPlay+Cinematic+Experience)
+![iPlay 截图演示](./assets-readme-screenshot.png)
 
 ## ✨ 核心亮点
 
