@@ -309,7 +309,11 @@ async function handleDoubanSearch(query, ctx) {
     const cacheKey = new Request(`https://douban-search-cache.local/?q=${encodeURIComponent(query)}`);
     const cache = caches.default;
     const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) return cachedResponse;
+    if (cachedResponse) {
+        const response = new Response(cachedResponse.body, cachedResponse);
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        return response;
+    }
 
     try {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
@@ -340,7 +344,11 @@ async function handleDoubanDetail(id, ctx) {
     const cacheKey = new Request(`https://douban-detail-cache.local/?id=${id}`);
     const cache = caches.default;
     const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) return cachedResponse;
+    if (cachedResponse) {
+        const response = new Response(cachedResponse.body, cachedResponse);
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        return response;
+    }
 
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;

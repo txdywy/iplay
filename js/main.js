@@ -472,7 +472,7 @@ function renderQuarkUrls(quarkUrls) {
     });
 }
 
-function renderScore(data, sourceLabel) {
+function renderScore(data, sourceLabel, isUpdate = false) {
     const scoreData = calculateRecommendationScore({
         rating: data.rating,
         votes: data.votes,
@@ -489,8 +489,16 @@ function renderScore(data, sourceLabel) {
     const scoreClass = `text-5xl md:text-7xl font-black font-mono ${labelInfo.color}`;
     els.recScore.className = scoreClass;
     els.recLabel.className = `text-lg font-bold tracking-wider ${labelInfo.color}`;
-    els.recBar.style.animation = 'none';
-    els.recBar.offsetHeight;
+
+    if (!isUpdate) {
+        els.recBar.style.animation = 'none';
+        els.recBar.offsetHeight;
+        els.recBar.classList.add('progress-bar');
+    } else {
+        els.recBar.classList.remove('progress-bar');
+        els.recBar.style.transition = 'width 0.5s ease-out, background-color 0.5s ease-out, box-shadow 0.5s ease-out';
+    }
+
     els.recBar.style.width = `${scoreData.score}%`;
     els.recBar.className = `h-full progress-bar ${
         scoreData.score >= 85 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]' :
@@ -654,7 +662,7 @@ async function handleSearch() {
                 hasWiki: Boolean(wikiResult && wikiResult.extract),
                 summary: viewModel.summary,
                 source: 'tmdb'
-            }, 'TMDB');
+            }, 'TMDB', true);
         }).catch(() => {});
 
         ResourceAPI.search(candidate.title).then(resourceResult => {
