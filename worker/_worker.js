@@ -221,12 +221,23 @@ async function handleTmdbSearch(query, env, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     try {
-        const zhData = await fetchTmdbSearch(query, "zh-CN", env, ctx).catch(() => null);
+        let zhData = null;
+        try {
+            zhData = await fetchTmdbSearch(query, "zh-CN", env, ctx);
+        } catch(e) {
+            console.error("zh-CN TMDB fetch failed:", e.message);
+            throw e; // We want to see this error!
+        }
         let data = zhData;
 
         const usableZh = data && Array.isArray(data.results) ? data.results.some(item => item.media_type === "movie" || item.media_type === "tv") : false;
         if (!usableZh) {
-            data = await fetchTmdbSearch(query, "en-US", env, ctx).catch(() => null);
+            try {
+                data = await fetchTmdbSearch(query, "en-US", env, ctx);
+            } catch(e) {
+                console.error("en-US TMDB fetch failed:", e.message);
+                throw e; // We want to see this error!
+            }
         }
 
         const results = [];
