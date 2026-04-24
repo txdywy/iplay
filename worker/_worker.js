@@ -301,11 +301,6 @@ const DOUBAN_SEARCH_HEADERS = {
     "Referer": "https://movie.douban.com/"
 };
 
-function randomBid() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    return Array.from({ length: 11 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
-
 const DOUBAN_DETAIL_HEADERS_BASE = {
     "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -761,7 +756,7 @@ async function tryTmdbForPoster(title, year, env, ctx) {
             tmdbId: best.id,
             mediaType: best.mediaType
         };
-    } catch (e) {
+    } catch {
         return null;
     }
 }
