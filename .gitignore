@@ -1,2 +1,5 @@
 .omc/
 .playwright-mcp/
+
+node_modules/
+css/output.css

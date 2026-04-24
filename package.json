@@ -1,0 +1,25 @@
+{
+  "name": "iplay",
+  "version": "1.0.0",
+  "description": "> 一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "npx @tailwindcss/cli -i css/input.css -o css/output.css --minify"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/txdywy/iplay.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/txdywy/iplay/issues"
+  },
+  "homepage": "https://github.com/txdywy/iplay#readme",
+  "devDependencies": {
+    "tailwindcss": "^4.2.4"
+  }
+}

@@ -2,7 +2,7 @@
  * 个性化推荐算法
  */
 
-const PREFERENCE_WEIGHTS = {
+let PREFERENCE_WEIGHTS = {
     '喜剧': { score: 2.5, reason: '符合喜剧偏好' },
     '轻松': { score: 2.0, reason: '基调轻松减压' },
     '爱情': { score: 1.5, reason: '包含浪漫/Melo元素' },
@@ -16,6 +16,15 @@ const PREFERENCE_WEIGHTS = {
     '悲剧': { score: -3.0, reason: '剧情致郁/苦大仇深' },
     '灾难': { score: -1.5, reason: '环境压抑' }
 };
+
+try {
+    const customWeights = localStorage.getItem('iplay_preference_weights');
+    if (customWeights) {
+        PREFERENCE_WEIGHTS = { ...PREFERENCE_WEIGHTS, ...JSON.parse(customWeights) };
+    }
+} catch (e) {
+    console.error('Failed to load custom preference weights', e);
+}
 
 function getRatingLabel(source) {
     if (source === 'tmdb') return 'TMDB评分';

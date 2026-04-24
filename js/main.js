@@ -135,12 +135,14 @@ function appendBadgeList(container, values, emptyLabel) {
         return;
     }
 
+    const frag = document.createDocumentFragment();
     values.forEach(value => {
         const span = document.createElement('span');
         span.className = 'px-3 py-1 border border-cinema-700 text-cinema-100 text-xs font-mono uppercase tracking-widest rounded-full';
         span.textContent = value;
-        container.appendChild(span);
+        frag.appendChild(span);
     });
+    container.appendChild(frag);
 }
 
 function renderPrimaryRating(value, sourceLabel) {
@@ -191,7 +193,9 @@ function formatCount(value) {
 
 function appendInfoCards(container, cards) {
     if (!container || !Array.isArray(cards)) return;
-    cards.forEach(card => container.appendChild(card));
+    const frag = document.createDocumentFragment();
+    cards.forEach(card => frag.appendChild(card));
+    container.appendChild(frag);
 }
 
 function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
@@ -396,6 +400,7 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
         return;
     }
 
+    const frag = document.createDocumentFragment();
     items.slice(0, limit).forEach(item => {
         const li = document.createElement('li');
         li.className = itemClass;
@@ -435,8 +440,9 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
         row.appendChild(icon);
         a.appendChild(row);
         li.appendChild(a);
-        container.appendChild(li);
+        frag.appendChild(li);
     });
+    container.appendChild(frag);
 }
 
 function renderResourceList(resources) {
@@ -564,9 +570,13 @@ function resetRatingBoxes() {
     if (els.doubanBackupBox) els.doubanBackupBox.classList.add('hidden');
 }
 
+let currentSearchId = 0;
+
 async function handleSearch() {
     const query = els.input.value.trim();
     if (!query) return;
+
+    const searchId = ++currentSearchId;
 
     els.error.classList.add('hidden');
     els.results.classList.add('hidden');
@@ -581,6 +591,8 @@ async function handleSearch() {
 
     try {
         const tmdbSearch = await safeTmdbSearch(query);
+        if (searchId !== currentSearchId) return;
+
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
 
         if (tmdbResults.length === 0) {
@@ -592,38 +604,15 @@ async function handleSearch() {
 
         showToast('Signal locked. Initiating deep scan...');
 
-        const [tmdbDetailResult, doubanSearchResult, wikiData, resourceData, posterData] = await Promise.allSettled([
-            TmdbAPI.getDetail(candidate.id, candidate.mediaType),
-            DoubanAPI.search(query),
-            WikiAPI.getSummary(candidate.title),
-            ResourceAPI.search(candidate.title),
-            PosterAPI.getPoster(candidate.title, candidate.year)
-        ]);
+        const tmdbDetail = await TmdbAPI.getDetail(candidate.id, candidate.mediaType).catch(() => null);
+        if (searchId !== currentSearchId) return;
 
-        const tmdbDetail = tmdbDetailResult.status === 'fulfilled' && tmdbDetailResult.value && !tmdbDetailResult.value.error
-            ? tmdbDetailResult.value
-            : null;
-
-        const doubanCandidates = doubanSearchResult.status === 'fulfilled' && Array.isArray(doubanSearchResult.value)
-            ? doubanSearchResult.value
-            : [];
-        const doubanMatch = pickBestDoubanMatch(doubanCandidates, query);
-        const doubanResult = doubanMatch && doubanMatch.id
-            ? await DoubanAPI.getDetail(doubanMatch.id).catch(() => null)
-            : null;
-        const wikiResult = wikiData.status === 'fulfilled' ? wikiData.value : null;
-        const resourceResult = resourceData.status === 'fulfilled' ? resourceData.value : null;
-        const posterResult = posterData.status === 'fulfilled' ? posterData.value : null;
-        const viewModel = buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult);
-        viewModel.doubanRating = doubanResult && typeof doubanResult.rating === 'number' ? doubanResult.rating : null;
+        let viewModel = buildTmdbViewModel(candidate, tmdbDetail, null, null);
 
         setText(els.title, viewModel.title);
         setText(els.subTitle, viewModel.subtitle);
-        renderBackupDoubanRating(viewModel.doubanRating);
         renderGenres(viewModel.genres);
         renderSynopsis(viewModel.overviewSource, viewModel.summary);
-        renderResourceList(resourceResult && Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
-        renderQuarkUrls(resourceResult && Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
         loadPoster(viewModel.posterUrl);
         renderTmdbFacts(viewModel);
         renderTmdbProfile(viewModel);
@@ -632,20 +621,64 @@ async function handleSearch() {
             rating: viewModel.rating,
             votes: viewModel.votes,
             genres: viewModel.genres,
-            hasWiki: Boolean(wikiResult && wikiResult.extract),
+            hasWiki: false,
             summary: viewModel.summary,
             source: 'tmdb'
         }, 'TMDB');
 
         els.results.classList.remove('hidden');
+        els.loading.classList.add('hidden');
+
+        DoubanAPI.search(query).then(async doubanSearchResult => {
+            if (searchId !== currentSearchId) return;
+            const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
+            const doubanMatch = pickBestDoubanMatch(doubanCandidates, query);
+            if (doubanMatch && doubanMatch.id) {
+                const doubanResult = await DoubanAPI.getDetail(doubanMatch.id).catch(() => null);
+                if (searchId !== currentSearchId || !doubanResult) return;
+                viewModel.doubanRating = doubanResult.rating;
+                renderBackupDoubanRating(viewModel.doubanRating);
+            }
+        }).catch(() => {});
+
+        WikiAPI.getSummary(candidate.title).then(wikiResult => {
+            if (searchId !== currentSearchId || !wikiResult) return;
+            viewModel.summary = wikiResult.extract || viewModel.summary;
+            viewModel.overviewSource = wikiResult.extract ? 'ZH.WIKIPEDIA' : viewModel.overviewSource;
+            renderSynopsis(viewModel.overviewSource, viewModel.summary);
+            
+            renderScore({
+                rating: viewModel.rating,
+                votes: viewModel.votes,
+                genres: viewModel.genres,
+                hasWiki: Boolean(wikiResult && wikiResult.extract),
+                summary: viewModel.summary,
+                source: 'tmdb'
+            }, 'TMDB');
+        }).catch(() => {});
+
+        ResourceAPI.search(candidate.title).then(resourceResult => {
+            if (searchId !== currentSearchId || !resourceResult) return;
+            renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
+            renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
+        }).catch(() => {});
+
+        PosterAPI.getPoster(candidate.title, candidate.year).then(posterResult => {
+            if (searchId !== currentSearchId || !posterResult) return;
+            viewModel.omdbProfile = posterResult.omdb ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult) : viewModel.omdbProfile;
+            viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
+            loadPoster(viewModel.posterUrl);
+            renderTmdbProfile(viewModel);
+        }).catch(() => {});
+
     } catch (err) {
+        if (searchId !== currentSearchId) return;
         if (err && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))) {
             els.errorMsg.textContent = 'Unable to connect to Cloudflare Worker. Make sure the API_BASE is correctly configured and the Worker is deployed.';
         } else {
             els.errorMsg.textContent = err && err.message ? err.message : 'Unknown error';
         }
         els.error.classList.remove('hidden');
-    } finally {
         els.loading.classList.add('hidden');
     }
 }

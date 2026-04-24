@@ -2,7 +2,7 @@
  * API 请求封装 - Cloudflare Worker 版本
  */
 
-const API_BASE = "https://iplay.andylaw2017.workers.dev";
+const API_BASE = "https://iplayw.hackx64.eu.org";
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();

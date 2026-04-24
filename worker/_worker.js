@@ -22,23 +22,24 @@ export default {
         const url = new URL(request.url);
 
         if (url.pathname.startsWith("/api/tmdb/search")) {
-            return await handleTmdbSearch(url.searchParams.get("q"), env);
+            return await handleTmdbSearch(url.searchParams.get("q"), env, ctx);
         }
 
         if (url.pathname.startsWith("/api/tmdb/detail")) {
             return await handleTmdbDetail(
                 url.searchParams.get("id"),
                 url.searchParams.get("type"),
-                env
+                env,
+                ctx
             );
         }
 
         if (url.pathname.startsWith("/api/douban/search")) {
-            return await handleDoubanSearch(url.searchParams.get("q"));
+            return await handleDoubanSearch(url.searchParams.get("q"), ctx);
         }
 
         if (url.pathname.startsWith("/api/douban/detail")) {
-            return await handleDoubanDetail(url.searchParams.get("id"));
+            return await handleDoubanDetail(url.searchParams.get("id"), ctx);
         }
 
         if (url.pathname.startsWith("/api/resource")) {
@@ -54,7 +55,7 @@ export default {
         }
 
         if (url.pathname.startsWith("/api/poster")) {
-            return await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env);
+            return await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx);
         }
 
         if (url.pathname.startsWith("/api/wiki/zh")) {
@@ -161,7 +162,7 @@ function normalizeTmdbDetail(data, type) {
     };
 }
 
-async function fetchTmdbJson(path, params, env) {
+async function fetchTmdbJson(path, params, env, ctx) {
     const auth = getTmdbAuth(env);
     if (!auth) {
         throw new Error("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY");
@@ -174,46 +175,58 @@ async function fetchTmdbJson(path, params, env) {
         }
     });
 
-    const headers = {
-        "Accept": "application/json"
-    };
+    const cacheKey = new Request(url.toString());
+    const cache = caches.default;
 
-    if (auth.type === "bearer") {
-        headers.Authorization = `Bearer ${auth.value}`;
-    } else {
-        url.searchParams.set("api_key", auth.value);
+    let response = await cache.match(cacheKey);
+
+    if (!response) {
+        const headers = {
+            "Accept": "application/json"
+        };
+
+        if (auth.type === "bearer") {
+            headers.Authorization = `Bearer ${auth.value}`;
+        } else {
+            url.searchParams.set("api_key", auth.value);
+        }
+
+        response = await fetch(url.toString(), { headers });
+        if (response.ok) {
+            const cacheResponse = response.clone();
+            cacheResponse.headers.set('Cache-Control', 'public, max-age=86400');
+            ctx.waitUntil(cache.put(cacheKey, cacheResponse));
+        }
     }
 
-    const res = await fetch(url.toString(), { headers });
-
-    const data = await res.json();
-    if (!res.ok) {
-        const message = data && data.status_message ? data.status_message : `TMDB HTTP ${res.status}`;
+    const data = await response.json();
+    if (!response.ok) {
+        const message = data && data.status_message ? data.status_message : `TMDB HTTP ${response.status}`;
         throw new Error(message);
     }
 
     return data;
 }
 
-async function fetchTmdbSearch(query, language, env) {
+async function fetchTmdbSearch(query, language, env, ctx) {
     return fetchTmdbJson("/search/multi", {
         query,
         language,
         include_adult: "false",
         page: "1"
-    }, env);
+    }, env, ctx);
 }
 
-async function handleTmdbSearch(query, env) {
+async function handleTmdbSearch(query, env, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     try {
-        const zhData = await fetchTmdbSearch(query, "zh-CN", env).catch(() => null);
+        const zhData = await fetchTmdbSearch(query, "zh-CN", env, ctx).catch(() => null);
         let data = zhData;
 
         const usableZh = data && Array.isArray(data.results) ? data.results.some(item => item.media_type === "movie" || item.media_type === "tv") : false;
         if (!usableZh) {
-            data = await fetchTmdbSearch(query, "en-US", env).catch(() => null);
+            data = await fetchTmdbSearch(query, "en-US", env, ctx).catch(() => null);
         }
 
         const results = [];
@@ -241,7 +254,7 @@ async function handleTmdbSearch(query, env) {
     }
 }
 
-async function handleTmdbDetail(id, type, env) {
+async function handleTmdbDetail(id, type, env, ctx) {
     if (!id) return jsonResponse({ error: "Missing id" }, 400);
 
     const apiType = type === "tv" ? "tv" : "movie";
@@ -253,7 +266,7 @@ async function handleTmdbDetail(id, type, env) {
             const data = await fetchTmdbJson(`/${candidateType}/${id}`, {
                 language: "zh-CN",
                 append_to_response: "external_ids,credits"
-            }, env);
+            }, env, ctx);
 
             return jsonResponse(normalizeTmdbDetail(data, candidateType));
         } catch (e) {
@@ -290,8 +303,13 @@ function getDoubanDetailHeaders() {
     };
 }
 
-async function handleDoubanSearch(query) {
+async function handleDoubanSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
+
+    const cacheKey = new Request(`https://douban-search-cache.local/?q=${encodeURIComponent(query)}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) return cachedResponse;
 
     try {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
@@ -304,6 +322,11 @@ async function handleDoubanSearch(query) {
 
         const text = await res.text();
         const data = JSON.parse(text);
+
+        const responseToCache = jsonResponse(data);
+        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+        ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
+
         return jsonResponse(data);
     } catch (e) {
         console.error("Douban search error:", e.message);
@@ -311,8 +334,13 @@ async function handleDoubanSearch(query) {
     }
 }
 
-async function handleDoubanDetail(id) {
+async function handleDoubanDetail(id, ctx) {
     if (!id) return jsonResponse({ error: "Missing id" }, 400);
+
+    const cacheKey = new Request(`https://douban-detail-cache.local/?id=${id}`);
+    const cache = caches.default;
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) return cachedResponse;
 
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
@@ -361,6 +389,10 @@ async function handleDoubanDetail(id) {
 
         await rewriter.transform(res).text();
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
+
+        const responseToCache = jsonResponse(result);
+        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
+        ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
 
         return jsonResponse(result);
     } catch (e) {

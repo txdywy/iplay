@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Noto Serif SC", serif;
+  --font-mono: "Space Mono", monospace;
+  
+  --color-cinema-900: #0a0a0c;
+  --color-cinema-800: #141417;
+  --color-cinema-700: #1e1e24;
+  --color-cinema-400: #a3a3a8;
+  --color-cinema-100: #e0e0e0;
+  
+  --color-accent-red: #e50914;
+  --color-accent-gold: #ffd700;
+}
