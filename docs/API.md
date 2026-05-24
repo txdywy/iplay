@@ -91,7 +91,7 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
       "title": "流浪地球",
       "originalTitle": "The Wandering Earth",
       "year": "2019",
-      "poster": "https://image.tmdb.org/t/p/w342/xxx.jpg",
+      "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
       "backdrop": "https://image.tmdb.org/t/p/w780/yyy.jpg",
       "summary": "太阳即将毁灭，人类在地球表面建造出巨大的推进器...",
       "tmdbRating": 6.4,
@@ -137,7 +137,7 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/detail?id=550988&type=movie"
   "title": "流浪地球",
   "originalTitle": "The Wandering Earth",
   "year": "2019",
-  "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
+  "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
   "backdrop": "https://image.tmdb.org/t/p/w780/yyy.jpg",
   "summary": "太阳即将毁灭，人类在地球表面建造出巨大的推进器...",
   "genres": ["科幻", "冒险", "灾难"],
@@ -365,7 +365,7 @@ curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
 
 ```json
 {
-  "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
+  "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
   "tmdbRating": 6.4,
   "tmdbVotes": 1205,
   "rottenTomatoes": null,
@@ -453,6 +453,8 @@ Worker 对所有上游 API 响应进行了缓存，前端调用不受上游 rate
 | `/api/wiki/zh` | 24h | `wiki-zh-cache.local/?q={query}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
+
+Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 
 ---
 

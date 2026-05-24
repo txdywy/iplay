@@ -5,6 +5,7 @@
 const DEFAULT_OMDB_API_KEY = "80077e97";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
+const TMDB_POSTER_SIZE = "w780";
 
 export default {
     async fetch(request, env, ctx) {
@@ -63,6 +64,11 @@ export default {
         }
 
         return new Response("Not Found", { status: 404 });
+    },
+
+    async scheduled(event, env, ctx) {
+        console.log(`Scheduled refresh started at ${new Date(event.scheduledTime).toISOString()}`);
+        ctx.waitUntil(refreshScheduledData(env, ctx));
     }
 };
 
@@ -90,7 +96,7 @@ function getOmdbApiKey(env) {
     return env && env.OMDB_API_KEY ? env.OMDB_API_KEY : DEFAULT_OMDB_API_KEY;
 }
 
-function tmdbImage(path, size = "w500") {
+function tmdbImage(path, size = TMDB_POSTER_SIZE) {
     return path ? `${TMDB_IMAGE_BASE}/${size}${path}` : null;
 }
 
@@ -109,7 +115,7 @@ function normalizeTmdbItem(item) {
         title,
         originalTitle,
         year,
-        poster: tmdbImage(item.poster_path, "w342"),
+        poster: tmdbImage(item.poster_path),
         backdrop: tmdbImage(item.backdrop_path, "w780"),
         summary: item.overview || "",
         tmdbRating: item.vote_average ?? null,
@@ -162,7 +168,7 @@ function normalizeTmdbDetail(data, type) {
     };
 }
 
-async function fetchTmdbJson(path, params, env, ctx) {
+async function fetchTmdbJson(path, params, env, ctx, options = {}) {
     const auth = getTmdbAuth(env);
     if (!auth) {
         throw new Error("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY");
@@ -178,7 +184,7 @@ async function fetchTmdbJson(path, params, env, ctx) {
     const cacheKey = new Request(url.toString());
     const cache = caches.default;
 
-    let response = await cache.match(cacheKey);
+    let response = options.refreshCache ? null : await cache.match(cacheKey);
 
     if (!response) {
         const headers = {
@@ -201,7 +207,7 @@ async function fetchTmdbJson(path, params, env, ctx) {
                 statusText: clonedResponse.statusText,
                 headers: newHeaders
             });
-            ctx.waitUntil(cache.put(cacheKey, cacheResponse));
+            if (ctx) ctx.waitUntil(cache.put(cacheKey, cacheResponse));
         }
     }
 
@@ -221,6 +227,74 @@ async function fetchTmdbSearch(query, language, env, ctx) {
         include_adult: "false",
         page: "1"
     }, env, ctx);
+}
+
+async function refreshScheduledData(env, ctx) {
+    const titles = getScheduledRefreshTitles(env);
+    if (titles.length === 0) return;
+
+    await Promise.allSettled(titles.map(title => refreshTitleData(title, env, ctx)));
+}
+
+function getScheduledRefreshTitles(env) {
+    const rawTitles = env && env.CRON_REFRESH_TITLES ? env.CRON_REFRESH_TITLES : "大叔再出招";
+    return rawTitles
+        .split(",")
+        .map(title => title.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+}
+
+async function refreshTitleData(title, env, ctx) {
+    const searchData = await fetchTmdbJson("/search/multi", {
+        query: title,
+        language: "zh-CN",
+        include_adult: "false",
+        page: "1"
+    }, env, ctx, { refreshCache: true });
+
+    const candidates = Array.isArray(searchData.results)
+        ? searchData.results.filter(item => item.media_type === "movie" || item.media_type === "tv")
+        : [];
+    const best = pickBestTmdbPosterCandidate(candidates, title, null);
+    if (!best) return;
+
+    await fetchTmdbJson(`/${best.media_type}/${best.id}`, {
+        language: "zh-CN",
+        append_to_response: "external_ids,credits"
+    }, env, ctx, { refreshCache: true }).catch(() => null);
+}
+
+function normalizeMatchText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。/\\]/g, "");
+}
+
+function pickBestTmdbPosterCandidate(items, title, year) {
+    if (!Array.isArray(items) || items.length === 0) return null;
+
+    const normalizedTitle = normalizeMatchText(title);
+    const scored = items
+        .filter(item => (item.media_type === "movie" || item.media_type === "tv") && item.poster_path)
+        .map(item => {
+            const itemTitle = normalizeMatchText(item.title || item.name);
+            const originalTitle = normalizeMatchText(item.original_title || item.original_name);
+            const itemYear = parseYear(item.release_date || item.first_air_date);
+            let score = 0;
+
+            if (itemTitle === normalizedTitle || originalTitle === normalizedTitle) score += 1000;
+            if ((itemTitle && itemTitle.includes(normalizedTitle)) || (originalTitle && originalTitle.includes(normalizedTitle))) score += 400;
+            if ((itemTitle && normalizedTitle.includes(itemTitle)) || (originalTitle && normalizedTitle.includes(originalTitle))) score += 200;
+            if (year && itemYear === String(year)) score += 300;
+            score += Math.min(Number(item.popularity) || 0, 100);
+            score += Math.min(Number(item.vote_count) || 0, 1000) / 100;
+
+            return { item, score };
+        })
+        .sort((a, b) => b.score - a.score);
+
+    return scored.length > 0 ? scored[0].item : null;
 }
 
 async function handleTmdbSearch(query, env, ctx) {
@@ -732,23 +806,36 @@ async function handlePosterSearch(title, year, env, ctx) {
 
 async function tryTmdbForPoster(title, year, env, ctx) {
     try {
-        const searchData = await fetchTmdbJson("/search/multi", {
+        let searchData = await fetchTmdbJson("/search/multi", {
             query: title,
             language: "zh-CN",
             include_adult: "false",
             page: "1"
         }, env, ctx);
 
-        const candidates = (searchData.results || [])
-            .filter(item => (item.media_type === "movie" || item.media_type === "tv") && item.poster_path)
-            .map(normalizeTmdbItem)
-            .filter(item => !year || item.year === year || String(item.year || "").startsWith(year));
+        let candidates = Array.isArray(searchData.results)
+            ? searchData.results.filter(item => !year || parseYear(item.release_date || item.first_air_date) === String(year))
+            : [];
+        let bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
 
-        if (candidates.length === 0) return null;
+        if (!bestRaw) {
+            searchData = await fetchTmdbJson("/search/multi", {
+                query: title,
+                language: "en-US",
+                include_adult: "false",
+                page: "1"
+            }, env, ctx);
+            candidates = Array.isArray(searchData.results)
+                ? searchData.results.filter(item => !year || parseYear(item.release_date || item.first_air_date) === String(year))
+                : [];
+            bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
+        }
 
-        const best = candidates[0];
+        if (!bestRaw) return null;
+
+        const best = normalizeTmdbItem(bestRaw);
         return {
-            poster: best.poster,
+            poster: tmdbImage(bestRaw.poster_path),
             tmdbRating: best.tmdbRating,
             tmdbVotes: best.tmdbVotes,
             rottenTomatoes: null,

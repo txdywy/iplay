@@ -228,7 +228,7 @@ All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`).
       "title": "...",
       "originalTitle": "...",
       "year": "2024",
-      "poster": "https://image.tmdb.org/t/p/w342/...",
+      "poster": "https://image.tmdb.org/t/p/w780/...",
       "backdrop": "https://image.tmdb.org/t/p/w780/...",
       "summary": "...",
       "tmdbRating": 8.5,
