@@ -20,7 +20,12 @@ let PREFERENCE_WEIGHTS = {
 try {
     const customWeights = localStorage.getItem('iplay_preference_weights');
     if (customWeights) {
-        PREFERENCE_WEIGHTS = { ...PREFERENCE_WEIGHTS, ...JSON.parse(customWeights) };
+        for (const [genre, value] of Object.entries(JSON.parse(customWeights))) {
+            const score = typeof value === 'number' ? value : Number(value?.score);
+            if (Number.isFinite(score)) {
+                PREFERENCE_WEIGHTS[genre] = { score, reason: value?.reason || `自定义偏好：${genre}` };
+            }
+        }
     }
 } catch (e) {
     console.error('Failed to load custom preference weights', e);

@@ -82,6 +82,22 @@ function jsonResponse(data, status = 200) {
     });
 }
 
+async function serveCachedJson(cacheKey) {
+    const cached = await caches.default.match(cacheKey);
+    if (!cached) return null;
+    const headers = new Headers(cached.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers });
+}
+
+function cacheJson(ctx, cacheKey, data, maxAge) {
+    const response = jsonResponse(data);
+    const toCache = response.clone();
+    toCache.headers.set("Cache-Control", `public, max-age=${maxAge}`);
+    if (ctx) ctx.waitUntil(caches.default.put(cacheKey, toCache));
+    return response;
+}
+
 function getTmdbAuth(env) {
     if (env && env.TMDB_ACCESS_TOKEN) {
         return { type: "bearer", value: env.TMDB_ACCESS_TOKEN };
@@ -301,23 +317,11 @@ async function handleTmdbSearch(query, env, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     try {
-        let zhData = null;
-        try {
-            zhData = await fetchTmdbSearch(query, "zh-CN", env, ctx);
-        } catch(e) {
-            console.error("zh-CN TMDB fetch failed:", e.message);
-            throw e; // We want to see this error!
-        }
-        let data = zhData;
+        let data = await fetchTmdbSearch(query, "zh-CN", env, ctx);
 
         const usableZh = data && Array.isArray(data.results) ? data.results.some(item => item.media_type === "movie" || item.media_type === "tv") : false;
         if (!usableZh) {
-            try {
-                data = await fetchTmdbSearch(query, "en-US", env, ctx);
-            } catch(e) {
-                console.error("en-US TMDB fetch failed:", e.message);
-                throw e; // We want to see this error!
-            }
+            data = await fetchTmdbSearch(query, "en-US", env, ctx);
         }
 
         const results = [];
@@ -375,32 +379,19 @@ const DOUBAN_SEARCH_HEADERS = {
     "Referer": "https://movie.douban.com/"
 };
 
-const DOUBAN_DETAIL_HEADERS_BASE = {
+const DOUBAN_DETAIL_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://movie.douban.com/"
 };
 
-function getDoubanDetailHeaders() {
-    return DOUBAN_DETAIL_HEADERS_BASE;
-}
-
 async function handleDoubanSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     const cacheKey = new Request(`https://douban-search-cache.local/?q=${encodeURIComponent(query)}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
@@ -411,14 +402,8 @@ async function handleDoubanSearch(query, ctx) {
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
 
-        const text = await res.text();
-        const data = JSON.parse(text);
-
-        const responseToCache = jsonResponse(data);
-        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-        ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-
-        return jsonResponse(data);
+        const data = JSON.parse(await res.text());
+        return cacheJson(ctx, cacheKey, data, 86400);
     } catch (e) {
         console.error("Douban search error:", e.message);
         return jsonResponse({ error: e.message }, 500);
@@ -429,22 +414,13 @@ async function handleDoubanDetail(id, ctx) {
     if (!id) return jsonResponse({ error: "Missing id" }, 400);
 
     const cacheKey = new Request(`https://douban-detail-cache.local/?id=${id}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
         const res = await fetch(fetchUrl, {
-            headers: getDoubanDetailHeaders(),
+            headers: DOUBAN_DETAIL_HEADERS,
             redirect: "follow"
         });
 
@@ -489,11 +465,7 @@ async function handleDoubanDetail(id, ctx) {
         await rewriter.transform(res).text();
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
 
-        const responseToCache = jsonResponse(result);
-        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-        ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-
-        return jsonResponse(result);
+        return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
         console.error("Douban detail error:", e.message);
         return jsonResponse({ error: e.message }, 500);
@@ -566,17 +538,8 @@ async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     const cacheKey = new Request(`https://resource-search-cache.local/?q=${encodeURIComponent(query)}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const res = await fetch(`https://by669.org/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
@@ -622,12 +585,7 @@ async function handleResourceSearch(query, ctx) {
             }
         }
 
-        const result = { resources, quarkUrls };
-        const responseToCache = jsonResponse(result);
-        responseToCache.headers.set('Cache-Control', 'public, max-age=43200');
-        if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-
-        return jsonResponse(result);
+        return cacheJson(ctx, cacheKey, { resources, quarkUrls }, 43200);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
@@ -635,17 +593,8 @@ async function handleResourceSearch(query, ctx) {
 
 async function handleOmdbById(imdbId, env, ctx) {
     const cacheKey = new Request(`https://omdb-cache.local/id/${imdbId}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${getOmdbApiKey(env)}`);
@@ -657,10 +606,7 @@ async function handleOmdbById(imdbId, env, ctx) {
         const data = await res.json();
 
         if (data.Response === "True") {
-            const responseToCache = jsonResponse(extractOmdbProfile(data));
-            responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-            if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-            return jsonResponse(extractOmdbProfile(data));
+            return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         }
         return jsonResponse({ error: "OMDb: Not found" }, 404);
     } catch (e) {
@@ -672,17 +618,8 @@ async function handleOmdbSearch(title, year, env, ctx) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     const cacheKey = new Request(`https://omdb-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
@@ -697,20 +634,14 @@ async function handleOmdbSearch(title, year, env, ctx) {
         const data = await res.json();
 
         if (data.Response === "True") {
-            const responseToCache = jsonResponse(extractOmdbProfile(data));
-            responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-            if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-            return jsonResponse(extractOmdbProfile(data));
+            return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         }
 
         if (year) {
             const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
             const fallbackData = await fallbackRes.json();
             if (fallbackData.Response === "True") {
-                const responseToCache = jsonResponse(extractOmdbProfile(fallbackData));
-                responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-                if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-                return jsonResponse(extractOmdbProfile(fallbackData));
+                return cacheJson(ctx, cacheKey, extractOmdbProfile(fallbackData), 86400);
             }
         }
 
@@ -915,17 +846,8 @@ async function handleWikiZh(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
     const cacheKey = new Request(`https://wiki-zh-cache.local/?q=${encodeURIComponent(query)}`);
-    const cache = caches.default;
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-        const newHeaders = new Headers(cachedResponse.headers);
-        newHeaders.set("Access-Control-Allow-Origin", "*");
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers: newHeaders
-        });
-    }
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const searchRes = await fetch(
@@ -962,11 +884,7 @@ async function handleWikiZh(query, ctx) {
             thumbnail: summaryData.thumbnail || null
         };
 
-        const responseToCache = jsonResponse(result);
-        responseToCache.headers.set('Cache-Control', 'public, max-age=86400');
-        if (ctx) ctx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
-
-        return jsonResponse(result);
+        return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
