@@ -48,12 +48,14 @@ const els = {
     toast: document.getElementById('toast')
 };
 
+let toastTimer = null;
 function showToast(msg) {
     if (!els.toast) return;
+    clearTimeout(toastTimer);
     els.toast.textContent = msg;
     els.toast.style.transform = 'translateY(0)';
     els.toast.style.opacity = '1';
-    setTimeout(() => {
+    toastTimer = setTimeout(() => {
         els.toast.style.transform = 'translateY(20px)';
         els.toast.style.opacity = '0';
     }, 3000);
@@ -510,22 +512,26 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     els.recScore.className = scoreClass;
     els.recLabel.className = `text-lg font-bold tracking-wider ${labelInfo.color}`;
 
-    if (!isUpdate) {
-        els.recBar.style.animation = 'none';
-        els.recBar.offsetHeight;
-        els.recBar.classList.add('progress-bar');
-    } else {
-        els.recBar.classList.remove('progress-bar');
-        els.recBar.style.transition = 'width 0.5s ease-out, background-color 0.5s ease-out, box-shadow 0.5s ease-out';
-    }
+    if (els.recBar) {
+        els.recBar.style.width = `${scoreData.score}%`;
 
-    els.recBar.style.width = `${scoreData.score}%`;
-    els.recBar.className = `h-full progress-bar ${
-        scoreData.score >= 85 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]' :
-        scoreData.score >= 70 ? 'bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]' :
-        scoreData.score >= 50 ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.5)]' :
-        'bg-accent-red shadow-[0_0_15px_rgba(229,9,20,0.5)]'
-    }`;
+        const barColor = scoreData.score >= 85 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]'
+            : scoreData.score >= 70 ? 'bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]'
+            : scoreData.score >= 50 ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.5)]'
+            : 'bg-accent-red shadow-[0_0_15px_rgba(229,9,20,0.5)]';
+
+        if (!isUpdate) {
+            els.recBar.className = `h-full progress-bar ${barColor}`;
+            els.recBar.style.animation = 'none';
+            requestAnimationFrame(() => {
+                els.recBar.style.animation = '';
+            });
+        } else {
+            els.recBar.classList.remove('progress-bar');
+            els.recBar.className = `h-full ${barColor}`;
+            els.recBar.style.transition = 'width 0.5s ease-out, background-color 0.5s ease-out, box-shadow 0.5s ease-out';
+        }
+    }
 
     clearNode(els.scoreDetails);
     [
@@ -630,8 +636,12 @@ async function handleSearch() {
 
     els.results.querySelectorAll('.fade-up').forEach(el => {
         el.style.animation = 'none';
-        el.offsetHeight;
-        el.style.animation = null;
+    });
+    requestAnimationFrame(() => {
+        els.results.querySelectorAll('.fade-up').forEach(el => {
+            void el.offsetHeight;
+            el.style.animation = '';
+        });
     });
 
     try {

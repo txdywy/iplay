@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iPlay · 沉浸式观影指南</title>
     <meta name="description" content="iPlay 沉浸式观影指南 — 聚合 TMDB、豆瓣、IMDb、OMDb、Wikipedia 多源评分与剧情信息，AI 个性化推荐，一键获取资源链接。">
+    <meta property="og:title" content="iPlay · 沉浸式观影指南">
+    <meta property="og:description" content="聚合 TMDB、豆瓣、IMDb、OMDb、Wikipedia 多源评分，AI 个性化推荐，一键获取资源链接。">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://iplay.hackx64.eu.org">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="iPlay · 沉浸式观影指南">
+    <meta name="twitter:description" content="聚合多源评分，AI 个性化推荐，一键获取资源链接。">
+    <meta name="theme-color" content="#0a0a0c">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -62,6 +70,14 @@
             background: rgba(30, 30, 36, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.05);
             min-width: 80px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .film-grain, .ambient-glow { display: none; }
+            .fade-up { animation: none !important; opacity: 1; transform: none; }
+            .progress-bar { animation: none !important; }
+            .cursor-blink { animation: none !important; }
+            * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
         }
     </style>
 </head>

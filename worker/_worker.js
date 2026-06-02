@@ -2,7 +2,6 @@
  * Cloudflare Worker - iPlay API proxy
  */
 
-const DEFAULT_OMDB_API_KEY = "80077e97";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 const TMDB_POSTER_SIZE = "w780";
@@ -18,6 +17,11 @@ export default {
                     "Access-Control-Max-Age": "86400",
                 }
             });
+        }
+
+        const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
+        if (!checkRateLimit(clientIp)) {
+            return jsonResponse({ error: "Rate limit exceeded. Try again later." }, 429);
         }
 
         const url = new URL(request.url);
@@ -109,7 +113,7 @@ function getTmdbAuth(env) {
 }
 
 function getOmdbApiKey(env) {
-    return env && env.OMDB_API_KEY ? env.OMDB_API_KEY : DEFAULT_OMDB_API_KEY;
+    return env && env.OMDB_API_KEY ? env.OMDB_API_KEY : null;
 }
 
 function tmdbImage(path, size = TMDB_POSTER_SIZE) {
@@ -118,6 +122,43 @@ function tmdbImage(path, size = TMDB_POSTER_SIZE) {
 
 function parseYear(date) {
     return date ? date.slice(0, 4) : null;
+}
+
+const _rateLimitMap = new Map();
+const RATE_LIMIT = 60;
+const RATE_WINDOW = 60000;
+
+function checkRateLimit(ip) {
+    const now = Date.now();
+    const entry = _rateLimitMap.get(ip);
+    if (!entry || now - entry.start > RATE_WINDOW) {
+        _rateLimitMap.set(ip, { start: now, count: 1 });
+        return true;
+    }
+    entry.count++;
+    return entry.count <= RATE_LIMIT;
+}
+
+async function fetchOmdbWithYearFallback(title, year, env) {
+    const apiKey = getOmdbApiKey(env);
+    if (!apiKey || !title) return null;
+    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`;
+    if (year) url += `&y=${year}`;
+
+    const res = await fetch(url);
+    if (res.ok) {
+        const data = await res.json();
+        if (data.Response === "True") return data;
+    }
+
+    if (year) {
+        const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`);
+        if (fallbackRes.ok) {
+            const fallbackData = await fallbackRes.json();
+            if (fallbackData.Response === "True") return fallbackData;
+        }
+    }
+    return null;
 }
 
 function normalizeTmdbItem(item) {
@@ -373,14 +414,14 @@ async function handleTmdbDetail(id, type, env, ctx) {
 }
 
 const DOUBAN_SEARCH_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept": "application/json,*/*",
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Referer": "https://movie.douban.com/"
 };
 
 const DOUBAN_DETAIL_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://movie.douban.com/"
@@ -450,7 +491,8 @@ async function handleDoubanDetail(id, ctx) {
             })
             .on('span[property="v:summary"]', {
                 element() { isParsingSummary = true; },
-                text(text) { if (isParsingSummary) result.summary += text.text; }
+                text(text) { if (isParsingSummary) result.summary += text.text; },
+                elementEnd() { isParsingSummary = false; }
             })
             .on('a[href*="imdb.com"]', {
                 element(el) {
@@ -472,8 +514,7 @@ async function handleDoubanDetail(id, ctx) {
     }
 }
 
-const QUARK_URL_PATTERN = /https?:\/\/(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
-const QUARK_SHORT_PATTERN = /(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
+const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
 
 function normalizeQuarkUrl(rawUrl) {
     if (!rawUrl) return null;
@@ -494,13 +535,10 @@ function collectQuarkUrls(text) {
     if (!text) return [];
 
     const matches = new Set();
-
-    for (const pattern of [QUARK_URL_PATTERN, QUARK_SHORT_PATTERN]) {
-        const found = text.match(pattern) || [];
-        for (const item of found) {
-            const url = normalizeQuarkUrl(item);
-            if (url) matches.add(url);
-        }
+    const found = text.match(QUARK_URL_PATTERN) || [];
+    for (const item of found) {
+        const url = normalizeQuarkUrl(item);
+        if (url) matches.add(url);
     }
 
     return Array.from(matches);
@@ -622,29 +660,8 @@ async function handleOmdbSearch(title, year, env, ctx) {
     if (cached) return cached;
 
     try {
-        let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
-        if (year) url += `&y=${year}`;
-
-        const res = await fetch(url);
-
-        if (!res.ok) {
-            return jsonResponse({ error: `OMDb rejected with status ${res.status}` }, res.status);
-        }
-
-        const data = await res.json();
-
-        if (data.Response === "True") {
-            return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
-        }
-
-        if (year) {
-            const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
-            const fallbackData = await fallbackRes.json();
-            if (fallbackData.Response === "True") {
-                return cacheJson(ctx, cacheKey, extractOmdbProfile(fallbackData), 86400);
-            }
-        }
-
+        const data = await fetchOmdbWithYearFallback(title, year, env);
+        if (data) return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         return jsonResponse({ error: "Not found on OMDb" }, 404);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
@@ -780,28 +797,10 @@ async function tryTmdbForPoster(title, year, env, ctx) {
 }
 
 async function tryOmdbForPoster(title, year, env) {
-    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`;
-    if (year) url += `&y=${year}`;
-
-    const res = await fetch(url);
-    if (!res.ok) return null;
-
-    const data = await res.json();
-
-    if (data.Response === "True" && data.Poster && data.Poster !== "N/A") {
+    const data = await fetchOmdbWithYearFallback(title, year, env);
+    if (data && data.Poster && data.Poster !== "N/A") {
         return extractOmdbProfile(data);
     }
-
-    if (year) {
-        const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${getOmdbApiKey(env)}`);
-        if (!fallbackRes.ok) return null;
-
-        const fallbackData = await fallbackRes.json();
-        if (fallbackData.Response === "True" && fallbackData.Poster && fallbackData.Poster !== "N/A") {
-            return extractOmdbProfile(fallbackData);
-        }
-    }
-
     return null;
 }
 

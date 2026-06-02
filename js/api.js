@@ -2,7 +2,9 @@
  * API 请求封装 - Cloudflare Worker 版本
  */
 
-const API_BASE = "https://iplayw.hackx64.eu.org";
+const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'http://localhost:8787'
+    : 'https://iplayw.hackx64.eu.org';
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();
