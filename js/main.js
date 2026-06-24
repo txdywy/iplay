@@ -468,6 +468,98 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
     container.appendChild(frag);
 }
 
+function renderResourceStatus(container, { title, detail, iconClass, progressClass, isLoading = true }) {
+    if (!container) return;
+    clearNode(container);
+
+    const li = document.createElement('li');
+    li.className = 'p-3';
+
+    const panel = document.createElement('div');
+    panel.className = 'rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4';
+    panel.setAttribute('aria-live', 'polite');
+    panel.setAttribute('aria-busy', String(isLoading));
+
+    const row = document.createElement('div');
+    row.className = 'flex items-start gap-3';
+
+    const icon = document.createElement('i');
+    icon.className = `${iconClass} mt-1 opacity-80`;
+
+    const content = document.createElement('div');
+    content.className = 'min-w-0 flex-1';
+
+    const heading = document.createElement('div');
+    heading.className = 'text-sm font-medium text-cinema-100 leading-snug';
+    heading.textContent = title;
+
+    const copy = document.createElement('div');
+    copy.className = 'mt-2 text-[11px] font-mono uppercase tracking-[0.28em] text-cinema-400 leading-relaxed';
+    copy.textContent = detail;
+
+    content.appendChild(heading);
+    content.appendChild(copy);
+    row.appendChild(icon);
+    row.appendChild(content);
+    panel.appendChild(row);
+
+    if (isLoading) {
+        const progress = document.createElement('div');
+        progress.className = `resource-progress-track ${progressClass} mt-4`;
+        progress.setAttribute('role', 'progressbar');
+        progress.setAttribute('aria-label', title);
+        panel.appendChild(progress);
+    }
+
+    li.appendChild(panel);
+    container.appendChild(li);
+}
+
+function renderResourceLoadingStates(title) {
+    renderResourceStatus(els.quarkUrlList, {
+        title: 'Extracting Quark direct links',
+        detail: `Scanning resource pages for ${title}`,
+        iconClass: 'fas fa-cloud text-accent-red',
+        progressClass: 'resource-progress-red'
+    });
+    renderResourceStatus(els.resourceList, {
+        title: 'Collecting source pages',
+        detail: 'Checking resource indexes and forum posts',
+        iconClass: 'fas fa-link text-[#0099ff]',
+        progressClass: 'resource-progress-blue'
+    });
+    renderResourceStatus(els.wpzysResourceList, {
+        title: 'Searching WPZYS Forum',
+        detail: 'Filtering matching posts that contain Quark resources',
+        iconClass: 'fas fa-comments text-accent-gold',
+        progressClass: 'resource-progress-gold'
+    });
+}
+
+function renderResourceErrorStates() {
+    renderResourceStatus(els.quarkUrlList, {
+        title: 'Quark links are taking longer than expected',
+        detail: 'The scan can be retried with a fresh search in a moment',
+        iconClass: 'fas fa-cloud text-accent-red',
+        progressClass: 'resource-progress-red',
+        isLoading: false
+    });
+    renderResourceStatus(els.resourceList, {
+        title: 'Resource sources did not respond',
+        detail: 'Movie details are still available above',
+        iconClass: 'fas fa-link text-[#0099ff]',
+        progressClass: 'resource-progress-blue',
+        isLoading: false
+    });
+    renderResourceStatus(els.wpzysResourceList, {
+        title: 'WPZYS scan paused',
+        detail: 'Forum results may be temporarily unavailable',
+        iconClass: 'fas fa-comments text-accent-gold',
+        progressClass: 'resource-progress-gold',
+        isLoading: false
+    });
+}
+
 function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: 'No raw resources detected.',
@@ -688,9 +780,7 @@ async function handleSearch() {
         loadPoster(viewModel.posterUrl);
         renderTmdbFacts(viewModel);
         renderTmdbProfile(viewModel);
-        renderResourceList([]);
-        renderWpzysResourceList([]);
-        renderQuarkUrls([]);
+        renderResourceLoadingStates(viewModel.title);
 
         renderScore({
             rating: viewModel.rating,
@@ -741,7 +831,11 @@ async function handleSearch() {
             renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
             renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
             renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        }).catch(e => { if (e.name !== 'AbortError') console.debug('Resource enrichment skipped:', e); });
+        }).catch(e => {
+            if (e.name === 'AbortError') return;
+            if (searchId === currentSearchId) renderResourceErrorStates();
+            console.debug('Resource enrichment skipped:', e);
+        });
 
         PosterAPI.getPoster(candidate.title, candidate.year, searchOptions).then(posterResult => {
             if (searchId !== currentSearchId || !posterResult) return;
