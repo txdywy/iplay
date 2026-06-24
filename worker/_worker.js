@@ -711,7 +711,7 @@ async function collectQuarkUrlsFromResources(resources) {
 async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
-    const cacheKey = new Request(`https://resource-search-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v2-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
