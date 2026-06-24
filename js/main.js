@@ -44,6 +44,7 @@ const els = {
 
     wikiSummary: document.getElementById('wikiSummary'),
     resourceList: document.getElementById('resourceList'),
+    wpzysResourceList: document.getElementById('wpzysResourceList'),
     quarkUrlList: document.getElementById('quarkUrlList'),
     toast: document.getElementById('toast')
 };
@@ -480,6 +481,19 @@ function renderResourceList(resources) {
     });
 }
 
+function renderWpzysResourceList(resources) {
+    renderLinkCards(els.wpzysResourceList, resources, {
+        emptyLabel: 'No WPZYS Quark resources matched.',
+        itemClass: 'p-3',
+        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-all hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
+        iconClass: 'fas fa-comments text-accent-gold mt-1 opacity-80',
+        metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400',
+        metaText: item => safeHostname(item.url),
+        titleText: item => item.title,
+        limit: 8
+    });
+}
+
 function renderQuarkUrls(quarkUrls) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
         emptyLabel: 'No Quark links extracted yet.',
@@ -674,6 +688,9 @@ async function handleSearch() {
         loadPoster(viewModel.posterUrl);
         renderTmdbFacts(viewModel);
         renderTmdbProfile(viewModel);
+        renderResourceList([]);
+        renderWpzysResourceList([]);
+        renderQuarkUrls([]);
 
         renderScore({
             rating: viewModel.rating,
@@ -722,6 +739,7 @@ async function handleSearch() {
         ResourceAPI.search(candidate.title, searchOptions).then(resourceResult => {
             if (searchId !== currentSearchId || !resourceResult) return;
             renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
+            renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
             renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
         }).catch(e => { if (e.name !== 'AbortError') console.debug('Resource enrichment skipped:', e); });
 

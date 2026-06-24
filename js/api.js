@@ -89,7 +89,7 @@ export const ResourceAPI = {
         } catch (error) {
             if (error.name === 'AbortError') throw error;
             console.debug("Resource fetch failed:", error);
-            return { resources: [], quarkUrls: [] };
+            return { resources: [], wpzysResources: [], quarkUrls: [] };
         }
     }
 };

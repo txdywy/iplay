@@ -515,6 +515,8 @@ async function handleDoubanDetail(id, ctx) {
 }
 
 const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
+const BY669_BASE = "https://by669.org";
+const WPZYS_BASE = "https://www.wpzys.org";
 
 function normalizeQuarkUrl(rawUrl) {
     if (!rawUrl) return null;
@@ -535,7 +537,7 @@ function collectQuarkUrls(text) {
     if (!text) return [];
 
     const matches = new Set();
-    const found = text.match(QUARK_URL_PATTERN) || [];
+    const found = text.replace(/\\\//g, "/").match(QUARK_URL_PATTERN) || [];
     for (const item of found) {
         const url = normalizeQuarkUrl(item);
         if (url) matches.add(url);
@@ -544,14 +546,44 @@ function collectQuarkUrls(text) {
     return Array.from(matches);
 }
 
-async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle) {
+function decodeHtmlEntities(value) {
+    if (!value) return "";
+
+    return value
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;|&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number.parseInt(code, 10)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+
+function stripHtml(value) {
+    return decodeHtmlEntities(value.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+function resolveResourceUrl(rawUrl, baseUrl) {
+    try {
+        return new URL(decodeHtmlEntities(rawUrl), baseUrl).toString();
+    } catch {
+        return rawUrl;
+    }
+}
+
+function isQuarkResourceText(text) {
+    return Boolean(text && (text.includes("夸克") || text.toLowerCase().includes("quark") || collectQuarkUrls(text).length > 0));
+}
+
+async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`) {
     try {
         const res = await fetch(resourceUrl, {
             headers: {
                 "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": "https://by669.org/"
+                "Referer": referer
             },
             redirect: "follow"
         });
@@ -572,6 +604,110 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle) {
     }
 }
 
+async function fetchBy669Resources(query) {
+    const res = await fetch(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
+        headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
+    });
+
+    if (!res.ok) throw new Error(`By669 rejected with status ${res.status}`);
+
+    const data = await res.json();
+    const resources = [];
+
+    for (const item of data.data || []) {
+        if (!item.attributes || !item.attributes.title) continue;
+
+        resources.push({
+            title: item.attributes.title,
+            url: `${BY669_BASE}/d/${item.id}`,
+            isQuark: isQuarkResourceText(item.attributes.title),
+            source: "by669"
+        });
+    }
+
+    return resources;
+}
+
+function parseWpzysResources(html, query) {
+    const resources = [];
+    const seenUrls = new Set();
+    const normalizedQuery = normalizeMatchText(query);
+    const itemPattern = /<li\b[^>]*data-href=["']([^"']*thread-\d+\.htm[^"']*)["'][\s\S]*?<\/li>/gi;
+    let match;
+
+    while ((match = itemPattern.exec(html)) !== null) {
+        const block = match[0];
+        const rawUrl = match[1];
+        const url = resolveResourceUrl(rawUrl, WPZYS_BASE);
+        if (seenUrls.has(url)) continue;
+
+        const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
+        const titlePattern = new RegExp(`<a[^>]+href=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
+        const titleMatch = block.match(titlePattern) || block.match(/<a[^>]+href=["'][^"']*thread-\d+\.htm[^"']*["'][^>]*>([\s\S]*?)<\/a>/i);
+        const title = titleMatch ? stripHtml(titleMatch[1]) : stripHtml(block);
+        const normalizedTitle = normalizeMatchText(title);
+
+        if (!title || (normalizedQuery && !normalizedTitle.includes(normalizedQuery))) continue;
+        if (!isQuarkResourceText(block)) continue;
+
+        seenUrls.add(url);
+        resources.push({
+            title,
+            url,
+            isQuark: true,
+            source: "wpzys"
+        });
+    }
+
+    return resources;
+}
+
+async function fetchWpzysResources(query) {
+    const res = await fetch(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
+        headers: {
+            "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer": `${WPZYS_BASE}/search.htm`
+        },
+        redirect: "follow"
+    });
+
+    if (!res.ok) throw new Error(`WPZYS rejected with status ${res.status}`);
+
+    return parseWpzysResources(await res.text(), query);
+}
+
+async function collectQuarkUrlsFromResources(resources) {
+    const quarkUrls = [];
+    const seenQuarkUrls = new Set();
+    const batchSize = 5;
+    const maxPages = Math.min(resources.length, 16);
+
+    for (let index = 0; index < maxPages; index += batchSize) {
+        const batch = resources.slice(index, Math.min(index + batchSize, maxPages));
+        const quarkUrlGroups = await Promise.allSettled(
+            batch.map(entry => fetchResourcePageQuarkUrls(
+                entry.url,
+                entry.title,
+                entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`
+            ))
+        );
+
+        for (const group of quarkUrlGroups) {
+            if (group.status !== "fulfilled" || !Array.isArray(group.value)) continue;
+
+            for (const item of group.value) {
+                if (!item.url || seenQuarkUrls.has(item.url)) continue;
+                seenQuarkUrls.add(item.url);
+                quarkUrls.push(item);
+            }
+        }
+    }
+
+    return quarkUrls;
+}
+
 async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
@@ -580,50 +716,17 @@ async function handleResourceSearch(query, ctx) {
     if (cached) return cached;
 
     try {
-        const res = await fetch(`https://by669.org/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
-            headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
-        });
+        const [by669Result, wpzysResult] = await Promise.allSettled([
+            fetchBy669Resources(query),
+            fetchWpzysResources(query)
+        ]);
 
-        if (!res.ok) {
-            return jsonResponse({ error: `By669 rejected with status ${res.status}` }, res.status);
-        }
+        const resources = by669Result.status === "fulfilled" ? by669Result.value : [];
+        const wpzysResources = wpzysResult.status === "fulfilled" ? wpzysResult.value : [];
+        const allResources = [...resources, ...wpzysResources];
+        const quarkUrls = await collectQuarkUrlsFromResources(allResources);
 
-        const data = await res.json();
-        const resources = [];
-
-        for (const item of data.data || []) {
-            if (!item.attributes || !item.attributes.title) continue;
-
-            resources.push({
-                title: item.attributes.title,
-                url: `https://by669.org/d/${item.id}`,
-                isQuark: item.attributes.title.includes('夸') || item.attributes.title.toLowerCase().includes('quark')
-            });
-        }
-
-        const quarkUrls = [];
-        const seenQuarkUrls = new Set();
-        const batchSize = 5;
-
-        const maxPages = Math.min(resources.length, 10);
-        for (let index = 0; index < maxPages; index += batchSize) {
-            const batch = resources.slice(index, Math.min(index + batchSize, maxPages));
-            const quarkUrlGroups = await Promise.allSettled(
-                batch.map(entry => fetchResourcePageQuarkUrls(entry.url, entry.title))
-            );
-
-            for (const group of quarkUrlGroups) {
-                if (group.status !== "fulfilled" || !Array.isArray(group.value)) continue;
-
-                for (const item of group.value) {
-                    if (!item.url || seenQuarkUrls.has(item.url)) continue;
-                    seenQuarkUrls.add(item.url);
-                    quarkUrls.push(item);
-                }
-            }
-        }
-
-        return cacheJson(ctx, cacheKey, { resources, quarkUrls }, 43200);
+        return cacheJson(ctx, cacheKey, { resources: allResources, by669Resources: resources, wpzysResources, quarkUrls }, 43200);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
