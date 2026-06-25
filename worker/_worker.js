@@ -6,12 +6,40 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 const TMDB_POSTER_SIZE = "w780";
 
+const ALLOWED_ORIGINS = [
+    "https://iplay.hackx64.eu.org",
+    "http://localhost:8787",
+    "http://127.0.0.1:8787",
+    "http://localhost:3000"
+];
+
+function getCorsHeaders(request) {
+    const origin = request.headers.get("Origin");
+    if (origin && ALLOWED_ORIGINS.includes(origin)) {
+        return { "Access-Control-Allow-Origin": origin };
+    }
+    return { "Access-Control-Allow-Origin": ALLOWED_ORIGINS[0] };
+}
+
+function withCors(response, request) {
+    const headers = new Headers(response.headers);
+    const corsHeaders = getCorsHeaders(request);
+    for (const [key, value] of Object.entries(corsHeaders)) {
+        headers.set(key, value);
+    }
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+    });
+}
+
 export default {
     async fetch(request, env, ctx) {
         if (request.method === "OPTIONS") {
             return new Response(null, {
                 headers: {
-                    "Access-Control-Allow-Origin": "*",
+                    ...getCorsHeaders(request),
                     "Access-Control-Allow-Methods": "GET, OPTIONS",
                     "Access-Control-Allow-Headers": "Content-Type",
                     "Access-Control-Max-Age": "86400",
@@ -21,53 +49,54 @@ export default {
 
         const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
         if (!checkRateLimit(clientIp)) {
-            return jsonResponse({ error: "Rate limit exceeded. Try again later." }, 429);
+            return withCors(jsonResponse({ error: "Rate limit exceeded. Try again later." }, 429), request);
         }
 
         const url = new URL(request.url);
+        const path = url.pathname.replace(/\/+$/, "") || url.pathname;
 
-        if (url.pathname.startsWith("/api/tmdb/search")) {
-            return await handleTmdbSearch(url.searchParams.get("q"), env, ctx);
+        if (path === "/api/tmdb/search") {
+            return withCors(await handleTmdbSearch(url.searchParams.get("q"), env, ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/tmdb/detail")) {
-            return await handleTmdbDetail(
+        if (path === "/api/tmdb/detail") {
+            return withCors(await handleTmdbDetail(
                 url.searchParams.get("id"),
                 url.searchParams.get("type"),
                 env,
                 ctx
-            );
+            ), request);
         }
 
-        if (url.pathname.startsWith("/api/douban/search")) {
-            return await handleDoubanSearch(url.searchParams.get("q"), ctx);
+        if (path === "/api/douban/search") {
+            return withCors(await handleDoubanSearch(url.searchParams.get("q"), ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/douban/detail")) {
-            return await handleDoubanDetail(url.searchParams.get("id"), ctx);
+        if (path === "/api/douban/detail") {
+            return withCors(await handleDoubanDetail(url.searchParams.get("id"), ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/resource")) {
-            return await handleResourceSearch(url.searchParams.get("q"), ctx);
+        if (path === "/api/resource") {
+            return withCors(await handleResourceSearch(url.searchParams.get("q"), ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/omdb")) {
+        if (path === "/api/omdb") {
             const imdbId = url.searchParams.get("imdb");
             if (imdbId) {
-                return await handleOmdbById(imdbId, env, ctx);
+                return withCors(await handleOmdbById(imdbId, env, ctx), request);
             }
-            return await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx);
+            return withCors(await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/poster")) {
-            return await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx);
+        if (path === "/api/poster") {
+            return withCors(await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request);
         }
 
-        if (url.pathname.startsWith("/api/wiki/zh")) {
-            return await handleWikiZh(url.searchParams.get("q"), ctx);
+        if (path === "/api/wiki/zh") {
+            return withCors(await handleWikiZh(url.searchParams.get("q"), ctx), request);
         }
 
-        return new Response("Not Found", { status: 404 });
+        return withCors(new Response("Not Found", { status: 404 }), request);
     },
 
     async scheduled(event, env, ctx) {
@@ -80,18 +109,13 @@ function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
         headers: {
-            "Content-Type": "application/json;charset=UTF-8",
-            "Access-Control-Allow-Origin": "*"
+            "Content-Type": "application/json;charset=UTF-8"
         }
     });
 }
 
 async function serveCachedJson(cacheKey) {
-    const cached = await caches.default.match(cacheKey);
-    if (!cached) return null;
-    const headers = new Headers(cached.headers);
-    headers.set("Access-Control-Allow-Origin", "*");
-    return new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers });
+    return await caches.default.match(cacheKey);
 }
 
 function cacheJson(ctx, cacheKey, data, maxAge) {
@@ -130,6 +154,13 @@ const RATE_WINDOW = 60000;
 
 function checkRateLimit(ip) {
     const now = Date.now();
+
+    if (_rateLimitMap.size > 10000) {
+        for (const [k, v] of _rateLimitMap) {
+            if (now - v.start > RATE_WINDOW) _rateLimitMap.delete(k);
+        }
+    }
+
     const entry = _rateLimitMap.get(ip);
     if (!entry || now - entry.start > RATE_WINDOW) {
         _rateLimitMap.set(ip, { start: now, count: 1 });
@@ -189,16 +220,16 @@ function normalizeTmdbDetail(data, type) {
     const credits = data.credits || {};
     const cast = Array.isArray(credits.cast) ? credits.cast.slice(0, 8).map(person => person.name).filter(Boolean) : [];
     const crew = Array.isArray(credits.crew) ? credits.crew : [];
-    const director = [];
-    const writer = [];
+    const director = new Set();
+    const writer = new Set();
 
     for (const person of crew) {
-        if (person.job === "Director" || person.department === "Directing") director.push(person.name);
-        if (["Writer", "Screenplay", "Story"].includes(person.job)) writer.push(person.name);
+        if (person.job === "Director" || person.department === "Directing") director.add(person.name);
+        if (["Writer", "Screenplay", "Story"].includes(person.job)) writer.add(person.name);
     }
 
-    const cleanDirector = director.filter(Boolean);
-    const cleanWriter = writer.filter(Boolean);
+    const cleanDirector = [...director].filter(Boolean);
+    const cleanWriter = [...writer].filter(Boolean);
 
     return {
         id: data.id,
@@ -590,7 +621,24 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
 
         if (!res.ok) return [];
 
-        const text = await res.text();
+        const contentLength = res.headers.get("content-length");
+        if (contentLength && parseInt(contentLength, 10) > 2 * 1024 * 1024) return [];
+
+        const reader = res.body.getReader();
+        const chunks = [];
+        let totalSize = 0;
+        const MAX_SIZE = 2 * 1024 * 1024;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            totalSize += value.byteLength;
+            if (totalSize > MAX_SIZE) { reader.cancel(); return []; }
+            chunks.push(value);
+        }
+
+        const decoder = new TextDecoder();
+        const text = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
         const quarkUrls = collectQuarkUrls(text);
 
         return quarkUrls.map(url => ({
@@ -726,19 +774,29 @@ async function handleResourceSearch(query, ctx) {
         const allResources = [...resources, ...wpzysResources];
         const quarkUrls = await collectQuarkUrlsFromResources(allResources);
 
-        return cacheJson(ctx, cacheKey, { resources: allResources, by669Resources: resources, wpzysResources, quarkUrls }, 43200);
+        return cacheJson(ctx, cacheKey, { resources: allResources, wpzysResources, quarkUrls }, 43200);
     } catch (e) {
         return jsonResponse({ error: e.message }, 500);
     }
 }
 
+function requireOmdbApiKey(env) {
+    const key = getOmdbApiKey(env);
+    if (!key) return { error: jsonResponse({ error: "OMDb API not configured" }, 503) };
+    return { key };
+}
+
 async function handleOmdbById(imdbId, env, ctx) {
-    const cacheKey = new Request(`https://omdb-cache.local/id/${imdbId}`);
+    const keyCheck = requireOmdbApiKey(env);
+    if (keyCheck.error) return keyCheck.error;
+    if (!imdbId) return jsonResponse({ error: "Missing imdb id" }, 400);
+
+    const cacheKey = new Request(`https://omdb-cache.local/id/${encodeURIComponent(imdbId)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
-        const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${getOmdbApiKey(env)}`);
+        const res = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${keyCheck.key}`);
 
         if (!res.ok) {
             return jsonResponse({ error: `OMDb rejected with status ${res.status}` }, res.status);
@@ -756,6 +814,8 @@ async function handleOmdbById(imdbId, env, ctx) {
 }
 
 async function handleOmdbSearch(title, year, env, ctx) {
+    const keyCheck = requireOmdbApiKey(env);
+    if (keyCheck.error) return keyCheck.error;
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     const cacheKey = new Request(`https://omdb-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
@@ -828,24 +888,26 @@ async function handlePosterSearch(title, year, env, ctx) {
     if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     try {
-        const tmdbPromise = tryTmdbForPoster(title, year, env, ctx);
-        const omdbPromise = tryOmdbForPoster(title, year, env);
+        const [tmdbResult, omdbResult] = await Promise.allSettled([
+            tryTmdbForPoster(title, year, env, ctx),
+            tryOmdbForPoster(title, year, env)
+        ]);
 
-        const tmdbPoster = await tmdbPromise;
+        const tmdbPoster = tmdbResult.status === "fulfilled" ? tmdbResult.value : null;
+        const omdbProfile = omdbResult.status === "fulfilled" ? omdbResult.value : null;
+
         if (tmdbPoster) {
-            const omdbProfile = await omdbPromise.catch(() => null);
             return jsonResponse({
                 ...tmdbPoster,
                 omdb: omdbProfile
             });
         }
 
-        let result = await omdbPromise;
-        if (result) return jsonResponse(result);
+        if (omdbProfile) return jsonResponse(omdbProfile);
 
         const enTitle = await getEnglishTitleFromWiki(title);
         if (enTitle && enTitle !== title) {
-            result = await tryOmdbForPoster(enTitle, year, env);
+            const result = await tryOmdbForPoster(enTitle, year, env);
             if (result) return jsonResponse(result);
         }
 

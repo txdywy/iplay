@@ -24,14 +24,12 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
             ...options,
             signal: controller.signal
         });
-        clearTimeout(id);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         return await response.json();
     } catch (error) {
-        clearTimeout(id);
         if (error.name === 'AbortError') {
             if (options.signal && options.signal.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
@@ -63,7 +61,7 @@ export const DoubanAPI = {
         return fetchWithTimeout(`${API_BASE}/api/douban/search?q=${encodeURIComponent(query)}`, options);
     },
     async getDetail(id, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/douban/detail?id=${id}`, options);
+        return fetchWithTimeout(`${API_BASE}/api/douban/detail?id=${encodeURIComponent(id)}`, options);
     }
 };
 
@@ -85,7 +83,7 @@ export const WikiAPI = {
 export const ResourceAPI = {
     async search(query, options = {}) {
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options);
+            return await fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, 20000);
         } catch (error) {
             if (error.name === 'AbortError') throw error;
             console.debug("Resource fetch failed:", error);

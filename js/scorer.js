@@ -20,10 +20,13 @@ let PREFERENCE_WEIGHTS = {
 try {
     const customWeights = localStorage.getItem('iplay_preference_weights');
     if (customWeights) {
-        for (const [genre, value] of Object.entries(JSON.parse(customWeights))) {
-            const score = typeof value === 'number' ? value : Number(value?.score);
-            if (Number.isFinite(score)) {
-                PREFERENCE_WEIGHTS[genre] = { score, reason: value?.reason || `自定义偏好：${genre}` };
+        const parsed = JSON.parse(customWeights);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+            for (const [genre, value] of Object.entries(parsed)) {
+                const score = typeof value === 'number' ? value : Number(value?.score);
+                if (Number.isFinite(score)) {
+                    PREFERENCE_WEIGHTS[genre] = { score, reason: value?.reason || `自定义偏好：${genre}` };
+                }
             }
         }
     }

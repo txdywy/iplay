@@ -25,7 +25,9 @@ export default [
         HTMLRewriter: "readonly",
         localStorage: "readonly",
         location: "readonly",
-        requestAnimationFrame: "readonly"
+        requestAnimationFrame: "readonly",
+        TextDecoder: "readonly",
+        ReadableStream: "readonly"
       }
     }
   }

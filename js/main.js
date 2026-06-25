@@ -68,6 +68,22 @@ function normalizeText(value) {
         .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。·/\\]/g, '');
 }
 
+function findBestMatch(results, query, titleFn) {
+    if (!Array.isArray(results) || results.length === 0) return null;
+
+    const normalizedQuery = normalizeText(query);
+    const exact = results.find(item => normalizeText(titleFn(item)) === normalizedQuery);
+    if (exact) return exact;
+
+    const loose = results.find(item => {
+        const normalizedTitle = normalizeText(titleFn(item));
+        return normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle);
+    });
+    if (loose) return loose;
+
+    return results[0];
+}
+
 function pickBestTmdbMatch(results, query) {
     if (!Array.isArray(results) || results.length === 0) return null;
 
@@ -95,16 +111,7 @@ function pickBestTmdbMatch(results, query) {
 }
 
 function pickBestDoubanMatch(results, query) {
-    if (!Array.isArray(results) || results.length === 0) return null;
-
-    const normalizedQuery = normalizeText(query);
-    const exact = results.find(item => normalizeText(item.title) === normalizedQuery);
-    if (exact) return exact;
-
-    const loose = results.find(item => normalizeText(item.title).includes(normalizedQuery) || normalizedQuery.includes(normalizeText(item.title)));
-    if (loose) return loose;
-
-    return results[0];
+    return findBestMatch(results, query, item => item.title);
 }
 
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
@@ -640,6 +647,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     }
 
     clearNode(els.scoreDetails);
+    const detailFrag = document.createDocumentFragment();
     [
         `SRC: ${sourceLabel}`,
         `BAS: ${scoreData.details.base}`,
@@ -648,14 +656,16 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     ].forEach(text => {
         const span = document.createElement('span');
         span.textContent = text;
-        els.scoreDetails.appendChild(span);
+        detailFrag.appendChild(span);
     });
+    els.scoreDetails.appendChild(detailFrag);
 
     if (els.reportArea) {
         clearNode(els.prosList);
         clearNode(els.consList);
 
         if (scoreData.report.pros.length > 0) {
+            const prosFrag = document.createDocumentFragment();
             scoreData.report.pros.forEach(p => {
                 const li = document.createElement('li');
                 li.className = 'flex gap-2 items-start';
@@ -665,8 +675,9 @@ function renderScore(data, sourceLabel, isUpdate = false) {
                 span.textContent = p;
                 li.appendChild(icon);
                 li.appendChild(span);
-                els.prosList.appendChild(li);
+                prosFrag.appendChild(li);
             });
+            els.prosList.appendChild(prosFrag);
         } else {
             const li = document.createElement('li');
             li.className = 'text-cinema-400 italic';
@@ -675,6 +686,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
         }
 
         if (scoreData.report.cons.length > 0) {
+            const consFrag = document.createDocumentFragment();
             scoreData.report.cons.forEach(c => {
                 const li = document.createElement('li');
                 li.className = 'flex gap-2 items-start';
@@ -684,8 +696,9 @@ function renderScore(data, sourceLabel, isUpdate = false) {
                 span.textContent = c;
                 li.appendChild(icon);
                 li.appendChild(span);
-                els.consList.appendChild(li);
+                consFrag.appendChild(li);
             });
+            els.consList.appendChild(consFrag);
         } else {
             const li = document.createElement('li');
             li.className = 'text-cinema-400 italic';
@@ -744,10 +757,9 @@ async function handleSearch() {
         el.style.animation = 'none';
     });
     requestAnimationFrame(() => {
-        els.results.querySelectorAll('.fade-up').forEach(el => {
-            void el.offsetHeight;
-            el.style.animation = '';
-        });
+        const fadeEls = els.results.querySelectorAll('.fade-up');
+        fadeEls.forEach(el => void el.offsetHeight);
+        fadeEls.forEach(el => { el.style.animation = ''; });
     });
 
     try {
