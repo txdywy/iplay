@@ -545,7 +545,10 @@ async function handleDoubanDetail(id, ctx) {
     }
 }
 
-const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/[^\s"'<>）)\u4e00-\u9fa5]+/gi;
+// A Quark share URL ends at its opaque share token. Resource pages frequently
+// embed the same URL in Markdown and escaped JSON, so matching arbitrary path
+// characters also consumes `\\r\\n`, `\\u003C`, or the next Markdown URL.
+const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://www.wpzys.org";
 
@@ -759,7 +762,7 @@ async function collectQuarkUrlsFromResources(resources) {
 async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
-    const cacheKey = new Request(`https://resource-search-v2-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v3-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 

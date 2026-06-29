@@ -4,7 +4,7 @@
   "description": "> 一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
     "lint": "eslint .",
-    "test": "npm run lint && npm run build",
+    "test": "node --test && npm run lint && npm run build",
     "build": "tailwindcss -i css/input.css -o css/output.css --minify"
   },
   "repository": {
