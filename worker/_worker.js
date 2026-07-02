@@ -4,7 +4,7 @@
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
-const TMDB_POSTER_SIZE = "w780";
+const TMDB_POSTER_SIZE = "original";
 
 const ALLOWED_ORIGINS = [
     "https://iplay.hackx64.eu.org",
