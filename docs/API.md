@@ -273,6 +273,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
     {
       "title": "流浪地球 4K HDR 夸克网盘",
       "url": "https://pan.quark.cn/s/xxxxxxx",
+      "password": "a1B2",
       "sourceUrl": "https://by669.org/d/12345",
       "sourceTitle": "流浪地球 4K HDR 夸克网盘"
     }
@@ -280,7 +281,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** Worker 从 by669.org 搜索讨论帖，提取包含夸克网盘链接的帖子，并进一步抓取帖子详情页获取实际分享链接。最多抓取前 10 个结果，批量并发 5 个请求。
+**实现说明：** Worker 从 by669.org 搜索讨论帖，提取包含夸克网盘链接的帖子，并进一步抓取帖子详情页获取实际分享链接和相邻的提取码。`password` 为可选字段，来源页没有可识别的提取码时不会返回。最多抓取前 16 个结果，批量并发 5 个请求。
 
 ---
 

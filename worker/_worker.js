@@ -549,6 +549,7 @@ async function handleDoubanDetail(id, ctx) {
 // embed the same URL in Markdown and escaped JSON, so matching arbitrary path
 // characters also consumes `\\r\\n`, `\\u003C`, or the next Markdown URL.
 const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+/gi;
+const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://www.wpzys.org";
 
@@ -568,16 +569,57 @@ function normalizeQuarkUrl(rawUrl) {
 }
 
 function collectQuarkUrls(text) {
+    return collectQuarkEntries(text).map(item => item.url);
+}
+
+function normalizeResourcePageText(text) {
+    return decodeHtmlEntities(text)
+        .replace(/\\\//g, "/")
+        .replace(/\\u([0-9a-f]{4})/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)))
+        .replace(/\\[rnt]/g, " ")
+        .replace(/%3a/gi, ":");
+}
+
+function collectQuarkEntries(text) {
     if (!text) return [];
 
-    const matches = new Set();
-    const found = text.replace(/\\\//g, "/").match(QUARK_URL_PATTERN) || [];
-    for (const item of found) {
-        const url = normalizeQuarkUrl(item);
-        if (url) matches.add(url);
+    const normalizedText = normalizeResourcePageText(text);
+    const occurrences = Array.from(normalizedText.matchAll(QUARK_URL_PATTERN), match => ({
+        index: match.index,
+        end: match.index + match[0].length,
+        url: normalizeQuarkUrl(match[0])
+    })).filter(item => item.url);
+
+    for (const match of normalizedText.matchAll(QUARK_PASSWORD_PATTERN)) {
+        const passwordIndex = match.index;
+        const previous = occurrences
+            .filter(occurrence => occurrence.end <= passwordIndex && passwordIndex - occurrence.end <= 160)
+            .at(-1);
+        const next = occurrences.find(occurrence => (
+            occurrence.index >= passwordIndex + match[0].length
+            && occurrence.index - (passwordIndex + match[0].length) <= 160
+        ));
+        const textBeforeNext = next
+            ? normalizedText.slice(passwordIndex + match[0].length, next.index)
+            : "";
+        const target = next && /(?:链接|地址|夸克)/.test(textBeforeNext) ? next : previous || next;
+
+        if (target && !target.password) target.password = match[1];
     }
 
-    return Array.from(matches);
+    const entries = new Map();
+    for (const occurrence of occurrences) {
+        const existing = entries.get(occurrence.url);
+        if (!existing) {
+            entries.set(occurrence.url, occurrence.password
+                ? { url: occurrence.url, password: occurrence.password }
+                : { url: occurrence.url });
+        } else if (!existing.password && occurrence.password) {
+            existing.password = occurrence.password;
+        }
+    }
+
+    return Array.from(entries.values());
 }
 
 function decodeHtmlEntities(value) {
@@ -642,11 +684,12 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
 
         const decoder = new TextDecoder();
         const text = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
-        const quarkUrls = collectQuarkUrls(text);
+        const quarkEntries = collectQuarkEntries(text);
 
-        return quarkUrls.map(url => ({
+        return quarkEntries.map(({ url, password }) => ({
             title: resourceTitle,
             url,
+            ...(password ? { password } : {}),
             sourceUrl: resourceUrl,
             sourceTitle: resourceTitle
         }));
@@ -731,7 +774,7 @@ async function fetchWpzysResources(query) {
 
 async function collectQuarkUrlsFromResources(resources) {
     const quarkUrls = [];
-    const seenQuarkUrls = new Set();
+    const quarkUrlsByUrl = new Map();
     const batchSize = 5;
     const maxPages = Math.min(resources.length, 16);
 
@@ -749,8 +792,13 @@ async function collectQuarkUrlsFromResources(resources) {
             if (group.status !== "fulfilled" || !Array.isArray(group.value)) continue;
 
             for (const item of group.value) {
-                if (!item.url || seenQuarkUrls.has(item.url)) continue;
-                seenQuarkUrls.add(item.url);
+                if (!item.url) continue;
+                const existing = quarkUrlsByUrl.get(item.url);
+                if (existing) {
+                    if (!existing.password && item.password) existing.password = item.password;
+                    continue;
+                }
+                quarkUrlsByUrl.set(item.url, item);
                 quarkUrls.push(item);
             }
         }
@@ -762,7 +810,7 @@ async function collectQuarkUrlsFromResources(resources) {
 async function handleResourceSearch(query, ctx) {
     if (!query) return jsonResponse({ error: "Missing query" }, 400);
 
-    const cacheKey = new Request(`https://resource-search-v3-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v4-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 

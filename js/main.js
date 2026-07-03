@@ -1,5 +1,6 @@
 import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
+import { copyQuarkShare } from './quark.js';
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -412,7 +413,10 @@ function toSafeHttpUrl(rawUrl) {
     }
 }
 
-function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, iconClass, metaClass, metaText, titleText, sourceText, limit }) {
+function renderLinkCards(container, items, {
+    emptyLabel, itemClass, cardClass, iconClass, metaClass, metaText, titleText,
+    detailText, sourceText, actionLabel, onAction, limit
+}) {
     if (!container) return;
     clearNode(container);
 
@@ -435,11 +439,15 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
         const li = document.createElement('li');
         li.className = itemClass;
 
-        const a = document.createElement('a');
+        const hasAction = actionLabel && typeof onAction === 'function';
+        const card = document.createElement(hasAction ? 'div' : 'a');
+        card.className = cardClass;
+
+        const a = hasAction ? document.createElement('a') : card;
         a.href = item.url;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
-        a.className = cardClass;
+        if (hasAction) a.className = 'block';
 
         const row = document.createElement('div');
         row.className = 'flex items-start justify-between gap-3';
@@ -456,6 +464,14 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
         content.appendChild(title);
         content.appendChild(meta);
 
+        const detail = detailText ? detailText(item) : '';
+        if (detail) {
+            const detailNode = document.createElement('div');
+            detailNode.className = 'mt-2 text-xs font-mono font-semibold tracking-wider text-accent-gold';
+            detailNode.textContent = detail;
+            content.appendChild(detailNode);
+        }
+
         if (sourceText) {
             const source = document.createElement('div');
             source.className = 'mt-2 text-[10px] font-mono uppercase tracking-[0.3em] text-accent-gold/80';
@@ -469,7 +485,30 @@ function renderLinkCards(container, items, { emptyLabel, itemClass, cardClass, i
         row.appendChild(content);
         row.appendChild(icon);
         a.appendChild(row);
-        li.appendChild(a);
+
+        if (hasAction) {
+            card.appendChild(a);
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mt-3 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 disabled:cursor-wait disabled:opacity-70';
+            button.textContent = actionLabel;
+            button.addEventListener('click', async () => {
+                button.disabled = true;
+                try {
+                    await onAction(item);
+                    button.textContent = '已复制';
+                    setTimeout(() => { button.textContent = actionLabel; }, 1600);
+                } catch {
+                    showToast('复制失败，请手动复制链接和提取码');
+                } finally {
+                    button.disabled = false;
+                }
+            });
+            card.appendChild(button);
+        }
+
+        li.appendChild(card);
         frag.appendChild(li);
     });
     container.appendChild(frag);
@@ -602,7 +641,10 @@ function renderQuarkUrls(quarkUrls) {
         metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
+        detailText: item => item.password ? `提取码：${item.password}` : '',
         sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
+        actionLabel: '一键复制',
+        onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         limit: 50
     });
 }
