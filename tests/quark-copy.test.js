@@ -3,27 +3,24 @@ import assert from 'node:assert/strict';
 
 import { copyQuarkShare, formatQuarkCopyText } from '../js/quark.js';
 
-test('formats a Quark URL and password for one-click copying', () => {
+test('formats only the normalized Quark password for copying', () => {
     assert.equal(
-        formatQuarkCopyText({ url: 'https://pan.quark.cn/s/demo', password: ' a1B2 ' }),
-        'https://pan.quark.cn/s/demo\n提取码：a1B2'
+        formatQuarkCopyText({ password: ' a1B2 ' }),
+        'a1B2'
     );
 });
 
-test('copies only the Quark URL when no password was found', () => {
-    assert.equal(
-        formatQuarkCopyText({ url: 'https://pan.quark.cn/s/demo' }),
-        'https://pan.quark.cn/s/demo'
-    );
+test('returns an empty copy value when no password was found', () => {
+    assert.equal(formatQuarkCopyText({}), '');
 });
 
-test('writes the combined Quark share text in one clipboard action', async () => {
+test('writes only the Quark password in one clipboard action', async () => {
     const writes = [];
 
     await copyQuarkShare(
-        { url: 'https://pan.quark.cn/s/demo', password: 'a1B2' },
+        { password: 'a1B2' },
         async text => writes.push(text)
     );
 
-    assert.deepEqual(writes, ['https://pan.quark.cn/s/demo\n提取码：a1B2']);
+    assert.deepEqual(writes, ['a1B2']);
 });

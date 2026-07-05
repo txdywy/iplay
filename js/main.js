@@ -1,6 +1,6 @@
 import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
-import { copyQuarkShare } from './quark.js';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js';
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -439,7 +439,8 @@ function renderLinkCards(container, items, {
         const li = document.createElement('li');
         li.className = itemClass;
 
-        const hasAction = actionLabel && typeof onAction === 'function';
+        const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
+        const hasAction = resolvedActionLabel && typeof onAction === 'function';
         const card = document.createElement(hasAction ? 'div' : 'a');
         card.className = cardClass;
 
@@ -492,15 +493,15 @@ function renderLinkCards(container, items, {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'mt-3 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 disabled:cursor-wait disabled:opacity-70';
-            button.textContent = actionLabel;
+            button.textContent = resolvedActionLabel;
             button.addEventListener('click', async () => {
                 button.disabled = true;
                 try {
                     await onAction(item);
                     button.textContent = '已复制';
-                    setTimeout(() => { button.textContent = actionLabel; }, 1600);
+                    setTimeout(() => { button.textContent = resolvedActionLabel; }, 1600);
                 } catch {
-                    showToast('复制失败，请手动复制链接和提取码');
+                    showToast('复制失败，请手动复制密码');
                 } finally {
                     button.disabled = false;
                 }
@@ -641,9 +642,9 @@ function renderQuarkUrls(quarkUrls) {
         metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
-        detailText: item => item.password ? `提取码：${item.password}` : '',
+        detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
         sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
-        actionLabel: '一键复制',
+        actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         limit: 50
     });
