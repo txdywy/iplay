@@ -545,15 +545,39 @@ async function handleDoubanDetail(id, ctx) {
     }
 }
 
-// A Quark share URL ends at its opaque share token. Resource pages frequently
-// embed the same URL in Markdown and escaped JSON, so matching arbitrary path
-// characters also consumes `\\r\\n`, `\\u003C`, or the next Markdown URL.
-const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+/gi;
+// Capture only the Quark share token plus optional password query/hash params.
+// Resource pages frequently embed the same URL in Markdown and escaped JSON, so
+// matching arbitrary path characters also consumes `\\r\\n`, `\\u003C`, or the
+// next Markdown URL.
+const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+(?:[?#][^\s"'<>\\),，。；;]*)?/gi;
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://www.wpzys.org";
 
-function normalizeQuarkUrl(rawUrl) {
+function isValidQuarkPassword(value) {
+    return /^[a-z0-9]{2,12}$/i.test(value) && !/^https?$/i.test(value);
+}
+
+function extractQuarkPasswordFromParams(params) {
+    for (const key of ["pwd", "password", "passcode", "code"]) {
+        const value = params.get(key);
+        if (value && isValidQuarkPassword(value)) return value;
+    }
+    return "";
+}
+
+function extractQuarkPasswordFromUrl(url) {
+    const searchPassword = extractQuarkPasswordFromParams(url.searchParams);
+    if (searchPassword) return searchPassword;
+
+    const hashText = url.hash.replace(/^#/, "");
+    if (!hashText) return "";
+
+    const hashQuery = hashText.includes("?") ? hashText.slice(hashText.indexOf("?") + 1) : hashText;
+    return extractQuarkPasswordFromParams(new URL(`https://quark-password.local/?${hashQuery}`).searchParams);
+}
+
+function parseQuarkUrl(rawUrl) {
     if (!rawUrl) return null;
 
     const cleaned = rawUrl
@@ -562,9 +586,16 @@ function normalizeQuarkUrl(rawUrl) {
         .replace(/[),.；;]+$/g, "");
 
     try {
-        return new URL(cleaned.startsWith("http") ? cleaned : `https://${cleaned}`).toString();
+        const url = new URL(cleaned.startsWith("http") ? cleaned : `https://${cleaned}`);
+        return {
+            url: `${url.origin}${url.pathname}`,
+            password: extractQuarkPasswordFromUrl(url)
+        };
     } catch {
-        return cleaned.startsWith("http") ? cleaned : `https://${cleaned}`;
+        return {
+            url: cleaned.startsWith("http") ? cleaned : `https://${cleaned}`,
+            password: ""
+        };
     }
 }
 
@@ -584,13 +615,19 @@ function collectQuarkEntries(text) {
     if (!text) return [];
 
     const normalizedText = normalizeResourcePageText(text);
-    const occurrences = Array.from(normalizedText.matchAll(QUARK_URL_PATTERN), match => ({
-        index: match.index,
-        end: match.index + match[0].length,
-        url: normalizeQuarkUrl(match[0])
-    })).filter(item => item.url);
+    const occurrences = Array.from(normalizedText.matchAll(QUARK_URL_PATTERN), match => {
+        const parsed = parseQuarkUrl(match[0]);
+        return parsed && parsed.url ? {
+            index: match.index,
+            end: match.index + match[0].length,
+            url: parsed.url,
+            ...(parsed.password ? { password: parsed.password } : {})
+        } : null;
+    }).filter(Boolean);
 
     for (const match of normalizedText.matchAll(QUARK_PASSWORD_PATTERN)) {
+        if (!isValidQuarkPassword(match[1])) continue;
+
         const passwordIndex = match.index;
         const previous = occurrences
             .filter(occurrence => occurrence.end <= passwordIndex && passwordIndex - occurrence.end <= 160)

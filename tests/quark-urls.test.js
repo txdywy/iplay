@@ -38,6 +38,8 @@ test('resource search keeps only canonical Quark share URLs from escaped page co
                 'https://pan.quark.cn/s/3c6b77320fe6\\r\\n\\r\\n导演：',
                 '密码 = Z9y8；链接：https://drive.quark.cn/s/before-pass',
                 'https:\\/\\/pan.quark.cn\\/s\\/escaped-pass\\r\\n访问码%3Ac3D4',
+                'URL 参数密码 https://pan.quark.cn/s/query-pass?pwd=q7R8',
+                'Hash 参数密码 https://drive.quark.cn/s/hash-pass#pwd=h5K6',
                 'https://pan.quark.cn/s/no-pass',
                 '再次分享 https://pan.quark.cn/s/no-pass 提取码：n0P5',
                 'https://pan.quark.cn/s/cross-page'
@@ -67,6 +69,8 @@ test('resource search keeps only canonical Quark share URLs from escaped page co
         { url: 'https://pan.quark.cn/s/3c6b77320fe6', password: 'a1B2' },
         { url: 'https://drive.quark.cn/s/before-pass', password: 'Z9y8' },
         { url: 'https://pan.quark.cn/s/escaped-pass', password: 'c3D4' },
+        { url: 'https://pan.quark.cn/s/query-pass', password: 'q7R8' },
+        { url: 'https://drive.quark.cn/s/hash-pass', password: 'h5K6' },
         { url: 'https://pan.quark.cn/s/no-pass', password: 'n0P5' },
         { url: 'https://pan.quark.cn/s/cross-page', password: 'm3Rg' }
     ]);
