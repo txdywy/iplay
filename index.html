@@ -35,13 +35,14 @@
         </p>
 
         <form id="searchForm" class="w-full max-w-2xl relative group flex" autocomplete="off">
-            <input type="text" id="searchInput" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影"
-                   class="search-input w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/50 text-center leading-[normal]">
+            <input type="text" id="searchInput" maxlength="100" enterkeyhint="search" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影"
+                   class="search-input w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/80 text-center leading-[normal]">
             <button type="submit" id="searchButton" aria-label="搜索"
-                    class="absolute right-4 top-1/2 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-all hover:border-accent-red hover:bg-accent-red/10 active:scale-95 md:opacity-0 md:group-hover:opacity-100">
+                    class="absolute right-4 top-1/2 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-[transform,background-color,border-color] hover:border-accent-red hover:bg-accent-red/10 active:scale-95 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
                 <i class="fas fa-search"></i>
             </button>
         </form>
+        <p id="searchStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     </header>
 
     <main class="w-full max-w-[92rem] px-6 md:px-8 pb-24 relative z-10">
@@ -68,21 +69,21 @@
                 <!-- ── LEFT SIDEBAR: Poster + TMDB Facts ── -->
                 <div class="space-y-5 lg:sticky lg:top-8">
                     <div class="poster-glow transition-transform duration-700 max-w-[260px] mx-auto lg:max-w-none" id="posterWrapper">
-                        <img id="showCover" src="" alt="Poster" class="w-full rounded-[1.75rem] shadow-2xl object-cover aspect-[2/3] border border-cinema-700 bg-cinema-800" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22600%22 viewBox=%220 0 400 600%22%3E%3Crect width=%22400%22 height=%22600%22 fill=%22%23141417%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23333333%22 font-family=%22monospace%22 font-size=%2228%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22%3ENO POSTER%3C/text%3E%3C/svg%3E'">
+                        <img id="showCover" src="" alt="影视海报" class="w-full rounded-[1.75rem] shadow-2xl object-cover aspect-[2/3] border border-cinema-700 bg-cinema-800">
                     </div>
 
                     <!-- Desktop-only: Compact TMDB facts panel -->
                     <div class="hidden lg:block bg-cinema-800/50 border border-cinema-700 rounded-2xl p-4 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
                         <div class="flex items-center justify-between gap-3 mb-3">
                             <div>
-                                <div class="font-mono text-[10px] uppercase tracking-[0.3em] text-cinema-400">Movie profile</div>
-                                <div class="text-[10px] text-cinema-400/70 mt-0.5">TMDB • OMDb</div>
+                                <div class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Movie profile</div>
+                                <div class="text-xs text-cinema-400/70 mt-0.5">TMDB • OMDb</div>
                             </div>
                             <div class="text-right">
-                                <div id="tmdbRatingLabel" class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest">TMDB</div>
+                                <div id="tmdbRatingLabel" class="text-cinema-400 text-xs font-mono uppercase tracking-widest">TMDB</div>
                                 <div class="flex items-baseline gap-0.5 justify-end">
                                     <span id="tmdbRatingValue" class="text-2xl font-black font-mono text-accent-gold">-.-</span>
-                                    <span class="text-cinema-400 font-mono text-[10px]">/10</span>
+                                    <span class="text-cinema-400 font-mono text-xs">/10</span>
                                 </div>
                             </div>
                         </div>
@@ -96,7 +97,7 @@
                     <!-- Title + Subtitle -->
                     <div>
                         <h2 id="showTitle" class="text-4xl md:text-5xl xl:text-6xl font-black leading-[0.92] tracking-tight"></h2>
-                        <p id="showSubTitle" class="text-cinema-400 font-mono text-[11px] md:text-sm uppercase tracking-[0.32em] mt-3"></p>
+                        <p id="showSubTitle" class="text-cinema-400 font-mono text-xs md:text-sm uppercase tracking-[0.32em] mt-3"></p>
                     </div>
 
                     <!-- Rating boxes row -->
@@ -104,32 +105,32 @@
                         <div id="tmdbRatingBox" class="rating-box min-w-[92px] md:min-w-[108px] px-4 py-3">
                             <div class="flex items-baseline gap-1">
                                 <span id="tmdbRatingValueMobile" class="text-2xl font-mono font-bold text-accent-gold">-.-</span>
-                                <span class="text-cinema-400 font-mono text-[10px]">/10</span>
+                                <span class="text-cinema-400 font-mono text-xs">/10</span>
                             </div>
-                            <div id="tmdbRatingLabelMobile" class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">TMDB</div>
+                            <div id="tmdbRatingLabelMobile" class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">TMDB</div>
                         </div>
 
                         <div id="doubanBackupBox" class="rating-box hidden min-w-[92px] md:min-w-[108px] px-4 py-3">
                             <div class="flex items-baseline gap-1">
                                 <span id="doubanBackupRating" class="text-2xl font-mono font-bold text-green-500"></span>
-                                <span class="text-cinema-400 font-mono text-[10px]">/10</span>
+                                <span class="text-cinema-400 font-mono text-xs">/10</span>
                             </div>
-                            <div class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">Douban</div>
+                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">Douban</div>
                         </div>
 
                         <div id="imdbRatingBox" class="rating-box hidden min-w-[92px] md:min-w-[108px] px-4 py-3">
                             <div class="flex items-baseline gap-1">
                                 <span id="imdbRating" class="text-2xl font-mono font-bold text-accent-gold"></span>
-                                <span class="text-cinema-400 font-mono text-[10px]">/10</span>
+                                <span class="text-cinema-400 font-mono text-xs">/10</span>
                             </div>
-                            <div class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">IMDb</div>
+                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">IMDb</div>
                         </div>
 
                         <div id="rottenRatingBox" class="rating-box hidden min-w-[92px] md:min-w-[108px] px-4 py-3">
                             <div class="flex items-baseline gap-1">
                                 <span id="rottenRating" class="text-2xl font-mono font-bold"></span>
                             </div>
-                            <div class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest mt-1">Tomatometer</div>
+                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">Tomatometer</div>
                         </div>
                     </div>
 
@@ -184,10 +185,10 @@
                         <div class="flex items-center justify-between gap-4 mb-4">
                             <div>
                                 <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Source Dossier</h3>
-                                <p class="text-[10px] text-cinema-400/80 font-mono mt-1">TMDB first, with OMDb depth layered beneath</p>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">TMDB first, with OMDb depth layered beneath</p>
                             </div>
                             <div class="text-right">
-                                <div class="text-cinema-400 text-[10px] font-mono uppercase tracking-widest">OMDb / IMDb</div>
+                                <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest">OMDb / IMDb</div>
                             </div>
                         </div>
                         <div id="omdbFields" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm"></div>
@@ -203,39 +204,39 @@
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
                             <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Urls</h3>
-                            <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Direct links extracted from resource pages</p>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Direct links extracted from resource pages</p>
                         </div>
                         <i class="fas fa-cloud text-accent-red/80"></i>
                     </div>
-                    <ul id="quarkUrlList" class="divide-y divide-cinema-700/50 max-h-[28rem] overflow-y-auto scroll-surface pr-1"></ul>
+                    <ul id="quarkUrlList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
 
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
                             <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Resources</h3>
-                            <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Source pages that contain the download links</p>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Source pages that contain the download links</p>
                         </div>
                         <i class="fas fa-link text-[#0099ff]"></i>
                     </div>
-                    <ul id="resourceList" class="divide-y divide-cinema-700/50 max-h-[28rem] overflow-y-auto scroll-surface pr-1"></ul>
+                    <ul id="resourceList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
 
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
                             <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">WPZYS Forum</h3>
-                            <p class="text-[10px] text-cinema-400/80 font-mono mt-1">Matching forum posts filtered for Quark resources</p>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Matching forum posts filtered for Quark resources</p>
                         </div>
                         <i class="fas fa-comments text-accent-gold/80"></i>
                     </div>
-                    <ul id="wpzysResourceList" class="divide-y divide-cinema-700/50 max-h-[28rem] overflow-y-auto scroll-surface pr-1"></ul>
+                    <ul id="wpzysResourceList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
             </div>
         </div>
     </main>
 
-    <div id="toast" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-all duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-[transform,opacity] duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
 
     <script type="module" src="./js/main.js"></script>
 </body>

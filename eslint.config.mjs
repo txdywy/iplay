@@ -3,7 +3,7 @@ import js from "@eslint/js";
 export default [
   js.configs.recommended,
   {
-    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
+    files: ["js/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -17,17 +17,43 @@ export default [
         fetch: "readonly",
         AbortController: "readonly",
         DOMException: "readonly",
+        location: "readonly",
+        requestAnimationFrame: "readonly",
+        URL: "readonly"
+      }
+    }
+  },
+  {
+    files: ["worker/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        console: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        fetch: "readonly",
+        AbortController: "readonly",
         caches: "readonly",
         URL: "readonly",
         Response: "readonly",
         Request: "readonly",
         Headers: "readonly",
         HTMLRewriter: "readonly",
-        localStorage: "readonly",
-        location: "readonly",
-        requestAnimationFrame: "readonly",
-        TextDecoder: "readonly",
-        ReadableStream: "readonly"
+        TextDecoder: "readonly"
+      }
+    }
+  },
+  {
+    files: ["tests/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        console: "readonly",
+        Response: "readonly",
+        Request: "readonly",
+        AbortSignal: "readonly"
       }
     }
   }

@@ -10,6 +10,7 @@ const els = {
     error: document.getElementById('errorState'),
     errorMsg: document.getElementById('errorMsg'),
     results: document.getElementById('resultsArea'),
+    searchStatus: document.getElementById('searchStatus'),
 
     cover: document.getElementById('showCover'),
     title: document.getElementById('showTitle'),
@@ -61,6 +62,10 @@ function showToast(msg) {
         els.toast.style.transform = 'translateY(20px)';
         els.toast.style.opacity = '0';
     }, 3000);
+}
+
+function setSearchStatus(message) {
+    setText(els.searchStatus, message);
 }
 
 function normalizeText(value) {
@@ -117,7 +122,14 @@ function pickBestDoubanMatch(results, query) {
 
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
 
-function loadPoster(posterUrl) {
+if (els.cover) {
+    els.cover.addEventListener('error', () => {
+        if (els.cover.src !== POSTER_PLACEHOLDER) els.cover.src = POSTER_PLACEHOLDER;
+    });
+}
+
+function loadPoster(posterUrl, title = '') {
+    els.cover.alt = title ? `${title} 海报` : '影视海报';
     if (posterUrl) {
         els.cover.src = posterUrl;
     } else {
@@ -235,7 +247,7 @@ function createInfoCard(label, value, { wide = false, muted = false } = {}) {
     card.className = `${wide ? 'md:col-span-2' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
 
     const meta = document.createElement('div');
-    meta.className = 'text-[10px] uppercase tracking-[0.35em] text-cinema-400';
+    meta.className = 'text-xs uppercase tracking-[0.35em] text-cinema-400';
     meta.textContent = label;
 
     const body = document.createElement('div');
@@ -475,7 +487,7 @@ function renderLinkCards(container, items, {
 
         if (sourceText) {
             const source = document.createElement('div');
-            source.className = 'mt-2 text-[10px] font-mono uppercase tracking-[0.3em] text-accent-gold/80';
+            source.className = 'mt-2 text-xs font-mono uppercase tracking-[0.3em] text-accent-gold/80';
             source.textContent = sourceText(item);
             content.appendChild(source);
         }
@@ -541,7 +553,7 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
     heading.textContent = title;
 
     const copy = document.createElement('div');
-    copy.className = 'mt-2 text-[11px] font-mono uppercase tracking-[0.28em] text-cinema-400 leading-relaxed';
+    copy.className = 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400 leading-relaxed';
     copy.textContent = detail;
 
     content.appendChild(heading);
@@ -611,9 +623,9 @@ function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: 'No raw resources detected.',
         itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/30 p-4 transition-all hover:border-cinema-500/70 hover:bg-cinema-800/50 hover:-translate-y-0.5',
+        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/30 p-4 transition-[transform,background-color,border-color] hover:border-cinema-400/70 hover:bg-cinema-800/50 hover:-translate-y-0.5',
         iconClass: 'fas fa-external-link-alt text-[#0099ff] mt-1 opacity-70',
-        metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400',
+        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
         limit: 6
@@ -624,9 +636,9 @@ function renderWpzysResourceList(resources) {
     renderLinkCards(els.wpzysResourceList, resources, {
         emptyLabel: 'No WPZYS Quark resources matched.',
         itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-all hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
+        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-[transform,background-color,border-color] hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
         iconClass: 'fas fa-comments text-accent-gold mt-1 opacity-80',
-        metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400',
+        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
         limit: 8
@@ -637,9 +649,9 @@ function renderQuarkUrls(quarkUrls) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
         emptyLabel: 'No Quark links extracted yet.',
         itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-all hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
+        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-[transform,background-color,border-color] hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
         iconClass: 'fas fa-cloud text-accent-red mt-1 opacity-80',
-        metaClass: 'mt-2 text-[10px] font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
+        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
@@ -757,7 +769,7 @@ async function safeTmdbSearch(query, options = {}) {
     } catch (error) {
         if (error.name === 'AbortError') throw error;
         console.warn('TMDB search failed:', error);
-        return null;
+        throw error;
     }
 }
 
@@ -795,6 +807,7 @@ async function handleSearch() {
     els.loading.classList.remove('hidden');
     resetRatingBoxes();
     setSearching(true);
+    setSearchStatus(`正在搜索“${query}”`);
 
     els.results.querySelectorAll('.fade-up').forEach(el => {
         el.style.animation = 'none';
@@ -832,7 +845,7 @@ async function handleSearch() {
         setText(els.subTitle, viewModel.subtitle);
         renderGenres(viewModel.genres);
         renderSynopsis(viewModel.overviewSource, viewModel.summary);
-        loadPoster(viewModel.posterUrl);
+        loadPoster(viewModel.posterUrl, viewModel.title);
         renderTmdbFacts(viewModel);
         renderTmdbProfile(viewModel);
         renderResourceLoadingStates(viewModel.title);
@@ -848,6 +861,7 @@ async function handleSearch() {
 
         els.results.classList.remove('hidden');
         els.loading.classList.add('hidden');
+        setSearchStatus(`已找到“${viewModel.title}”，详情已加载`);
         if (searchId === currentSearchId) setSearching(false);
 
         DoubanAPI.search(query, searchOptions).then(async doubanSearchResult => {
@@ -896,7 +910,7 @@ async function handleSearch() {
             if (searchId !== currentSearchId || !posterResult) return;
             viewModel.omdbProfile = posterResult.omdb ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult) : viewModel.omdbProfile;
             viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
-            loadPoster(viewModel.posterUrl);
+            loadPoster(viewModel.posterUrl, viewModel.title);
             renderTmdbProfile(viewModel);
         }).catch(e => { if (e.name !== 'AbortError') console.debug('Poster enrichment skipped:', e); });
 
@@ -910,6 +924,7 @@ async function handleSearch() {
         }
         els.error.classList.remove('hidden');
         els.loading.classList.add('hidden');
+        setSearchStatus(`搜索失败：${els.errorMsg.textContent}`);
         setSearching(false);
     } finally {
         if (searchId === currentSearchId) setSearching(false);
@@ -919,7 +934,6 @@ async function handleSearch() {
 if (els.searchForm) {
     els.searchForm.addEventListener('submit', e => {
         e.preventDefault();
-        els.input.blur();
         handleSearch();
     });
 }

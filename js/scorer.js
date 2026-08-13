@@ -18,14 +18,21 @@ let PREFERENCE_WEIGHTS = {
 };
 
 try {
-    const customWeights = localStorage.getItem('iplay_preference_weights');
+    const customWeights = typeof window !== 'undefined'
+        ? window.localStorage.getItem('iplay_preference_weights')
+        : null;
     if (customWeights) {
         const parsed = JSON.parse(customWeights);
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             for (const [genre, value] of Object.entries(parsed)) {
                 const score = typeof value === 'number' ? value : Number(value?.score);
                 if (Number.isFinite(score)) {
-                    PREFERENCE_WEIGHTS[genre] = { score, reason: value?.reason || `自定义偏好：${genre}` };
+                    PREFERENCE_WEIGHTS[genre] = {
+                        score: Math.max(-5, Math.min(5, score)),
+                        reason: typeof value?.reason === 'string' && value.reason.trim()
+                            ? value.reason.trim().slice(0, 120)
+                            : `自定义偏好：${genre}`
+                    };
                 }
             }
         }
@@ -44,7 +51,13 @@ export function calculateRecommendationScore(data) {
     const { rating, votes, genres, hasWiki, source } = data;
     const report = { pros: [], cons: [] };
     const ratingLabel = getRatingLabel(source);
-    const safeRating = rating > 0 ? rating : 0;
+    const numericRating = Number(rating);
+    const safeRating = Number.isFinite(numericRating) && numericRating > 0
+        ? Math.min(10, numericRating)
+        : 0;
+    const numericVotes = Number(votes);
+    const safeVotes = Number.isFinite(numericVotes) && numericVotes > 0 ? numericVotes : 0;
+    const safeGenres = Array.isArray(genres) ? genres : [];
 
     let baseScore;
     if (safeRating >= 9.0) {
@@ -69,18 +82,18 @@ export function calculateRecommendationScore(data) {
         report.pros.push('具备一定国际知名度 (Wiki收录)');
     }
 
-    if (votes > 0) {
-        const voteScore = Math.min(15, Math.log10(votes) * 2.8);
+    if (safeVotes > 0) {
+        const voteScore = Math.min(15, Math.log10(safeVotes) * 2.8);
         heatScore += voteScore;
-        if (votes > 100000) report.pros.push(`现象级爆款 (${Math.floor(votes / 10000)}w+人评价)`);
-        else if (votes < 5000) report.cons.push('受众较窄，稍显冷门');
+        if (safeVotes > 100000) report.pros.push(`现象级爆款 (${Math.floor(safeVotes / 10000)}w+人评价)`);
+        else if (safeVotes < 5000) report.cons.push('受众较窄，稍显冷门');
     }
 
     let preferenceScore = 10;
     let hasFatalFlaw = false;
 
-    if (genres && genres.length > 0) {
-        genres.forEach(genre => {
+    if (safeGenres.length > 0) {
+        safeGenres.forEach(genre => {
             const pref = PREFERENCE_WEIGHTS[genre];
             if (pref) {
                 preferenceScore += pref.score * 2.5;

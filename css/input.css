@@ -69,7 +69,6 @@ body { background-color: #0a0a0c; color: #e0e0e0; overflow-x: hidden; }
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background-image: url('data:image/svg+xml,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)"/%3E%3C/svg%3E');
   opacity: 0.04; pointer-events: none; z-index: 50;
-  will-change: transform; transform: translateZ(0);
 }
 
 .ambient-glow {
@@ -81,11 +80,16 @@ body { background-color: #0a0a0c; color: #e0e0e0; overflow-x: hidden; }
 
 .search-input {
   background: rgba(30, 30, 36, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); backdrop-filter: blur(12px);
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .search-input:focus {
   background: rgba(30, 30, 36, 0.9); border-color: rgba(229, 9, 20, 0.5); box-shadow: 0 0 30px rgba(229, 9, 20, 0.15); outline: none;
+}
+
+.search-input:focus-visible {
+  outline: 2px solid rgba(229, 9, 20, 0.85);
+  outline-offset: 3px;
 }
 
 .cursor-blink { animation: blink 1s step-end infinite; }
@@ -110,10 +114,28 @@ body { background-color: #0a0a0c; color: #e0e0e0; overflow-x: hidden; }
 
 .progress-bar { animation: fillBar 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
+.resource-scroll-surface {
+  max-height: clamp(24rem, 62vh, 40rem);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
 .scroll-surface::-webkit-scrollbar { width: 8px; }
 .scroll-surface::-webkit-scrollbar-track { background: transparent; }
-.scroll-surface::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
-.scroll-surface::-webkit-scrollbar-thumb:hover { background: rgba(229, 9, 20, 0.34); }
+.scroll-surface::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.38); border-radius: 999px; }
+.scroll-surface::-webkit-scrollbar-thumb:hover { background: rgba(229, 9, 20, 0.7); }
+.scroll-surface { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.38) transparent; }
+
+@media (max-width: 767px) {
+  .resource-scroll-surface {
+    max-height: none;
+    overflow-y: visible;
+    overscroll-behavior-y: auto;
+    scrollbar-gutter: auto;
+  }
+}
 
 .rating-box {
   display: flex;
