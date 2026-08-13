@@ -37,15 +37,15 @@ iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV r
 |         |         |                                |
 |  +------v---------v------+                       |
 |  |   worker/_worker.js   |  CORS proxy + data     |
-|  |   (886 lines, ES Mod) |  aggregator + cache    |
+|  |   (ES module)         |  aggregator + cache    |
 |  +-----------+-----------+                       |
 |              |                                    |
 |  +-----------+-----------+-----------+----------+|
 |  |           |           |           |          ||
 |  v           v           v           v          ||
-| TMDB      Douban      OMDb      Wikipedia   By669||
-| (Primary) (Chinese    (IMDb/    (Chinese    (Quark|
-|           ratings)    RT data)  plot)      links)|
+| TMDB      Douban      OMDb      Wikipedia  Resources||
+| (Primary) (Chinese    (IMDb/    (Chinese   (By669 + ||
+|           ratings)    RT data)  plot)       WPZYS)  ||
 +---------------------------------------------------+
 ```
 
@@ -56,11 +56,11 @@ iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV r
 ### 1. Search Flow
 
 ```
-User types query in search box
+User submits query from search form
         |
         v
 +-------+-------+
-|  js/main.js   |  -- Debounced input, 300ms
+|  js/main.js   |  -- Cancels any older request
 +-------+-------+
         |
         v
@@ -93,10 +93,10 @@ User types query in search box
 
 ### 2. Detail Page Flow
 
-When a user clicks a result, the frontend fires multiple concurrent requests to the Worker:
+After search, the frontend selects the best TMDB match, renders its core detail, then starts independent enrichment requests:
 
 ```
-User clicks a search result
+User submits a search
         |
         v
 +-------+-------+
@@ -114,9 +114,9 @@ User clicks a search result
         v        v        v        v        v
 +-------+--------+--------+--------+--------+
 |           Cloudflare Worker               |
-|  - Concurrent fetch with Promise.allSettled|
-|  - Each upstream cached independently      |
-|  - Aggregated response to frontend         |
+|  - Validates parameters and applies timeout|
+|  - Caches upstream responses independently |
+|  - Returns one JSON response per endpoint  |
 +-------------------------------------------+
         |
         v
@@ -178,22 +178,23 @@ found?      |
 | Component | File | Description |
 |-----------|------|-------------|
 | **SPA Shell** | `index.html` | Single-page application shell. Dark theme (`#0a0a0c`), Netflix-red accent (`#e50914`), film grain SVG overlay, ambient glow radial gradient, typewriter cursor animation. Responsive layout with poster sidebar + content area. |
-| **UI Controller** | `js/main.js` (748 lines) | Search UI, debounced input handling, results rendering with progressive loading, detail modal with tabs (overview / cast / resources), preference settings modal, toast notifications. |
-| **API Client** | `js/api.js` (110 lines) | API client with `fetchWithTimeout` (AbortController, 8s default timeout). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `ResourceAPI`, `PosterAPI`. |
-| **Scoring Engine** | `js/scorer.js` (119 lines) | Client-side recommendation algorithm. Genre preference weights loaded from `localStorage` (key `iplay_preference_weights`). Score = base (rating) + heat (votes/wiki) + preference (genre match). Fatal flaws (score <= -2.5 genres) cap at 59. |
+| **UI Controller** | `js/main.js` | Search form handling, best-match selection, progressive detail rendering, preference settings, resource states, and toast notifications. |
+| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 8s default timeout; 20s for resource search). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `ResourceAPI`, `PosterAPI`. |
+| **Quark Formatter** | `js/quark.js` | Formats share URLs and optional extraction passwords for clipboard copy. |
+| **Scoring Engine** | `js/scorer.js` | Client-side recommendation algorithm. Genre preference weights loaded from `localStorage` (key `iplay_preference_weights`). Score = base (rating) + heat (votes/wiki) + preference (genre match). Fatal flaws (score <= -2.5 genres) cap at 59. |
 | **Styles** | `css/input.css` / `css/output.css` | Tailwind CSS v4 with custom theme: `Noto Serif SC` + `Space Mono` fonts, cinema color palette (`cinema-900` through `cinema-100`), accent red and gold. |
 
 ### Backend Components (Cloudflare Worker)
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **Worker Entry** | `worker/_worker.js` (886 lines) | Cloudflare Worker fetch handler. Routes incoming requests to appropriate handlers. Manages CORS preflight responses. |
+| **Worker Entry** | `worker/_worker.js` | Cloudflare Worker fetch handler. Routes requests, validates methods and parameters, applies per-IP rate limiting, and manages origin-aware CORS responses. |
 | **TMDB Handler** | `_worker.js` | Search (`/api/tmdb/search`) and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Caches responses for 24h. |
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **OMDb Handler** | `_worker.js` | Proxy for IMDb/Rotten Tomatoes data (`/api/omdb`). Supports search by title+year or by IMDb ID. Caches for 24h. |
-| **Poster Handler** | `_worker.js` | Aggregates poster from TMDB (first) and OMDb (fallback). Falls back to Wikipedia English title lookup if both fail. |
+| **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Complete results cache for 24h; degraded results cache for 15 minutes. |
 | **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
-| **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating from `by669.org`. Extracts Quark netdisk URLs from resource pages with batch processing (5 concurrent). Caches for 12h. |
+| **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating By669 and WPZYS. Keeps provider lists separate, extracts and deduplicates share URLs from up to 12 detail pages in batches of 6, and caches complete results for 12h. |
 
 ---
 
@@ -201,15 +202,15 @@ found?      |
 
 ### Worker Endpoints
 
-All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`).
+All API endpoints return JSON. CORS headers echo an allowed request Origin and responses include `Vary: Origin`; the default allowlist covers the production frontend and local development, with `CORS_ALLOWED_ORIGINS` available for additional sites.
 
 | Method | Path | Query Params | Description |
 |--------|------|--------------|-------------|
 | `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Tries zh-CN first, falls back to en-US. |
-| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits and external IDs. Auto-detects type if wrong. |
+| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits and external IDs; retries the alternate valid type only after a `404`. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
-| `GET` | `/api/resource` | `q` (string) | Search resource site and extract Quark netdisk URLs. |
+| `GET` | `/api/resource` | `q` (string) | Search By669 and WPZYS, then extract and deduplicate Quark netdisk URLs. |
 | `GET` | `/api/omdb` | `title` (string), `year` (string) OR `imdb` (string) | OMDb proxy for IMDb/Rotten Tomatoes ratings and metadata. |
 | `GET` | `/api/poster` | `title` (string), `year` (string) | Poster fetch with TMDB first, OMDb fallback, Wikipedia title fallback. |
 | `GET` | `/api/wiki/zh` | `q` (string) | Chinese Wikipedia summary via REST API. |
@@ -274,6 +275,9 @@ All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`).
   "resources": [
     { "title": "...", "url": "https://by669.org/d/...", "isQuark": true }
   ],
+  "wpzysResources": [
+    { "title": "...", "url": "https://www.wpzys.org/thread-...htm", "isQuark": true }
+  ],
   "quarkUrls": [
     { "title": "...", "url": "https://pan.quark.cn/...", "sourceUrl": "...", "sourceTitle": "..." }
   ]
@@ -297,14 +301,15 @@ All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`).
 
 - **Platform:** Cloudflare Workers (edge compute)
 - **Config:** `wrangler.toml`
-  - `name = "iplay-worker"`
+  - `name = "iplay"`
   - `main = "worker/_worker.js"`
   - `compatibility_date = "2024-04-23"`
-- **Secrets:** Set via Cloudflare Dashboard or `wrangler secret put`:
+- **Secrets:** Set via Cloudflare Dashboard or `npm run wrangler -- secret put`:
   - `TMDB_ACCESS_TOKEN` (v4 bearer, preferred)
   - `TMDB_API_KEY` (v3 query param, fallback)
-  - `OMDB_API_KEY` (optional, has hardcoded fallback)
-- **Cache:** Uses Cloudflare Cache API (`caches.default`) with 24h TTL for most endpoints, 12h for resources
+  - `OMDB_API_KEY` (optional; no bundled key)
+  - `CORS_ALLOWED_ORIGINS` (optional comma-separated extra frontend origins)
+- **Cache:** Uses Cloudflare Cache API (`caches.default`) with 24h TTL for most complete responses, 12h for complete resources, and 15-minute TTLs for degraded resource/poster results
 - **Cost:** $0 (within free tier limits)
 
 ### Build Pipeline
@@ -314,7 +319,7 @@ Developer pushes to main
         |
         v
 +-------+-------+
-|  npm test     |  -- lint + build
+|  npm test     |  -- Node tests + lint + build
 |  (package.json)|
 +-------+-------+
         |
@@ -338,22 +343,23 @@ Worker deploy (manual or via Wrangler CLI):
 ### API Keys and Secrets
 
 - **TMDB credentials** stored as Cloudflare Worker secrets (`TMDB_ACCESS_TOKEN` or `TMDB_API_KEY`). Never exposed to frontend.
-- **OMDb API key** has a hardcoded fallback (`80077e97`) in the Worker source for convenience, but can be overridden via `OMDB_API_KEY` secret.
+- **OMDb API key** is optional and stored only as a Cloudflare Worker secret. No key is bundled; OMDb-specific requests return `503` when it is absent.
 - **No user authentication** -- iPlay is a fully anonymous, stateless application.
 
 ### CORS Handling
 
-- Worker responds to `OPTIONS` preflight with permissive CORS headers (`Access-Control-Allow-Origin: *`).
-- All JSON responses include CORS headers.
-- This is intentional: the frontend is a static site that cannot make direct cross-origin requests to TMDB/Douban/OMDb.
+- Worker responds to `OPTIONS` with `GET, OPTIONS` and echoes `Access-Control-Allow-Origin` only for allowed origins.
+- The built-in allowlist includes `https://iplay.hackx64.eu.org`, local Wrangler origins, and localhost/127.0.0.1 on port 8080. Deployments can add up to 20 comma-separated origins with `CORS_ALLOWED_ORIGINS`.
+- Responses include `Vary: Origin` to keep shared caches origin-safe.
 
 ### Rate Limiting and Caching
 
 - Worker caches all upstream API responses using Cloudflare Cache API:
   - TMDB/Douban/OMDb/Wiki: 24 hours (`max-age=86400`)
-  - Resources: 12 hours (`max-age=43200`)
-- Cache keys use synthetic local URLs (e.g., `https://douban-search-cache.local/`) to avoid polluting external cache namespaces.
-- No explicit rate limiting is implemented on the Worker itself; it relies on upstream APIs' own limits and Cloudflare's built-in DDoS protection.
+  - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
+  - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
+- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v5-cache.local/`, and `https://poster-v1-cache.local/`) to avoid polluting external cache namespaces.
+- The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota.
 
 ### Data Privacy
 
@@ -364,8 +370,8 @@ Worker deploy (manual or via Wrangler CLI):
 ### Upstream API Risks
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
-- **Resource site dependency:** The `/api/resource` endpoint depends on `by669.org` API availability and structure. If the site goes down or changes, resource search will fail.
-- **OMDb fallback key:** The hardcoded fallback key may hit rate limits if the Worker receives heavy traffic.
+- **Resource site dependency:** The `/api/resource` endpoint depends on By669 and WPZYS availability and markup. One provider may fail without hiding the other's results; if both fail the endpoint returns `502`.
+- **OMDb configuration:** Without `OMDB_API_KEY`, OMDb enrichment is intentionally unavailable while TMDB and other sources continue to work.
 
 ---
 
@@ -382,11 +388,13 @@ iplay/
 │   ├── input.css           # Tailwind CSS v4 theme config
 │   └── output.css          # Generated production stylesheet
 ├── js/
-│   ├── main.js             # UI controller (748 lines)
+│   ├── main.js             # UI controller
 │   ├── api.js              # API client with timeout/abort
+│   ├── quark.js            # Quark copy formatter
 │   └── scorer.js           # Recommendation algorithm
 ├── worker/
-│   └── _worker.js          # Cloudflare Worker (886 lines)
+│   └── _worker.js          # Cloudflare Worker
+├── tests/                  # Node.js unit and Worker route tests
 └── docs/
     └── ARCHITECTURE.md     # This document
 ```

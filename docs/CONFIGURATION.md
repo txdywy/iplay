@@ -14,23 +14,27 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 |----------|----------|---------|-------------|
 | `TMDB_ACCESS_TOKEN` | **Recommended** | — | TMDB v4 Read Access Token. Used as a Bearer token for authenticated requests to The Movie Database API. This is the preferred authentication method. |
 | `TMDB_API_KEY` | Fallback | — | TMDB v3 API Key. Used as a fallback if `TMDB_ACCESS_TOKEN` is not set. Passed as a query parameter (`api_key`). |
-| `OMDB_API_KEY` | Optional | `80077e97` | OMDb API Key for fetching IMDb ratings, Rotten Tomatoes scores, and poster images. A hardcoded fallback key exists but may be rate-limited; setting your own key is recommended for production. |
+| `OMDB_API_KEY` | Optional | — | Enables OMDb-backed IMDb ratings, Rotten Tomatoes scores, and poster metadata. No key is bundled; OMDb endpoints return `503` when it is unset. |
+| `CORS_ALLOWED_ORIGINS` | Optional | — | Comma-separated additional frontend origins. At most 20 configured values are read. |
 
 ### Setting Secrets via Wrangler CLI
 
 ```bash
 # Navigate to the project root
-cd /Users/yiwei/iplay
+cd iplay
 
 # Set TMDB v4 Access Token (recommended)
-wrangler secret put TMDB_ACCESS_TOKEN
+npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 # You will be prompted to paste your token
 
 # Set TMDB v3 API Key (fallback)
-wrangler secret put TMDB_API_KEY
+npm run wrangler -- secret put TMDB_API_KEY
 
 # Set OMDb API Key (optional)
-wrangler secret put OMDB_API_KEY
+npm run wrangler -- secret put OMDB_API_KEY
+
+# Add self-hosted frontend origins when needed
+npm run wrangler -- secret put CORS_ALLOWED_ORIGINS
 ```
 
 ### Setting Secrets via Cloudflare Dashboard
@@ -43,12 +47,13 @@ wrangler secret put OMDB_API_KEY
 
 ### Local Development Variables
 
-For local testing with `wrangler dev`, create a `.dev.vars` file in the project root:
+For local testing with `npm run wrangler -- dev`, create a `.dev.vars` file in the project root:
 
 ```bash
 TMDB_ACCESS_TOKEN=your_tmdb_v4_token_here
 TMDB_API_KEY=your_tmdb_v3_key_here
 OMDB_API_KEY=your_omdb_key_here
+CORS_ALLOWED_ORIGINS=https://preview.example.com,http://localhost:4173
 ```
 
 > **Note:** `.dev.vars` is already listed in `.gitignore` to prevent accidental commits of secrets.
@@ -60,21 +65,21 @@ OMDB_API_KEY=your_omdb_key_here
 The Worker is configured via `wrangler.toml` in the project root.
 
 ```toml
-name = "iplay-worker"
+name = "iplay"
 main = "worker/_worker.js"
 compatibility_date = "2024-04-23"
 ```
 
 | Field | Value | Description |
 |-------|-------|-------------|
-| `name` | `iplay-worker` | The name of the Worker as it appears in the Cloudflare Dashboard. |
+| `name` | `iplay` | The name of the Worker as it appears in the Cloudflare Dashboard. |
 | `main` | `worker/_worker.js` | Entry point for the Worker script. |
 | `compatibility_date` | `2024-04-23` | Cloudflare Workers runtime compatibility date. Determines which runtime APIs are available. |
 
 ### Deploying the Worker
 
 ```bash
-wrangler deploy
+npm run wrangler -- deploy
 ```
 
 This command reads `wrangler.toml` and deploys the Worker to Cloudflare's edge network.
@@ -85,10 +90,12 @@ This command reads `wrangler.toml` and deploys the Worker to Cloudflare's edge n
 
 ### API Base URL
 
-The frontend communicates with the Worker through a hardcoded base URL in `js/api.js`:
+The frontend selects its Worker base URL in `js/api.js`: localhost pages use the local Wrangler server, while other hosts use the production Worker.
 
 ```javascript
-const API_BASE = "https://iplayw.hackx64.eu.org";
+const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'http://localhost:8787'
+    : 'https://iplayw.hackx64.eu.org';
 ```
 
 **When self-hosting, you must change this value to your own Worker domain.**
@@ -96,14 +103,16 @@ const API_BASE = "https://iplayw.hackx64.eu.org";
 #### Steps to Update
 
 1. Open `js/api.js`.
-2. Locate line 5:
+2. Locate the `API_BASE` declaration:
    ```javascript
-   const API_BASE = "https://iplayw.hackx64.eu.org";
+   const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+       ? 'http://localhost:8787'
+       : 'https://iplayw.hackx64.eu.org';
    ```
 3. Replace the URL with your deployed Worker URL (e.g., `https://your-worker.your-subdomain.workers.dev`).
 4. Save the file and rebuild the frontend if necessary.
 
-> **Important:** The frontend is served as static files (GitHub Pages or similar). Ensure your Worker has CORS enabled (already configured in `worker/_worker.js`) to allow requests from your frontend domain.
+> **Important:** The Worker allows `https://iplay.hackx64.eu.org`, local Wrangler origins, and `http://localhost:8080` / `http://127.0.0.1:8080` by default. Add other static-host origins through `CORS_ALLOWED_ORIGINS`; responses vary on `Origin` rather than using a wildcard.
 
 ---
 
@@ -235,8 +244,8 @@ The final recommendation score (0-100) is computed as:
 
 | Setting | Required? | Failure Mode if Missing |
 |---------|-----------|------------------------|
-| `TMDB_ACCESS_TOKEN` or `TMDB_API_KEY` | **Yes** | Worker returns `500` with "Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY" for all TMDB-dependent endpoints (search, detail, poster). |
-| `OMDB_API_KEY` | No | Falls back to hardcoded key `80077e97`. May hit rate limits. |
+| `TMDB_ACCESS_TOKEN` or `TMDB_API_KEY` | **Yes** | Direct TMDB search/detail requests return `503` when both are missing. Poster aggregation can still fall back to OMDb when `OMDB_API_KEY` is configured; if neither poster source is configured, it returns `503`. |
+| `OMDB_API_KEY` | No | OMDb-backed ratings and metadata are unavailable; direct OMDb requests return `503`. |
 | `API_BASE` (frontend) | **Yes** | Frontend cannot communicate with the Worker; all API requests fail. |
 | Tailwind build | **Yes** | Frontend renders without styles if `css/output.css` is missing or stale. |
 
@@ -248,8 +257,8 @@ iPlay does not use separate `.env.*` files. Environment-specific behavior is han
 
 | Environment | How to Configure |
 |-------------|------------------|
-| **Development** | Use `.dev.vars` for local Worker secrets. Run `wrangler dev` to start a local dev server. |
-| **Production** | Set secrets via Cloudflare Dashboard or `wrangler secret put`. Deploy with `wrangler deploy`. |
+| **Development** | Use `.dev.vars` for local Worker secrets. Run `npm run wrangler -- dev` to start a local dev server. |
+| **Production** | Set secrets via Cloudflare Dashboard or `npm run wrangler -- secret put`. Deploy with `npm run wrangler -- deploy`. |
 | **Frontend** | The frontend is static; environment-specific changes require editing `js/api.js` and rebuilding. |
 
 ### Recommended Workflow
@@ -257,7 +266,7 @@ iPlay does not use separate `.env.*` files. Environment-specific behavior is han
 1. **Local development:**
    ```bash
    # Terminal 1: Start the Worker locally
-   wrangler dev
+   npm run wrangler -- dev
 
    # Terminal 2: Build CSS in watch mode (if supported by your setup)
    npx @tailwindcss/cli -i ./css/input.css -o ./css/output.css --watch
@@ -265,8 +274,7 @@ iPlay does not use separate `.env.*` files. Environment-specific behavior is han
 
 2. **Deploy to production:**
    ```bash
-   npm run build      # Build minified CSS
-   npm run lint       # Verify code quality
-   wrangler deploy    # Deploy Worker
+   npm test           # Run Node.js tests, lint, and the minified CSS build
+   npm run wrangler -- deploy    # Deploy Worker
    # Then push frontend files to GitHub Pages (or your static host)
    ```

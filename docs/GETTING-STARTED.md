@@ -12,14 +12,14 @@
 
 | 项目 | 版本要求 | 说明 |
 |------|----------|------|
-| Node.js | >= 18.0.0 | 用于构建 Tailwind CSS 和运行 ESLint |
+| Node.js | >= 20.19.0（推荐 22 LTS） | 用于运行测试、构建 Tailwind CSS 和运行 ESLint |
 | npm | >= 9.0.0 | 随 Node.js 一同安装 |
 | Cloudflare 账号 | — | 部署 Worker 代理服务所需 |
 | TMDB 账号 + API Token | — | 在 [TMDB 设置页](https://www.themoviedb.org/settings/api) 申请 v4 Read Access Token |
-| (可选) OMDb API Key | — | 用于获取 IMDb / Rotten Tomatoes 评分；不填则使用内置默认值 |
+| (可选) OMDb API Key | — | 用于启用 IMDb / Rotten Tomatoes 等补充数据；项目不内置 Key |
 | (可选) GitHub 账号 | — | 如需使用 GitHub Pages 部署前端 |
 
-> **提示**：如果你只想在本地预览而不部署 Worker，可以暂时跳过 Cloudflare 和 TMDB 相关步骤，使用项目中的默认 API 地址（但可能受限于公开服务的速率限制）。
+> **提示**：静态页面可以独立预览布局，但搜索功能必须连接 Worker。当前开发配置在 `localhost` 上请求 `http://localhost:8787`，因此完整本地验证需要按下文同时启动 Wrangler 和静态服务器。
 
 ---
 
@@ -57,17 +57,17 @@ iPlay 使用 Cloudflare Worker 作为后端代理，用于绕过浏览器 CORS �
 确保你已安装 Wrangler 并登录：
 
 ```bash
-npx wrangler login
+npm run wrangler -- login
 ```
 
 然后设置密钥：
 
 ```bash
 # 设置 TMDB v4 Access Token（推荐，认证方式更稳定）
-npx wrangler secret put TMDB_ACCESS_TOKEN
+npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 
 # 可选：设置 OMDb API Key（获取 IMDb / Rotten Tomatoes 评分）
-npx wrangler secret put OMDB_API_KEY
+npm run wrangler -- secret put OMDB_API_KEY
 ```
 
 按提示粘贴对应的密钥值即可。
@@ -79,30 +79,42 @@ npx wrangler secret put OMDB_API_KEY
 3. 在 **Settings** -> **Variables** 中添加以下变量：
    - `TMDB_ACCESS_TOKEN`：你的 TMDB v4 Read Access Token
    - `OMDB_API_KEY`（可选）：你的 OMDb API Key
+   - `CORS_ALLOWED_ORIGINS`（自托管前端时）：你的前端 Origin，多个值用英文逗号分隔
 
 ### 5. 部署 Worker
 
 ```bash
-npx wrangler deploy
+npm run wrangler -- deploy
 ```
 
 部署成功后，记录下 Worker 的域名，例如：
 
 ```
-https://iplay-worker.your-account.workers.dev
+https://iplay.your-account.workers.dev
 ```
 
 ### 6. 更新前端 API 地址
 
-打开 `js/api.js`，将第 5 行的 `API_BASE` 修改为你的 Worker 域名：
+打开 `js/api.js`，保留本地分支并将 `API_BASE` 的生产地址修改为你的 Worker 域名：
 
 ```javascript
-const API_BASE = "https://iplay-worker.your-account.workers.dev";
+const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'http://localhost:8787'
+    : 'https://iplay.your-account.workers.dev';
 ```
+
+如果前端部署到自定义域名或 GitHub Pages，还要在 Worker 中把该站点的 Origin 加入 `CORS_ALLOWED_ORIGINS`。
 
 ### 7. 本地预览
 
-在项目根目录启动一个本地静态服务器：
+先在一个终端中复制示例配置（至少保留一个有效 TMDB 凭据）并启动本地 Worker：
+
+```bash
+cp .dev.vars.example .dev.vars
+npm run wrangler -- dev
+```
+
+再在另一个终端中启动本地静态服务器：
 
 ```bash
 python3 -m http.server 8080
@@ -148,23 +160,23 @@ python3 -m http.server 8080
 ### CORS 跨域错误
 
 - 确保前端页面是通过 `http://localhost:8080`（或 HTTPS 的 GitHub Pages）访问，而非直接打开 `file://` 协议的 HTML 文件
-- 检查 Worker 代码中是否包含 CORS 响应头（`Access-Control-Allow-Origin: *`）
+- `http://localhost:8080` 和线上域名 `https://iplay.hackx64.eu.org` 默认允许跨域；自定义前端域名请在 Worker 中设置 `CORS_ALLOWED_ORIGINS`（多个 Origin 用英文逗号分隔）
 
 ### `npm run build` 失败
 
-- **Node.js 版本过低**：确保 Node.js >= 18.0.0，运行 `node --version` 检查
+- **Node.js 版本过低**：确保 Node.js >= 20.19.0（推荐 22 LTS），运行 `node --version` 检查
 - **依赖未安装**：先运行 `npm install`
 - **Tailwind CSS 未找到**：检查 `node_modules/.bin/tailwindcss` 是否存在，如不存在请重新安装依赖
 
 ### Worker 部署失败
 
-- **未登录 Wrangler**：运行 `npx wrangler login` 完成登录
+- **未登录 Wrangler**：运行 `npm run wrangler -- login` 完成登录
 - **账户权限不足**：确认你的 Cloudflare 账户已启用 Workers 功能
 - **配置文件错误**：检查 `wrangler.toml` 中的 `name` 和 `main` 字段是否正确指向 `worker/_worker.js`
 
 ### 详情页评分不显示
 
-- **OMDb Key 未配置**：iPlay 使用 OMDb 获取 IMDb 和 Rotten Tomatoes 评分。如不配置，会回退到内置默认值，但可能触发速率限制
+- **OMDb Key 未配置**：OMDb 是可选补充源；未配置 `OMDB_API_KEY` 时不提供 IMDb / Rotten Tomatoes 等 OMDb 数据，TMDB 等核心功能仍可使用
 - **TMDB 数据缺失**：部分冷门影片可能在 TMDB 中无评分数据，此时会显示 "—"
 
 ---

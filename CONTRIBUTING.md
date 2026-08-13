@@ -16,20 +16,17 @@
    ```bash
    git checkout -b feat/your-feature-name
    ```
-4. **提交更改**：确保代码通过 lint 和 build 检查。
+4. **提交更改**：确保 Node.js 测试、lint 和生产构建全部通过。
 5. **发起 Pull Request**：描述清楚你的改动内容和动机。
 
 ## 开发环境搭建
 
 ### 前置要求
 
-- **Node.js**：建议使用最新 LTS 版本
+- **Node.js**：最低 20.19.0，推荐 22 LTS（仓库提供 `.nvmrc`）
 - **npm**：随 Node.js 一起安装
 - **Python 3**：用于本地静态服务器预览
-- **Wrangler CLI**（可选）：用于本地测试 Cloudflare Worker
-  ```bash
-  npm install -g wrangler
-  ```
+- **Wrangler CLI**（可选）：通过 `npm run wrangler -- <command>` 使用仓库固定版本，用于本地测试 Cloudflare Worker
 
 ### 安装依赖
 
@@ -45,23 +42,24 @@ npm install
    ```
    这会使用 Tailwind CSS CLI 生成 `css/output.css`。
 
-2. **启动前端本地服务器**：
+2. **启动 Worker 本地开发**（使用搜索功能时需要）：
+   ```bash
+   cp .dev.vars.example .dev.vars
+   npm run wrangler -- dev
+   ```
+   Worker 将在本地运行，默认地址为 `http://localhost:8787`。
+
+3. **在另一个终端启动前端本地服务器**：
    ```bash
    python3 -m http.server 8080
    ```
-   然后打开 `http://localhost:8080` 查看效果。
-
-3. **启动 Worker 本地开发**（可选，需要测试后端接口时）：
-   ```bash
-   wrangler dev
-   ```
-   Worker 将在本地运行，默认地址为 `http://localhost:8787`。
+   然后打开 `http://localhost:8080` 查看效果；若只检查静态布局，可以不启动 Worker。
 
 4. **运行测试**：
    ```bash
    npm test
    ```
-   这会依次执行 lint 和 build，确保代码质量。
+   这会依次执行 Node.js 测试、lint 和生产构建。
 
 ## 代码风格规范
 
@@ -80,7 +78,7 @@ npm run lint
 ## Pull Request 流程
 
 1. **每个 PR 只解决一个问题**：避免在一个 PR 中混合多个不相关的改动。
-2. **确保测试通过**：提交前运行 `npm test`，lint 和 build 必须全部通过。
+2. **确保测试通过**：提交前运行 `npm test`，Node.js 测试、lint 和 build 必须全部通过。
 3. **更新相关文档**：如果改动涉及使用方式或配置，请同步更新 README.md 或其他相关文档。
 4. **清晰的提交信息**：使用简洁明了的提交信息，描述"做了什么"和"为什么"。
 5. **关联 Issue**：如果 PR 解决了某个 Issue，请在描述中引用（如 `Fixes #123`）。
@@ -105,13 +103,13 @@ npm run lint
 
 以下是我们特别欢迎贡献的方向：
 
-### 1. 测试框架
+### 1. 测试覆盖
 
-目前项目仅通过 `npm run lint && npm run build` 做基础检查，缺少单元测试和集成测试。我们欢迎：
+项目使用 Node.js 内置测试运行器覆盖 API 客户端、推荐算法、夸克链接处理和 Worker 路由。我们欢迎继续补充边界场景与浏览器端集成测试：
 
-- 为 `js/scorer.js` 的推荐算法编写单元测试
-- 为 Worker API 编写集成测试
-- 引入合适的测试框架（如 Vitest、Jest）
+- 扩充 `js/scorer.js` 的推荐算法边界测试
+- 扩充 Worker API 的上游失败与缓存场景测试
+- 添加关键用户路径的浏览器端自动化测试
 
 ### 2. 豆瓣爬虫稳定性
 
@@ -158,9 +156,11 @@ iplay/
 ├── js/
 │   ├── main.js         # 前端主逻辑
 │   ├── api.js          # API 客户端
+│   ├── quark.js        # 夸克复制文本格式化
 │   └── scorer.js       # 推荐算法
 ├── worker/
 │   └── _worker.js      # Cloudflare Worker 后端
+├── tests/              # Node.js 测试
 ├── package.json        # npm 配置
 ├── wrangler.toml       # Worker 部署配置
 └── eslint.config.mjs   # ESLint 配置

@@ -1,0 +1,9 @@
+# Configure one TMDB credential for local Worker development.
+TMDB_ACCESS_TOKEN=your_tmdb_v4_read_access_token
+# TMDB_API_KEY=your_tmdb_v3_api_key
+
+# Optional enrichment provider.
+# OMDB_API_KEY=your_omdb_api_key
+
+# Optional comma-separated frontend origins beyond the built-in local origins.
+# CORS_ALLOWED_ORIGINS=https://yourname.github.io

@@ -10,15 +10,15 @@
 
 ### 依赖要求
 
-- Node.js 18+
+- Node.js >= 20.19.0（推荐 22 LTS）
 - npm 9+
 - Cloudflare 账号（调试 Worker 时需要）
-- Wrangler CLI（建议通过 `npx wrangler` 使用）
+- Wrangler CLI（建议通过 `npm run wrangler -- <command>` 使用仓库固定版本）
 
 ### 首次准备
 
 ```bash
-cd /Users/yiwei/iplay
+cd iplay
 npm install
 npm run build
 ```
@@ -32,12 +32,14 @@ npm run build
 | 路径 | 作用 |
 |------|------|
 | `index.html` | 单页应用入口，负责承载整体布局与资源引用 |
-| `js/main.js` | 前端主逻辑：搜索、渲染、弹窗、偏好设置 |
+| `js/main.js` | 前端主逻辑：搜索、渐进渲染、资源状态、偏好设置 |
 | `js/api.js` | Worker API 客户端封装 |
+| `js/quark.js` | 夸克链接与提取码复制文本格式化 |
 | `js/scorer.js` | 推荐评分逻辑 |
 | `css/input.css` | Tailwind CSS 输入文件 |
 | `css/output.css` | 构建后的样式文件 |
 | `worker/_worker.js` | Cloudflare Worker 代理与聚合层 |
+| `tests/` | Node.js 内置测试运行器测试 |
 | `wrangler.toml` | Worker 配置 |
 
 ---
@@ -61,9 +63,9 @@ python3 -m http.server 8080
 
 ### 前端调试重点
 
-- 搜索输入是否会触发防抖请求
-- 结果列表是否正确区分电影/剧集
-- 详情弹窗是否逐步填充内容
+- 新搜索是否会取消仍在进行的旧请求
+- 最佳匹配是否正确区分电影/剧集
+- 详情区域是否先展示 TMDB 核心数据，再逐步填充补充来源
 - 推荐分数是否随类型偏好变化
 - API 请求失败时是否仍能保持页面可用
 
@@ -74,7 +76,7 @@ python3 -m http.server 8080
 ### 启动本地 Worker
 
 ```bash
-npx wrangler dev
+npm run wrangler -- dev
 ```
 
 Worker 会读取本地 `.dev.vars` 或 Cloudflare 账号里的密钥配置。
@@ -92,7 +94,7 @@ Worker 会读取本地 `.dev.vars` 或 Cloudflare 账号里的密钥配置。
 ### 修改 Worker 后的验证
 
 ```bash
-npx wrangler dev
+npm run wrangler -- dev
 ```
 
 在本地访问 Worker 提供的接口，确认返回 JSON 结构和 CORS 头都正确。
@@ -107,16 +109,16 @@ npx wrangler dev
 |------|------|
 | `npm run build` | 构建 Tailwind CSS 输出文件 |
 | `npm run lint` | 运行 ESLint |
-| `npm test` | 先 lint，再 build |
+| `npm run test:coverage` | 运行 Node.js 测试并生成覆盖率报告 |
+| `npm test` | 依次运行 Node.js 测试、lint 和 build |
 
 ### 推荐顺序
 
 ```bash
-npm run lint
-npm run build
+npm test
 ```
 
-如果两步都通过，再继续提交或部署。
+测试、lint 和生产构建全部通过后，再继续提交或部署。
 
 ---
 
@@ -134,6 +136,7 @@ npm run build
 ### 1. 网络请求异常
 
 先检查 `js/api.js` 中的 `API_BASE` 是否指向你的 Worker 域名。
+如果前端使用自定义域名，还要把完整 Origin 加入 Worker 的 `CORS_ALLOWED_ORIGINS`。
 
 ### 2. 样式丢失
 
@@ -169,9 +172,8 @@ npm run build
 
 ### 建议的验证清单
 
-- `npm run lint`
-- `npm run build`
-- `npx wrangler dev`
+- `npm test`
+- `npm run wrangler -- dev`
 - 浏览器手动验证关键路径
 
 ---

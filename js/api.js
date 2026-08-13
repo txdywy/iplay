@@ -25,16 +25,30 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
             signal: controller.signal
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+        let data;
+        try {
+            data = await response.json();
+        } catch (error) {
+            if (!response.ok) {
+                const httpError = new Error(`HTTP error! status: ${response.status}`);
+                httpError.status = response.status;
+                throw httpError;
+            }
+            throw error;
         }
-        return await response.json();
+
+        if (!response.ok) {
+            const error = new Error(data && data.error ? data.error : `HTTP error! status: ${response.status}`);
+            error.status = response.status;
+            throw error;
+        }
+        return data;
     } catch (error) {
         if (error.name === 'AbortError') {
             if (options.signal && options.signal.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
             }
-            throw new Error(`Request timeout: ${url}`, { cause: error });
+            throw new Error('Request timed out. Please try again.', { cause: error });
         }
         throw error;
     } finally {
@@ -50,7 +64,7 @@ export const TmdbAPI = {
         return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}`, options);
     },
     async getDetail(id, type, options = {}) {
-        let url = `${API_BASE}/api/tmdb/detail?id=${id}`;
+        let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
         if (type) url += `&type=${encodeURIComponent(type)}`;
         return fetchWithTimeout(url, options);
     }
@@ -82,13 +96,7 @@ export const WikiAPI = {
 
 export const ResourceAPI = {
     async search(query, options = {}) {
-        try {
-            return await fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, 20000);
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            console.debug("Resource fetch failed:", error);
-            return { resources: [], wpzysResources: [], quarkUrls: [] };
-        }
+        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, 20000);
     }
 };
 
@@ -99,7 +107,7 @@ export const PosterAPI = {
     async getPoster(title, year, options = {}) {
         if (!title) return null;
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${year || ''}`, options);
+            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Poster fetch failed:", e);

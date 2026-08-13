@@ -10,23 +10,43 @@ const ALLOWED_ORIGINS = [
     "https://iplay.hackx64.eu.org",
     "http://localhost:8787",
     "http://127.0.0.1:8787",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
 ];
 
-function getCorsHeaders(request) {
-    const origin = request.headers.get("Origin");
-    if (origin && ALLOWED_ORIGINS.includes(origin)) {
-        return { "Access-Control-Allow-Origin": origin };
+function getAllowedOrigins(env) {
+    const origins = new Set(ALLOWED_ORIGINS);
+    const configured = env && typeof env.CORS_ALLOWED_ORIGINS === "string"
+        ? env.CORS_ALLOWED_ORIGINS.split(",").slice(0, 20)
+        : [];
+
+    for (const value of configured) {
+        try {
+            const url = new URL(value.trim());
+            if (url.protocol === "https:" || url.protocol === "http:") origins.add(url.origin);
+        } catch {
+            // Ignore malformed configuration entries instead of weakening CORS.
+        }
     }
-    return { "Access-Control-Allow-Origin": ALLOWED_ORIGINS[0] };
+    return origins;
 }
 
-function withCors(response, request) {
+function getCorsHeaders(request, env) {
+    const origin = request.headers.get("Origin");
+    if (origin && getAllowedOrigins(env).has(origin)) {
+        return { "Access-Control-Allow-Origin": origin };
+    }
+    return {};
+}
+
+function withCors(response, request, env) {
     const headers = new Headers(response.headers);
-    const corsHeaders = getCorsHeaders(request);
+    const corsHeaders = getCorsHeaders(request, env);
     for (const [key, value] of Object.entries(corsHeaders)) {
         headers.set(key, value);
     }
+    headers.append("Vary", "Origin");
     return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -39,7 +59,8 @@ export default {
         if (request.method === "OPTIONS") {
             return new Response(null, {
                 headers: {
-                    ...getCorsHeaders(request),
+                    ...getCorsHeaders(request, env),
+                    "Vary": "Origin",
                     "Access-Control-Allow-Methods": "GET, OPTIONS",
                     "Access-Control-Allow-Headers": "Content-Type",
                     "Access-Control-Max-Age": "86400",
@@ -47,16 +68,23 @@ export default {
             });
         }
 
+        if (request.method !== "GET") {
+            return withCors(new Response("Method Not Allowed", {
+                status: 405,
+                headers: { "Allow": "GET, OPTIONS" }
+            }), request, env);
+        }
+
         const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
         if (!checkRateLimit(clientIp)) {
-            return withCors(jsonResponse({ error: "Rate limit exceeded. Try again later." }, 429), request);
+            return withCors(jsonResponse({ error: "Rate limit exceeded. Try again later." }, 429), request, env);
         }
 
         const url = new URL(request.url);
         const path = url.pathname.replace(/\/+$/, "") || url.pathname;
 
         if (path === "/api/tmdb/search") {
-            return withCors(await handleTmdbSearch(url.searchParams.get("q"), env, ctx), request);
+            return withCors(await handleTmdbSearch(url.searchParams.get("q"), env, ctx), request, env);
         }
 
         if (path === "/api/tmdb/detail") {
@@ -65,38 +93,38 @@ export default {
                 url.searchParams.get("type"),
                 env,
                 ctx
-            ), request);
+            ), request, env);
         }
 
         if (path === "/api/douban/search") {
-            return withCors(await handleDoubanSearch(url.searchParams.get("q"), ctx), request);
+            return withCors(await handleDoubanSearch(url.searchParams.get("q"), ctx), request, env);
         }
 
         if (path === "/api/douban/detail") {
-            return withCors(await handleDoubanDetail(url.searchParams.get("id"), ctx), request);
+            return withCors(await handleDoubanDetail(url.searchParams.get("id"), ctx), request, env);
         }
 
         if (path === "/api/resource") {
-            return withCors(await handleResourceSearch(url.searchParams.get("q"), ctx), request);
+            return withCors(await handleResourceSearch(url.searchParams.get("q"), ctx), request, env);
         }
 
         if (path === "/api/omdb") {
-            const imdbId = url.searchParams.get("imdb");
+            const imdbId = url.searchParams.get("imdb") || url.searchParams.get("i");
             if (imdbId) {
-                return withCors(await handleOmdbById(imdbId, env, ctx), request);
+                return withCors(await handleOmdbById(imdbId, env, ctx), request, env);
             }
-            return withCors(await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request);
+            return withCors(await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request, env);
         }
 
         if (path === "/api/poster") {
-            return withCors(await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request);
+            return withCors(await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request, env);
         }
 
         if (path === "/api/wiki/zh") {
-            return withCors(await handleWikiZh(url.searchParams.get("q"), ctx), request);
+            return withCors(await handleWikiZh(url.searchParams.get("q"), ctx), request, env);
         }
 
-        return withCors(new Response("Not Found", { status: 404 }), request);
+        return withCors(new Response("Not Found", { status: 404 }), request, env);
     },
 
     async scheduled(event, env, ctx) {
@@ -112,6 +140,110 @@ function jsonResponse(data, status = 200) {
             "Content-Type": "application/json;charset=UTF-8"
         }
     });
+}
+
+const MAX_QUERY_LENGTH = 100;
+
+function validateRequiredText(value, label, maxLength = MAX_QUERY_LENGTH) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text) return { error: jsonResponse({ error: `Missing ${label}` }, 400) };
+    if ([...text].length > maxLength) {
+        return { error: jsonResponse({ error: `${label} is too long` }, 400) };
+    }
+    return { value: text };
+}
+
+function validatePositiveInteger(value, label = "id") {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text) return { error: jsonResponse({ error: `Missing ${label}` }, 400) };
+    if (!/^[1-9]\d{0,11}$/.test(text)) {
+        return { error: jsonResponse({ error: `Invalid ${label}` }, 400) };
+    }
+    return { value: text };
+}
+
+function validateImdbId(value) {
+    const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!text) return { error: jsonResponse({ error: "Missing imdb id" }, 400) };
+    if (!/^tt\d{5,12}$/.test(text)) {
+        return { error: jsonResponse({ error: "Invalid imdb id" }, 400) };
+    }
+    return { value: text };
+}
+
+function validateMediaType(value) {
+    const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!text) return { value: "movie" };
+    if (text !== "movie" && text !== "tv") {
+        return { error: jsonResponse({ error: "Invalid media type" }, 400) };
+    }
+    return { value: text };
+}
+
+function validateOptionalYear(value) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text) return { value: "" };
+    if (!/^\d{4}$/.test(text)) {
+        return { error: jsonResponse({ error: "Invalid year" }, 400) };
+    }
+    return { value: text };
+}
+
+function createHttpError(message, status = 500) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
+
+const UPSTREAM_TIMEOUT_MS = 8000;
+const RESOURCE_TIMEOUT_MS = 5000;
+const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024;
+
+async function fetchUpstream(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error.name === "AbortError") {
+            throw createHttpError("Upstream request timed out", 504);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+async function readTextWithLimit(response, maxBytes = MAX_UPSTREAM_BODY_BYTES) {
+    const contentLength = Number.parseInt(response.headers.get("content-length") || "", 10);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        throw createHttpError("Upstream response is too large", 502);
+    }
+
+    if (!response.body) return "";
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let totalSize = 0;
+    let text = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalSize += value.byteLength;
+        if (totalSize > maxBytes) {
+            await reader.cancel();
+            throw createHttpError("Upstream response is too large", 502);
+        }
+        text += decoder.decode(value, { stream: true });
+    }
+
+    return text + decoder.decode();
+}
+
+async function readJsonWithLimit(response, maxBytes = MAX_UPSTREAM_BODY_BYTES) {
+    return JSON.parse(await readTextWithLimit(response, maxBytes));
 }
 
 async function serveCachedJson(cacheKey) {
@@ -151,13 +283,23 @@ function parseYear(date) {
 const _rateLimitMap = new Map();
 const RATE_LIMIT = 60;
 const RATE_WINDOW = 60000;
+const RATE_LIMIT_MAX_ENTRIES = 10000;
+const RATE_LIMIT_CLEANUP_BATCH = 100;
 
 function checkRateLimit(ip) {
     const now = Date.now();
 
-    if (_rateLimitMap.size > 10000) {
-        for (const [k, v] of _rateLimitMap) {
-            if (now - v.start > RATE_WINDOW) _rateLimitMap.delete(k);
+    if (_rateLimitMap.size >= RATE_LIMIT_MAX_ENTRIES && !_rateLimitMap.has(ip)) {
+        let inspected = 0;
+        for (const [key, value] of _rateLimitMap) {
+            if (now - value.start > RATE_WINDOW) _rateLimitMap.delete(key);
+            inspected += 1;
+            if (inspected >= RATE_LIMIT_CLEANUP_BATCH) break;
+        }
+
+        if (_rateLimitMap.size >= RATE_LIMIT_MAX_ENTRIES) {
+            const oldestKey = _rateLimitMap.keys().next().value;
+            if (oldestKey !== undefined) _rateLimitMap.delete(oldestKey);
         }
     }
 
@@ -176,18 +318,22 @@ async function fetchOmdbWithYearFallback(title, year, env) {
     let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`;
     if (year) url += `&y=${year}`;
 
-    const res = await fetch(url);
-    if (res.ok) {
-        const data = await res.json();
-        if (data.Response === "True") return data;
+    const res = await fetchUpstream(url);
+    if (!res.ok) {
+        throw createHttpError(`OMDb rejected with status ${res.status}`, res.status);
     }
 
+    const data = await readJsonWithLimit(res);
+    if (data.Response === "True") return data;
+
     if (year) {
-        const fallbackRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`);
-        if (fallbackRes.ok) {
-            const fallbackData = await fallbackRes.json();
-            if (fallbackData.Response === "True") return fallbackData;
+        const fallbackRes = await fetchUpstream(`https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`);
+        if (!fallbackRes.ok) {
+            throw createHttpError(`OMDb rejected with status ${fallbackRes.status}`, fallbackRes.status);
         }
+
+        const fallbackData = await readJsonWithLimit(fallbackRes);
+        if (fallbackData.Response === "True") return fallbackData;
     }
     return null;
 }
@@ -256,10 +402,17 @@ function normalizeTmdbDetail(data, type) {
     };
 }
 
+function isValidTmdbPayload(path, data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+    if (path === "/search/multi") return Array.isArray(data.results);
+    if (/^\/(?:movie|tv)\/\d+$/.test(path)) return Number.isInteger(Number(data.id));
+    return true;
+}
+
 async function fetchTmdbJson(path, params, env, ctx, options = {}) {
     const auth = getTmdbAuth(env);
     if (!auth) {
-        throw new Error("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY");
+        throw createHttpError("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY", 503);
     }
 
     const url = new URL(`${TMDB_BASE}${path}`);
@@ -272,7 +425,8 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
     const cacheKey = new Request(url.toString());
     const cache = caches.default;
 
-    let response = options.refreshCache ? null : await cache.match(cacheKey);
+    const cachedResponse = options.refreshCache ? null : await cache.match(cacheKey);
+    let response = cachedResponse;
 
     if (!response) {
         const headers = {
@@ -285,24 +439,43 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
             url.searchParams.set("api_key", auth.value);
         }
 
-        response = await fetch(url.toString(), { headers });
-        if (response.ok) {
-            const clonedResponse = response.clone();
-            const newHeaders = new Headers(clonedResponse.headers);
-            newHeaders.set('Cache-Control', 'public, max-age=86400');
-            const cacheResponse = new Response(clonedResponse.body, {
-                status: clonedResponse.status,
-                statusText: clonedResponse.statusText,
-                headers: newHeaders
-            });
-            if (ctx) ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-        }
+        response = await fetchUpstream(url.toString(), { headers });
     }
 
-    const data = await response.json();
+    let data;
+    try {
+        data = await readJsonWithLimit(response);
+    } catch (error) {
+        if (cachedResponse && typeof cache.delete === "function") {
+            await cache.delete(cacheKey);
+            return fetchTmdbJson(path, params, env, ctx, { ...options, refreshCache: true });
+        }
+        if (error.status) throw error;
+        throw createHttpError("TMDB returned invalid JSON", 502);
+    }
+
     if (!response.ok) {
         const message = data && data.status_message ? data.status_message : `TMDB HTTP ${response.status}`;
-        throw new Error(message);
+        throw createHttpError(message, response.status);
+    }
+
+    if (!isValidTmdbPayload(path, data)) {
+        if (cachedResponse && typeof cache.delete === "function") {
+            await cache.delete(cacheKey);
+            return fetchTmdbJson(path, params, env, ctx, { ...options, refreshCache: true });
+        }
+        throw createHttpError("TMDB returned an invalid response", 502);
+    }
+
+    if (!cachedResponse) {
+        const cacheResponse = new Response(JSON.stringify(data), {
+            status: response.status,
+            headers: {
+                "Content-Type": "application/json;charset=UTF-8",
+                "Cache-Control": "public, max-age=86400"
+            }
+        });
+        if (ctx) ctx.waitUntil(cache.put(cacheKey, cacheResponse));
     }
 
     return data;
@@ -386,7 +559,9 @@ function pickBestTmdbPosterCandidate(items, title, year) {
 }
 
 async function handleTmdbSearch(query, env, ctx) {
-    if (!query) return jsonResponse({ error: "Missing query" }, 400);
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
 
     try {
         let data = await fetchTmdbSearch(query, "zh-CN", env, ctx);
@@ -402,8 +577,9 @@ async function handleTmdbSearch(query, env, ctx) {
         if (data && Array.isArray(data.results)) {
             for (const item of data.results) {
                 if (item.media_type !== "movie" && item.media_type !== "tv") continue;
-                if (seen.has(item.id)) continue;
-                seen.add(item.id);
+                const resultKey = `${item.media_type}:${item.id}`;
+                if (seen.has(resultKey)) continue;
+                seen.add(resultKey);
                 results.push(normalizeTmdbItem(item));
             }
         }
@@ -417,14 +593,20 @@ async function handleTmdbSearch(query, env, ctx) {
         });
     } catch (e) {
         console.error("TMDB search error:", e.message);
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
 async function handleTmdbDetail(id, type, env, ctx) {
-    if (!id) return jsonResponse({ error: "Missing id" }, 400);
+    const idCheck = validatePositiveInteger(id);
+    if (idCheck.error) return idCheck.error;
+    id = idCheck.value;
 
-    const apiType = type === "tv" ? "tv" : "movie";
+    const typeCheck = validateMediaType(type);
+    if (typeCheck.error) return typeCheck.error;
+    type = typeCheck.value;
+
+    const apiType = type;
     const attemptOrder = apiType === "tv" ? ["tv", "movie"] : ["movie", "tv"];
     let lastError = null;
 
@@ -438,10 +620,13 @@ async function handleTmdbDetail(id, type, env, ctx) {
             return jsonResponse(normalizeTmdbDetail(data, candidateType));
         } catch (e) {
             lastError = e;
+            if (e.status !== 404) {
+                return jsonResponse({ error: e.message }, e.status || 502);
+            }
         }
     }
 
-    return jsonResponse({ error: lastError ? lastError.message : "TMDB detail not found" }, 500);
+    return jsonResponse({ error: lastError ? lastError.message : "TMDB detail not found" }, 404);
 }
 
 const DOUBAN_SEARCH_HEADERS = {
@@ -459,14 +644,16 @@ const DOUBAN_DETAIL_HEADERS = {
 };
 
 async function handleDoubanSearch(query, ctx) {
-    if (!query) return jsonResponse({ error: "Missing query" }, 400);
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
 
     const cacheKey = new Request(`https://douban-search-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
-        const res = await fetch(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
+        const res = await fetchUpstream(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
             headers: DOUBAN_SEARCH_HEADERS
         });
 
@@ -474,16 +661,18 @@ async function handleDoubanSearch(query, ctx) {
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
 
-        const data = JSON.parse(await res.text());
+        const data = JSON.parse(await readTextWithLimit(res));
         return cacheJson(ctx, cacheKey, data, 86400);
     } catch (e) {
         console.error("Douban search error:", e.message);
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
 async function handleDoubanDetail(id, ctx) {
-    if (!id) return jsonResponse({ error: "Missing id" }, 400);
+    const idCheck = validatePositiveInteger(id);
+    if (idCheck.error) return idCheck.error;
+    id = idCheck.value;
 
     const cacheKey = new Request(`https://douban-detail-cache.local/?id=${id}`);
     const cached = await serveCachedJson(cacheKey);
@@ -491,7 +680,7 @@ async function handleDoubanDetail(id, ctx) {
 
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
-        const res = await fetch(fetchUrl, {
+        const res = await fetchUpstream(fetchUrl, {
             headers: DOUBAN_DETAIL_HEADERS,
             redirect: "follow"
         });
@@ -541,7 +730,7 @@ async function handleDoubanDetail(id, ctx) {
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
         console.error("Douban detail error:", e.message);
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
@@ -553,6 +742,7 @@ const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://www.wpzys.org";
+const RESOURCE_ALLOWED_ORIGINS = new Set([BY669_BASE, WPZYS_BASE]);
 
 function isValidQuarkPassword(value) {
     return /^[a-z0-9]{2,12}$/i.test(value) && !/^https?$/i.test(value);
@@ -679,10 +869,33 @@ function stripHtml(value) {
 
 function resolveResourceUrl(rawUrl, baseUrl) {
     try {
-        return new URL(decodeHtmlEntities(rawUrl), baseUrl).toString();
+        const url = new URL(decodeHtmlEntities(rawUrl), baseUrl);
+        if (url.protocol !== "https:" || url.username || url.password || !RESOURCE_ALLOWED_ORIGINS.has(url.origin)) {
+            return "";
+        }
+        return url.toString();
     } catch {
-        return rawUrl;
+        return "";
     }
+}
+
+const RESOURCE_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+async function fetchAllowedResource(resourceUrl, options = {}) {
+    let currentUrl = resolveResourceUrl(resourceUrl, BY669_BASE);
+    if (!currentUrl) throw new Error("Blocked untrusted resource URL");
+
+    for (let redirects = 0; redirects <= 3; redirects++) {
+        const response = await fetchUpstream(currentUrl, { ...options, redirect: "manual" }, RESOURCE_TIMEOUT_MS);
+        if (!RESOURCE_REDIRECT_STATUSES.has(response.status)) return response;
+
+        const location = response.headers.get("Location");
+        const nextUrl = location ? resolveResourceUrl(location, currentUrl) : "";
+        if (!nextUrl) throw new Error("Blocked untrusted resource redirect");
+        currentUrl = nextUrl;
+    }
+
+    throw new Error("Too many resource redirects");
 }
 
 function isQuarkResourceText(text) {
@@ -690,62 +903,48 @@ function isQuarkResourceText(text) {
 }
 
 async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`) {
-    try {
-        const res = await fetch(resourceUrl, {
-            headers: {
-                "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": referer
-            },
-            redirect: "follow"
-        });
+    const safeResourceUrl = resolveResourceUrl(resourceUrl, BY669_BASE);
+    if (!safeResourceUrl) throw createHttpError("Blocked untrusted resource URL", 502);
 
-        if (!res.ok) return [];
-
-        const contentLength = res.headers.get("content-length");
-        if (contentLength && parseInt(contentLength, 10) > 2 * 1024 * 1024) return [];
-
-        const reader = res.body.getReader();
-        const chunks = [];
-        let totalSize = 0;
-        const MAX_SIZE = 2 * 1024 * 1024;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            totalSize += value.byteLength;
-            if (totalSize > MAX_SIZE) { reader.cancel(); return []; }
-            chunks.push(value);
+    const res = await fetchAllowedResource(safeResourceUrl, {
+        headers: {
+            "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer": referer
         }
+    });
 
-        const decoder = new TextDecoder();
-        const text = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
-        const quarkEntries = collectQuarkEntries(text);
-
-        return quarkEntries.map(({ url, password }) => ({
-            title: resourceTitle,
-            url,
-            ...(password ? { password } : {}),
-            sourceUrl: resourceUrl,
-            sourceTitle: resourceTitle
-        }));
-    } catch {
-        return [];
+    if (!res.ok) {
+        throw createHttpError(`Resource page rejected with status ${res.status}`, res.status);
     }
+
+    const text = await readTextWithLimit(res);
+    const quarkEntries = collectQuarkEntries(text);
+
+    return quarkEntries.map(({ url, password }) => ({
+        title: resourceTitle,
+        url,
+        ...(password ? { password } : {}),
+        sourceUrl: safeResourceUrl,
+        sourceTitle: resourceTitle
+    }));
 }
 
 async function fetchBy669Resources(query) {
-    const res = await fetch(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
+    const res = await fetchAllowedResource(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
         headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
     });
 
     if (!res.ok) throw new Error(`By669 rejected with status ${res.status}`);
 
-    const data = await res.json();
+    const data = JSON.parse(await readTextWithLimit(res));
+    if (!data || typeof data !== "object" || !Array.isArray(data.data)) {
+        throw createHttpError("By669 returned an invalid response", 502);
+    }
     const resources = [];
 
-    for (const item of data.data || []) {
+    for (const item of data.data.slice(0, 50)) {
         if (!item.attributes || !item.attributes.title) continue;
 
         resources.push({
@@ -770,7 +969,7 @@ function parseWpzysResources(html, query) {
         const block = match[0];
         const rawUrl = match[1];
         const url = resolveResourceUrl(rawUrl, WPZYS_BASE);
-        if (seenUrls.has(url)) continue;
+        if (!url || seenUrls.has(url)) continue;
 
         const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
         const titlePattern = new RegExp(`<a[^>]+href=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
@@ -788,32 +987,45 @@ function parseWpzysResources(html, query) {
             isQuark: true,
             source: "wpzys"
         });
+        if (resources.length >= 50) break;
     }
 
     return resources;
 }
 
+function isWpzysChallengePage(html) {
+    return /(?:id=["']challenge-platform["']|\bcf-chl-|<title>\s*just a moment(?:\.\.\.)?\s*<\/title>|enable javascript and cookies to continue)/i.test(html);
+}
+
 async function fetchWpzysResources(query) {
-    const res = await fetch(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
+    const res = await fetchAllowedResource(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
         headers: {
             "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer": `${WPZYS_BASE}/search.htm`
-        },
-        redirect: "follow"
+        }
     });
 
     if (!res.ok) throw new Error(`WPZYS rejected with status ${res.status}`);
 
-    return parseWpzysResources(await res.text(), query);
+    const html = await readTextWithLimit(res);
+    if (!html.trim()) {
+        throw createHttpError("WPZYS returned an empty response", 502);
+    }
+    if (isWpzysChallengePage(html)) {
+        throw createHttpError("WPZYS returned a challenge page", 502);
+    }
+
+    return parseWpzysResources(html, query);
 }
 
 async function collectQuarkUrlsFromResources(resources) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
-    const batchSize = 5;
-    const maxPages = Math.min(resources.length, 16);
+    const batchSize = 6;
+    const maxPages = Math.min(resources.length, 12);
+    let failedPages = 0;
 
     for (let index = 0; index < maxPages; index += batchSize) {
         const batch = resources.slice(index, Math.min(index + batchSize, maxPages));
@@ -826,7 +1038,10 @@ async function collectQuarkUrlsFromResources(resources) {
         );
 
         for (const group of quarkUrlGroups) {
-            if (group.status !== "fulfilled" || !Array.isArray(group.value)) continue;
+            if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
+                failedPages += 1;
+                continue;
+            }
 
             for (const item of group.value) {
                 if (!item.url) continue;
@@ -841,13 +1056,19 @@ async function collectQuarkUrlsFromResources(resources) {
         }
     }
 
-    return quarkUrls;
+    return {
+        quarkUrls,
+        attemptedPages: maxPages,
+        failedPages
+    };
 }
 
 async function handleResourceSearch(query, ctx) {
-    if (!query) return jsonResponse({ error: "Missing query" }, 400);
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v4-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v5-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -857,14 +1078,29 @@ async function handleResourceSearch(query, ctx) {
             fetchWpzysResources(query)
         ]);
 
+        if (by669Result.status === "rejected" && wpzysResult.status === "rejected") {
+            console.warn("Resource providers unavailable", {
+                by669: by669Result.reason?.message || "unknown error",
+                wpzys: wpzysResult.reason?.message || "unknown error"
+            });
+            return jsonResponse({ error: "Resource providers unavailable" }, 502);
+        }
+
         const resources = by669Result.status === "fulfilled" ? by669Result.value : [];
         const wpzysResources = wpzysResult.status === "fulfilled" ? wpzysResult.value : [];
         const allResources = [...resources, ...wpzysResources];
-        const quarkUrls = await collectQuarkUrlsFromResources(allResources);
+        const detailResult = await collectQuarkUrlsFromResources(allResources);
 
-        return cacheJson(ctx, cacheKey, { resources: allResources, wpzysResources, quarkUrls }, 43200);
+        const isPartial = by669Result.status === "rejected"
+            || wpzysResult.status === "rejected"
+            || detailResult.failedPages > 0;
+        return cacheJson(ctx, cacheKey, {
+            resources,
+            wpzysResources,
+            quarkUrls: detailResult.quarkUrls
+        }, isPartial ? 900 : 43200);
     } catch (e) {
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
@@ -875,36 +1111,46 @@ function requireOmdbApiKey(env) {
 }
 
 async function handleOmdbById(imdbId, env, ctx) {
+    const imdbIdCheck = validateImdbId(imdbId);
+    if (imdbIdCheck.error) return imdbIdCheck.error;
+    imdbId = imdbIdCheck.value;
+
     const keyCheck = requireOmdbApiKey(env);
     if (keyCheck.error) return keyCheck.error;
-    if (!imdbId) return jsonResponse({ error: "Missing imdb id" }, 400);
 
     const cacheKey = new Request(`https://omdb-cache.local/id/${encodeURIComponent(imdbId)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
-        const res = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${keyCheck.key}`);
+        const res = await fetchUpstream(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${keyCheck.key}`);
 
         if (!res.ok) {
             return jsonResponse({ error: `OMDb rejected with status ${res.status}` }, res.status);
         }
 
-        const data = await res.json();
+        const data = await readJsonWithLimit(res);
 
         if (data.Response === "True") {
             return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         }
         return jsonResponse({ error: "OMDb: Not found" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
 async function handleOmdbSearch(title, year, env, ctx) {
+    const titleCheck = validateRequiredText(title, "title");
+    if (titleCheck.error) return titleCheck.error;
+    title = titleCheck.value;
+
+    const yearCheck = validateOptionalYear(year);
+    if (yearCheck.error) return yearCheck.error;
+    year = yearCheck.value;
+
     const keyCheck = requireOmdbApiKey(env);
     if (keyCheck.error) return keyCheck.error;
-    if (!title) return jsonResponse({ error: "Missing title" }, 400);
 
     const cacheKey = new Request(`https://omdb-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
     const cached = await serveCachedJson(cacheKey);
@@ -915,7 +1161,7 @@ async function handleOmdbSearch(title, year, env, ctx) {
         if (data) return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         return jsonResponse({ error: "Not found on OMDb" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
@@ -973,7 +1219,24 @@ function extractOmdbProfile(data) {
 }
 
 async function handlePosterSearch(title, year, env, ctx) {
-    if (!title) return jsonResponse({ error: "Missing title" }, 400);
+    const titleCheck = validateRequiredText(title, "title");
+    if (titleCheck.error) return titleCheck.error;
+    title = titleCheck.value;
+
+    const yearCheck = validateOptionalYear(year);
+    if (yearCheck.error) return yearCheck.error;
+    year = yearCheck.value;
+
+    const hasTmdb = Boolean(getTmdbAuth(env));
+    const hasOmdb = Boolean(getOmdbApiKey(env));
+    if (!hasTmdb && !hasOmdb) {
+        return jsonResponse({ error: "Poster providers are not configured" }, 503);
+    }
+
+    const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
+    const cacheKey = new Request(`https://poster-v1-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) return cached;
 
     try {
         const [tmdbResult, omdbResult] = await Promise.allSettled([
@@ -983,70 +1246,80 @@ async function handlePosterSearch(title, year, env, ctx) {
 
         const tmdbPoster = tmdbResult.status === "fulfilled" ? tmdbResult.value : null;
         const omdbProfile = omdbResult.status === "fulfilled" ? omdbResult.value : null;
+        const isPartial = (hasTmdb && tmdbResult.status === "rejected")
+            || (hasOmdb && omdbResult.status === "rejected");
+        const sourceFailures = [
+            hasTmdb && tmdbResult.status === "rejected" ? tmdbResult.reason : null,
+            hasOmdb && omdbResult.status === "rejected" ? omdbResult.reason : null
+        ].filter(Boolean);
+        const cacheMaxAge = isPartial ? 900 : 86400;
 
         if (tmdbPoster) {
-            return jsonResponse({
+            return cacheJson(ctx, cacheKey, {
                 ...tmdbPoster,
                 omdb: omdbProfile
-            });
+            }, cacheMaxAge);
         }
 
-        if (omdbProfile) return jsonResponse(omdbProfile);
+        if (omdbProfile) return cacheJson(ctx, cacheKey, omdbProfile, cacheMaxAge);
 
-        const enTitle = await getEnglishTitleFromWiki(title);
-        if (enTitle && enTitle !== title) {
-            const result = await tryOmdbForPoster(enTitle, year, env);
-            if (result) return jsonResponse(result);
+        if (hasOmdb && omdbResult.status === "fulfilled") {
+            const enTitle = await getEnglishTitleFromWiki(title);
+            if (enTitle && enTitle !== title) {
+                const result = await tryOmdbForPoster(enTitle, year, env);
+                if (result) return cacheJson(ctx, cacheKey, result, cacheMaxAge);
+            }
+        }
+
+        if (sourceFailures.length > 0) {
+            const failure = sourceFailures.find(error => error?.status === 504) || sourceFailures[0];
+            return jsonResponse({ error: failure.message }, failure.status || 502);
         }
 
         return jsonResponse({ error: "No poster found" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
 
 async function tryTmdbForPoster(title, year, env, ctx) {
-    try {
-        let searchData = await fetchTmdbJson("/search/multi", {
+    let searchData = await fetchTmdbJson("/search/multi", {
+        query: title,
+        language: "zh-CN",
+        include_adult: "false",
+        page: "1"
+    }, env, ctx);
+
+    let candidates = Array.isArray(searchData.results)
+        ? searchData.results.filter(item => !year || parseYear(item.release_date || item.first_air_date) === String(year))
+        : [];
+    let bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
+
+    if (!bestRaw) {
+        searchData = await fetchTmdbJson("/search/multi", {
             query: title,
-            language: "zh-CN",
+            language: "en-US",
             include_adult: "false",
             page: "1"
         }, env, ctx);
-
-        let candidates = Array.isArray(searchData.results)
+        candidates = Array.isArray(searchData.results)
             ? searchData.results.filter(item => !year || parseYear(item.release_date || item.first_air_date) === String(year))
             : [];
-        let bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
-
-        if (!bestRaw) {
-            searchData = await fetchTmdbJson("/search/multi", {
-                query: title,
-                language: "en-US",
-                include_adult: "false",
-                page: "1"
-            }, env, ctx);
-            candidates = Array.isArray(searchData.results)
-                ? searchData.results.filter(item => !year || parseYear(item.release_date || item.first_air_date) === String(year))
-                : [];
-            bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
-        }
-
-        if (!bestRaw) return null;
-
-        const best = normalizeTmdbItem(bestRaw);
-        return {
-            poster: tmdbImage(bestRaw.poster_path),
-            tmdbRating: best.tmdbRating,
-            tmdbVotes: best.tmdbVotes,
-            rottenTomatoes: null,
-            tmdb: true,
-            tmdbId: best.id,
-            mediaType: best.mediaType
-        };
-    } catch {
-        return null;
+        bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
     }
+
+    if (!bestRaw) return null;
+
+    const best = normalizeTmdbItem(bestRaw);
+    return {
+        poster: tmdbImage(bestRaw.poster_path),
+        tmdbRating: best.tmdbRating,
+        tmdbVotes: best.tmdbVotes,
+        rottenTomatoes: null,
+        tmdb: true,
+        tmdbId: best.id,
+        mediaType: best.mediaType
+    };
 }
 
 async function tryOmdbForPoster(title, year, env) {
@@ -1058,51 +1331,49 @@ async function tryOmdbForPoster(title, year, env) {
 }
 
 async function getEnglishTitleFromWiki(zhTitle) {
-    try {
-        const title = await searchZhWikiTitle(zhTitle);
-        if (!title) return null;
+    const title = await searchZhWikiTitle(zhTitle);
+    if (!title) return null;
 
-        const pageRes = await fetch(
-            `https://zh.wikipedia.org/w/api.php?action=query&prop=langlinks&titles=${encodeURIComponent(title)}&lllang=en&format=json&origin=*`,
-            { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
-        );
-        const pageData = await pageRes.json();
-
-        const pages = pageData.query.pages;
-        const pageId = Object.keys(pages)[0];
-        const langlinks = pages[pageId].langlinks;
-
-        if (langlinks && langlinks.length > 0) {
-            return langlinks[0]["*"];
-        }
-
-        return null;
-    } catch (e) {
-        console.warn("Wiki English title fetch failed:", e);
-        return null;
+    const pageRes = await fetchUpstream(
+        `https://zh.wikipedia.org/w/api.php?action=query&prop=langlinks&titles=${encodeURIComponent(title)}&lllang=en&format=json&origin=*`,
+        { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
+    );
+    if (!pageRes.ok) {
+        throw createHttpError(`Wiki langlinks rejected with status ${pageRes.status}`, pageRes.status);
     }
+
+    const pageData = await readJsonWithLimit(pageRes);
+    const pages = pageData?.query?.pages;
+    const page = pages && typeof pages === "object" ? Object.values(pages)[0] : null;
+    const langlinks = Array.isArray(page?.langlinks) ? page.langlinks : [];
+    return langlinks.length > 0 ? langlinks[0]["*"] || null : null;
 }
 
 async function searchZhWikiTitle(query) {
-    const searchRes = await fetch(
+    const searchRes = await fetchUpstream(
         `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
         { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
     );
-    const searchData = await searchRes.json();
+    if (!searchRes.ok) {
+        throw createHttpError(`Wiki search rejected with status ${searchRes.status}`, searchRes.status);
+    }
+    const searchData = await readJsonWithLimit(searchRes);
 
-    if (!searchData.query || !searchData.query.search.length) return null;
+    if (!Array.isArray(searchData?.query?.search) || !searchData.query.search.length) return null;
     return searchData.query.search[0].title;
 }
 
 async function handleWikiZh(query, ctx) {
-    if (!query) return jsonResponse({ error: "Missing query" }, 400);
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
 
     const cacheKey = new Request(`https://wiki-zh-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
-        const searchRes = await fetch(
+        const searchRes = await fetchUpstream(
             `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
             { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
@@ -1111,7 +1382,7 @@ async function handleWikiZh(query, ctx) {
             return jsonResponse({ error: `Wiki search failed: ${searchRes.status}` }, searchRes.status);
         }
 
-        const searchData = await searchRes.json();
+        const searchData = await readJsonWithLimit(searchRes);
 
         if (!searchData.query || !searchData.query.search || !searchData.query.search.length) {
             return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
@@ -1119,7 +1390,7 @@ async function handleWikiZh(query, ctx) {
 
         const title = searchData.query.search[0].title;
 
-        const summaryRes = await fetch(
+        const summaryRes = await fetchUpstream(
             `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
             { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } }
         );
@@ -1128,7 +1399,7 @@ async function handleWikiZh(query, ctx) {
              return jsonResponse({ error: `Wiki summary failed: ${summaryRes.status}` }, summaryRes.status);
         }
 
-        const summaryData = await summaryRes.json();
+        const summaryData = await readJsonWithLimit(summaryRes);
 
         const result = {
             title: summaryData.title,
@@ -1138,6 +1409,6 @@ async function handleWikiZh(query, ctx) {
 
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
-        return jsonResponse({ error: e.message }, 500);
+        return jsonResponse({ error: e.message }, e.status || 502);
     }
 }

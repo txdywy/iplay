@@ -23,7 +23,7 @@ https://iplayw.hackx64.eu.org
 | 数据源 | 认证方式 | 配置来源 |
 |--------|----------|----------|
 | TMDB | Bearer Token 或 API Key | `env.TMDB_ACCESS_TOKEN` / `env.TMDB_API_KEY` |
-| OMDb | API Key | `env.OMDB_API_KEY`（兜底值：`80077e97`） |
+| OMDb | API Key | `env.OMDB_API_KEY`（可选功能，无内置 Key） |
 | 豆瓣 / 夸克 / Wikipedia | 无需认证 | — |
 
 > 如果你自行部署 Worker，请在 Cloudflare Dashboard 的 Worker Environment Variables 中配置上述密钥。
@@ -34,8 +34,9 @@ https://iplayw.hackx64.eu.org
 
 - **请求方法**：所有端点仅支持 `GET` 和 `OPTIONS`（CORS 预检）。
 - **响应格式**：统一返回 `application/json; charset=UTF-8`。
-- **CORS**：已全局开启 `Access-Control-Allow-Origin: *`。
-- **超时**：前端默认请求超时为 **8000ms**，支持通过 `AbortController` 取消。
+- **CORS**：默认允许 `https://iplay.hackx64.eu.org`、本地 Wrangler 地址和 `http://localhost:8080` / `http://127.0.0.1:8080`；其他 Origin 通过 `CORS_ALLOWED_ORIGINS` 配置。
+- **超时**：前端默认请求超时为 **8000ms**（资源搜索为 **20000ms**），支持通过 `AbortController` 取消；Worker 上游请求也设置了超时。
+- **参数限制**：搜索词与标题去除首尾空白后最长 100 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
 
 ### 通用错误响应格式
 
@@ -51,6 +52,11 @@ https://iplayw.hackx64.eu.org
 |--------|------|
 | 400 | 缺少必要参数 |
 | 404 | 资源未找到 |
+| 405 | 请求方法不支持 |
+| 429 | 同一客户端超过每分钟 60 次请求 |
+| 502 | 上游服务或所有资源提供方不可用 |
+| 503 | 所需上游功能未配置（例如缺少 `OMDB_API_KEY`） |
+| 504 | 直连上游请求超时；聚合接口会按可用来源返回部分结果或 `502` |
 | 500 | 上游服务异常或内部错误 |
 
 ---
@@ -62,7 +68,7 @@ https://iplayw.hackx64.eu.org
 搜索电影和电视剧，返回 TMDB 多类型搜索结果。
 
 ```
-GET /api/tmdb/search?q={query}&page={page}
+GET /api/tmdb/search?q={query}
 ```
 
 **Query Parameters：**
@@ -70,7 +76,6 @@ GET /api/tmdb/search?q={query}&page={page}
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `q` | string | 是 | 搜索关键词 |
-| `page` | number | 否 | 页码，默认 1 |
 
 **Example Request：**
 
@@ -269,6 +274,14 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
       "isQuark": true
     }
   ],
+  "wpzysResources": [
+    {
+      "title": "流浪地球 4K 夸克资源",
+      "url": "https://www.wpzys.org/thread-12345-1-1.html",
+      "isQuark": true,
+      "source": "wpzys"
+    }
+  ],
   "quarkUrls": [
     {
       "title": "流浪地球 4K HDR 夸克网盘",
@@ -281,7 +294,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** Worker 从 by669.org 搜索讨论帖，提取包含夸克网盘链接的帖子，并进一步抓取帖子详情页获取实际分享链接和相邻的提取码。`password` 为可选字段，来源页没有可识别的提取码时不会返回。最多抓取前 16 个结果，批量并发 5 个请求。
+**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZYS 搜索结果；Worker 再抓取两者的详情页，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。最多抓取前 12 个详情页，每批并发 6 个请求。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存；两者都失败时返回 `502` 且不缓存。
 
 ---
 
@@ -290,7 +303,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 代理 OMDb API，用于获取 IMDb 评分、烂番茄评分和海报等信息。
 
 ```
-GET /api/omdb?i={imdbId}
+GET /api/omdb?imdb={imdbId}
 GET /api/omdb?title={title}&year={year}
 ```
 
@@ -298,14 +311,14 @@ GET /api/omdb?title={title}&year={year}
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `i` | string | 条件必填 | IMDb ID（如 `tt7605074`），与 `title` 二选一 |
+| `imdb` | string | 条件必填 | IMDb ID（如 `tt7605074`），与 `title` 二选一；兼容旧参数 `i` |
 | `title` | string | 条件必填 | 影片英文标题 |
 | `year` | string | 否 | 发行年份 |
 
 **Example Request：**
 
 ```bash
-curl "https://iplayw.hackx64.eu.org/api/omdb?i=tt7605074"
+curl "https://iplayw.hackx64.eu.org/api/omdb?imdb=tt7605074"
 curl "https://iplayw.hackx64.eu.org/api/omdb?title=The+Wandering+Earth&year=2019"
 ```
 
@@ -344,6 +357,8 @@ curl "https://iplayw.hackx64.eu.org/api/omdb?title=The+Wandering+Earth&year=2019
 ### 7. 海报获取
 
 智能海报获取接口：优先从 TMDB 获取高清海报，失败时自动降级到 OMDb。若中文标题在 OMDb 未找到，还会尝试通过中文 Wikipedia 查找英文标题后再搜索 OMDb。
+
+至少需要配置 TMDB 或 OMDb 中的一个来源；两者都未配置时返回 `503`。所有已配置来源健康时聚合结果缓存 24 小时；某个已配置来源临时失败但仍有可用结果时只缓存 15 分钟。若没有可用结果，接口保留上游的 `429`、`5xx` 或 `504` 状态，而不是误报为未找到。
 
 ```
 GET /api/poster?title={title}&year={year}
@@ -440,7 +455,7 @@ curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球"
 
 ## Rate Limits / Caching
 
-Worker 对所有上游 API 响应进行了缓存，前端调用不受上游 rate limit 直接影响。
+Worker 通过缓存减少重复的上游请求，但请求仍受 Worker 自身与上游服务的限流约束。Worker 按客户端 IP 限制为每 60 秒最多 60 个请求；预检请求不计入限流。
 
 | 接口 | 缓存时长 | 缓存键 |
 |------|----------|--------|
@@ -448,9 +463,9 @@ Worker 对所有上游 API 响应进行了缓存，前端调用不受上游 rate
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 12h | `resource-search-cache.local/?q={query}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v5-cache.local/?q={query}` |
 | `/api/omdb` | 24h | `omdb-cache.local/id/{imdbId}` 或 `omdb-cache.local/search/?t={title}&y={year}` |
-| `/api/poster` | 24h（依赖 TMDB/OMDb 子缓存） | — |
+| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v1-cache.local/?title={title}&year={year}&sources={sources}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-cache.local/?q={query}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
@@ -519,13 +534,13 @@ const summary = await WikiAPI.getSummary('流浪地球');
 ```javascript
 import { ResourceAPI } from './api.js';
 
-const { resources, quarkUrls } = await ResourceAPI.search('流浪地球');
-// 失败时返回 { resources: [], quarkUrls: [] }
+const { resources, wpzysResources, quarkUrls } = await ResourceAPI.search('流浪地球');
+// HTTP 或网络失败时会抛出异常
 ```
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `search` | `(query, options = {})` | `{ resources[], quarkUrls[] }` |
+| `search` | `(query, options = {})` | `{ resources[], wpzysResources[], quarkUrls[] }` |
 
 ### `PosterAPI`
 
@@ -567,6 +582,7 @@ Worker 源码位于 `worker/_worker.js`。自行部署时：
 2. 上传 `worker/_worker.js`
 3. 在 Worker Settings > Variables 中添加环境变量：
    - `TMDB_ACCESS_TOKEN`（推荐）或 `TMDB_API_KEY`
-   - `OMDB_API_KEY`（可选，有兜底值）
+   - `OMDB_API_KEY`（可选；无内置 Key，未配置时 OMDb 功能返回 `503`）
+   - `CORS_ALLOWED_ORIGINS`（可选，额外前端 Origin 的逗号分隔列表）
 
 详见 [DEPLOYMENT.md](DEPLOYMENT.md) 和 [CONFIGURATION.md](CONFIGURATION.md)。
