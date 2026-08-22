@@ -68,6 +68,22 @@ The Worker is configured via `wrangler.toml` in the project root.
 name = "iplay"
 main = "worker/_worker.js"
 compatibility_date = "2024-04-23"
+
+[[ratelimits]]
+name = "API_RATE_LIMITER"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "RESOURCE_RATE_LIMITER"
+namespace_id = "1002"
+
+[ratelimits.simple]
+limit = 10
+period = 60
 ```
 
 | Field | Value | Description |
@@ -75,6 +91,10 @@ compatibility_date = "2024-04-23"
 | `name` | `iplay` | The name of the Worker as it appears in the Cloudflare Dashboard. |
 | `main` | `worker/_worker.js` | Entry point for the Worker script. |
 | `compatibility_date` | `2024-04-23` | Cloudflare Workers runtime compatibility date. Determines which runtime APIs are available. |
+| `API_RATE_LIMITER` | `60 / 60s` | Cloudflare Rate Limiting binding for ordinary API routes. The namespace ID is `1001`. |
+| `RESOURCE_RATE_LIMITER` | `10 / 60s` | Cloudflare Rate Limiting binding for `/api/resource`, whose upstream fan-out is more expensive. The namespace ID is `1002`. |
+
+The Worker calls the Cloudflare Rate Limiting bindings when they are available. A process-local limiter remains only as a development/test fallback when bindings are absent. If a configured production binding is malformed or unavailable, requests fail closed with `503` instead of silently falling back to a per-isolate counter. The fallback is not a substitute for the account-wide production counters.
 
 ### Deploying the Worker
 

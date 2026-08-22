@@ -35,7 +35,7 @@ https://iplayw.hackx64.eu.org
 - **请求方法**：所有端点仅支持 `GET` 和 `OPTIONS`（CORS 预检）。
 - **响应格式**：统一返回 `application/json; charset=UTF-8`。
 - **CORS**：默认允许 `https://iplay.hackx64.eu.org`、本地 Wrangler 地址和 `http://localhost:8080` / `http://127.0.0.1:8080`；其他 Origin 通过 `CORS_ALLOWED_ORIGINS` 配置。
-- **超时**：前端默认请求超时为 **8000ms**（资源搜索为 **20000ms**），支持通过 `AbortController` 取消；Worker 上游请求也设置了超时。
+- **超时**：前端普通请求默认超时为 **12000ms**，资源搜索和海报聚合为 **18000ms**，支持通过 `AbortController` 取消；Worker 对可回退的多上游接口设置约 **11000ms** 总预算，对资源和海报聚合设置约 **15000ms** 总预算。
 - **参数限制**：搜索词与标题去除首尾空白后最长 100 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
 
 ### 通用错误响应格式
@@ -53,9 +53,9 @@ https://iplayw.hackx64.eu.org
 | 400 | 缺少必要参数 |
 | 404 | 资源未找到 |
 | 405 | 请求方法不支持 |
-| 429 | 同一客户端超过每分钟 60 次请求 |
+| 429 | 同一客户端超过限流阈值；普通接口为每分钟 60 次，资源搜索为每分钟 10 次；响应包含 `Retry-After: 60` |
 | 502 | 上游服务或所有资源提供方不可用 |
-| 503 | 所需上游功能未配置（例如缺少 `OMDB_API_KEY`） |
+| 503 | 所需上游功能未配置（例如缺少 `OMDB_API_KEY`），或生产限流 binding 不可用 |
 | 504 | 直连上游请求超时；聚合接口会按可用来源返回部分结果或 `502` |
 | 500 | 上游服务异常或内部错误 |
 
@@ -294,7 +294,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZYS 搜索结果；Worker 再抓取两者的详情页，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。最多抓取前 12 个详情页，每批并发 6 个请求。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存；两者都失败时返回 `502` 且不缓存。
+**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZYS 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页每批并发 6 个请求，单页最多提取 25 个链接、整次请求最多返回 100 个链接，并受约 15 秒总预算与单次请求超时约束。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存；两者都失败时返回 `502` 且不缓存。
 
 ---
 
@@ -455,7 +455,7 @@ curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球"
 
 ## Rate Limits / Caching
 
-Worker 通过缓存减少重复的上游请求，但请求仍受 Worker 自身与上游服务的限流约束。Worker 按客户端 IP 限制为每 60 秒最多 60 个请求；预检请求不计入限流。
+Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：普通接口每 60 秒最多 60 个请求，资源搜索每 60 秒最多 10 个请求；未配置 binding 时仅在开发/测试环境回退到进程内计数器，已配置的 production binding 发生故障时会 fail closed 返回 `503`，避免退化为可被分布式绕过的单实例计数。预检请求不计入限流。被限流或限流服务不可用的响应带有 `Retry-After: 60`。
 
 | 接口 | 缓存时长 | 缓存键 |
 |------|----------|--------|
@@ -483,7 +483,7 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 | 配置项 | 值 |
 |--------|-----|
 | `API_BASE` | `https://iplayw.hackx64.eu.org` |
-| 默认超时 | `8000ms` |
+| 默认超时 | `12000ms` |
 
 ### `TmdbAPI`
 

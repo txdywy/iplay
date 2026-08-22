@@ -192,9 +192,9 @@ found?      |
 | **TMDB Handler** | `_worker.js` | Search (`/api/tmdb/search`) and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Caches responses for 24h. |
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **OMDb Handler** | `_worker.js` | Proxy for IMDb/Rotten Tomatoes data (`/api/omdb`). Supports search by title+year or by IMDb ID. Caches for 24h. |
-| **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Complete results cache for 24h; degraded results cache for 15 minutes. |
+| **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Total upstream work is bounded to about 15s; complete results cache for 24h; degraded results cache for 15 minutes. |
 | **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
-| **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating By669 and WPZYS. Keeps provider lists separate, extracts and deduplicates share URLs from up to 12 detail pages in batches of 6, and caches complete results for 12h. |
+| **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating By669 and WPZYS. Keeps provider lists separate, fairly selects up to 12 detail pages across both providers, extracts and deduplicates at most 100 share URLs with bounded page/total work, and caches complete results for 12h. |
 
 ---
 

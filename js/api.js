@@ -5,8 +5,11 @@
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
     : 'https://iplayw.hackx64.eu.org';
+const DEFAULT_TIMEOUT_MS = 12000;
+const RESOURCE_TIMEOUT_MS = 18000;
+const POSTER_TIMEOUT_MS = 18000;
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     let abortListener = null;
@@ -96,7 +99,7 @@ export const WikiAPI = {
 
 export const ResourceAPI = {
     async search(query, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, 20000);
+        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, RESOURCE_TIMEOUT_MS);
     }
 };
 
@@ -107,7 +110,7 @@ export const PosterAPI = {
     async getPoster(title, year, options = {}) {
         if (!title) return null;
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options);
+            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options, POSTER_TIMEOUT_MS);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Poster fetch failed:", e);

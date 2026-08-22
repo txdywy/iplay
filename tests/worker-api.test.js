@@ -67,6 +67,22 @@ test('API routes reject methods other than GET and OPTIONS', async () => {
 
     assert.equal(response.status, 405);
     assert.equal(response.headers.get('allow'), 'GET, OPTIONS');
+    assert.equal(response.headers.get('content-type'), 'application/json;charset=UTF-8');
+    assert.deepEqual(await response.json(), { error: 'Method Not Allowed' });
+});
+
+test('unknown routes return a JSON error response', async () => {
+    const response = await worker.fetch(
+        new Request('https://worker.test/unknown', {
+            headers: { 'cf-connecting-ip': 'test-not-found' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get('content-type'), 'application/json;charset=UTF-8');
+    assert.deepEqual(await response.json(), { error: 'Not Found' });
 });
 
 test('API routes enforce the documented per-IP request limit', async () => {
@@ -82,6 +98,84 @@ test('API routes enforce the documented per-IP request limit', async () => {
     }
 
     assert.equal(response.status, 429);
+});
+
+test('Cloudflare rate limit bindings receive route-scoped keys and return Retry-After', async () => {
+    const keys = [];
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/resource?q=test', {
+            headers: { 'cf-connecting-ip': 'test-cloudflare-rate-limit' }
+        }),
+        {
+            RESOURCE_RATE_LIMITER: {
+                async limit({ key }) {
+                    keys.push(key);
+                    return { success: false };
+                }
+            }
+        },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get('retry-after'), '60');
+    assert.deepEqual(await response.json(), { error: 'Rate limit exceeded. Try again later.' });
+    assert.deepEqual(keys, ['test-cloudflare-rate-limit:resource']);
+});
+
+test('configured rate limit failures fail closed instead of bypassing protection', async t => {
+    muteConsole(t, 'error');
+    const response = await worker.fetch(
+        new Request('https://worker.test/not-found', {
+            headers: { 'cf-connecting-ip': 'test-rate-limit-failure' }
+        }),
+        {
+            API_RATE_LIMITER: {
+                async limit() {
+                    throw new Error('binding unavailable');
+                }
+            }
+        },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('retry-after'), '60');
+    assert.deepEqual(await response.json(), { error: 'Rate limiter unavailable. Try again later.' });
+});
+
+test('resource routes keep their tighter local fallback when only the API binding exists', async t => {
+    muteConsole(t, 'warn');
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    let apiBindingCalls = 0;
+
+    globalThis.caches = {
+        default: { match: async () => null, put: async () => undefined }
+    };
+    globalThis.fetch = async () => { throw new Error('provider unavailable'); };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/resource?q=binding-fallback', {
+            headers: { 'cf-connecting-ip': 'test-resource-binding-fallback' }
+        }),
+        {
+            API_RATE_LIMITER: {
+                async limit() {
+                    apiBindingCalls += 1;
+                    return { success: false };
+                }
+            }
+        },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 502);
+    assert.equal(apiBindingCalls, 0);
 });
 
 test('TMDB search rejects blank queries before calling an upstream service', async () => {
@@ -141,6 +235,78 @@ test('TMDB does not cache a successful HTTP response until its JSON is valid', a
 
     assert.equal(response.status, 502);
     assert.equal(cachePuts.length, 0);
+});
+
+test('cache read failures fall back to the upstream response', async t => {
+    muteConsole(t, 'warn');
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => { throw new Error('cache unavailable'); },
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        page: 1,
+        total_results: 0,
+        results: []
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=cache-fallback', {
+            headers: { 'cf-connecting-ip': 'test-cache-read-fallback' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        page: 1,
+        totalResults: 0,
+        results: []
+    });
+});
+
+test('cache write failures do not fail an otherwise valid API response', async t => {
+    muteConsole(t, 'warn');
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    let cacheWrite;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => { throw new Error('cache write unavailable'); }
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        page: 1,
+        total_results: 0,
+        results: []
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=cache-write-fallback', {
+            headers: { 'cf-connecting-ip': 'test-cache-write-fallback' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil(promise) { cacheWrite = promise; } }
+    );
+
+    assert.equal(response.status, 200);
+    assert.ok(cacheWrite);
+    await assert.doesNotReject(cacheWrite);
 });
 
 test('TMDB does not cache JSON that violates the upstream response contract', async t => {
@@ -348,6 +514,45 @@ test('TMDB upstream requests carry a timeout signal', async t => {
     assert.ok(upstreamSignal instanceof AbortSignal);
 });
 
+test('upstream body stalls are aborted after the response headers arrive', async t => {
+    muteConsole(t, 'error');
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async (_url, { signal }) => new Response(new globalThis.ReadableStream({
+        start(controller) {
+            signal.addEventListener('abort', () => {
+                controller.error(new globalThis.DOMException('The operation was aborted', 'AbortError'));
+            }, { once: true });
+        }
+    }));
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const responsePromise = worker.fetch(
+        new Request('https://worker.test/api/douban/search?q=body-timeout', {
+            headers: { 'cf-connecting-ip': 'test-body-timeout' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+    await new Promise(resolve => globalThis.setImmediate(resolve));
+    t.mock.timers.tick(10000);
+
+    const response = await responsePromise;
+    assert.equal(response.status, 504);
+    assert.deepEqual(await response.json(), { error: 'Upstream request timed out' });
+});
+
 test('resource search reports a provider outage without caching an empty result', async t => {
     muteConsole(t, 'warn');
     const originalCaches = globalThis.caches;
@@ -473,6 +678,102 @@ test('resource search keeps each provider in its own response collection', async
 
     assert.deepEqual(body.resources.map(item => item.source), ['by669']);
     assert.deepEqual(body.wpzysResources.map(item => item.source), ['wpzys']);
+});
+
+test('resource detail fan-out fairly includes the second provider', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const value = String(url);
+        if (value.startsWith('https://by669.org/api/discussions')) {
+            return Response.json({
+                data: Array.from({ length: 13 }, (_, index) => ({
+                    id: `by-${index + 1}`,
+                    attributes: { title: `fair by669 ${index + 1}` }
+                }))
+            });
+        }
+        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+            return new Response('<li data-href="./thread-999.htm"><a href="./thread-999.htm">fair wpzys resource</a> 夸克</li>');
+        }
+        if (value.startsWith('https://by669.org/d/by-')) {
+            return new Response(`https://pan.quark.cn/s/${value.split('/').at(-1)}`);
+        }
+        if (value === 'https://www.wpzys.org/thread-999.htm') {
+            return new Response('https://pan.quark.cn/s/wpzys-fair');
+        }
+        throw new Error(`Unexpected fetch: ${value}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/resource?q=fair', {
+            headers: { 'cf-connecting-ip': 'test-resource-fairness' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.ok(body.quarkUrls.some(item => item.url === 'https://pan.quark.cn/s/wpzys-fair'));
+    assert.ok(body.quarkUrls.length <= 100);
+});
+
+test('resource detail extraction caps links per page and globally', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const value = String(url);
+        if (value.startsWith('https://by669.org/api/discussions')) {
+            return Response.json({
+                data: Array.from({ length: 5 }, (_, index) => ({
+                    id: `cap-${index + 1}`,
+                    attributes: { title: `cap resource ${index + 1}` }
+                }))
+            });
+        }
+        if (value.startsWith('https://www.wpzys.org/search.htm')) return new Response('');
+        if (value.startsWith('https://by669.org/d/cap-')) {
+            const resourceId = value.split('/').at(-1);
+            const pageLinks = Array.from({ length: 30 }, (_, index) => `https://pan.quark.cn/s/${resourceId}-${index + 1}`).join('\n');
+            return new Response(pageLinks);
+        }
+        throw new Error(`Unexpected fetch: ${value}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/resource?q=cap', {
+            headers: { 'cf-connecting-ip': 'test-resource-link-cap' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.quarkUrls.length, 100);
 });
 
 test('resource search never fetches an external URL supplied by forum HTML', async t => {
@@ -660,6 +961,43 @@ test('OMDb rejects malformed IMDb identifiers before calling upstream', async t 
 
     assert.equal(response.status, 400);
     assert.equal(fetchCalls, 0);
+});
+
+test('OMDb ignores malformed optional rating fields instead of crashing', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        Response: 'True',
+        Title: 'Malformed Metadata',
+        Genre: { unexpected: true },
+        imdbRating: 'not-a-number',
+        Ratings: [null, { Source: 'Rotten Tomatoes', Value: 87 }]
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/omdb?title=Malformed%20Metadata', {
+            headers: { 'cf-connecting-ip': 'test-omdb-malformed-fields' }
+        }),
+        { OMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.imdb, null);
+    assert.equal(body.rottenTomatoes, 87);
+    assert.deepEqual(body.genres, []);
 });
 
 test('poster aggregation reuses its cached result for identical requests', async t => {
@@ -962,7 +1300,7 @@ test('Douban reports a real upstream abort timeout as 504', async t => {
         { waitUntil() {} }
     );
     await new Promise(resolve => globalThis.setImmediate(resolve));
-    t.mock.timers.tick(8000);
+    t.mock.timers.tick(10000);
 
     const response = await responsePromise;
     assert.equal(response.status, 504);
@@ -1138,4 +1476,50 @@ test('poster search preserves a Wikipedia fallback upstream status', async t => 
 
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: 'Wiki search rejected with status 503' });
+});
+
+test('scheduled refresh limits title fan-out concurrency', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const titles = Array.from({ length: 12 }, (_, index) => `Title ${index + 1}`).join(',');
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const value = String(url);
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        await new Promise(resolve => globalThis.setImmediate(resolve));
+        activeRequests -= 1;
+
+        if (value.includes('/search/multi')) {
+            return Response.json({
+                results: [{ id: 42, media_type: 'movie', title: 'Scheduled title', release_date: '2026-01-01' }]
+            });
+        }
+        if (value.includes('/movie/42')) {
+            return Response.json({ id: 42, title: 'Scheduled title', credits: {} });
+        }
+        throw new Error(`Unexpected fetch: ${value}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    let refreshPromise;
+    worker.scheduled(
+        { scheduledTime: Date.now() },
+        { TMDB_API_KEY: 'test-key', CRON_REFRESH_TITLES: titles },
+        { waitUntil(promise) { if (!refreshPromise) refreshPromise = promise; } }
+    );
+
+    await refreshPromise;
+    assert.ok(maxActiveRequests <= 4, `expected at most 4 concurrent refreshes, got ${maxActiveRequests}`);
 });

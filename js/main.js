@@ -1,6 +1,7 @@
 import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 import { copyQuarkShare, formatQuarkCopyText } from './quark.js';
+import { formatRating, toFiniteNumber } from './format.js';
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -169,7 +170,7 @@ function appendBadgeList(container, values, emptyLabel) {
 }
 
 function renderPrimaryRating(value, sourceLabel) {
-    const text = value > 0 ? value.toFixed(1) : '-.-';
+    const text = formatRating(value);
     const colorClass = sourceLabel === 'TMDB' ? 'text-accent-gold' : 'text-green-500';
 
     if (els.primaryRating) {
@@ -193,8 +194,9 @@ function renderPrimaryRating(value, sourceLabel) {
 
 function renderBackupDoubanRating(value) {
     if (!els.doubanBackupBox || !els.doubanBackupRating) return;
-    if (value > 0) {
-        els.doubanBackupRating.textContent = value.toFixed(1);
+    const numericValue = toFiniteNumber(value);
+    if (numericValue !== null && numericValue > 0) {
+        els.doubanBackupRating.textContent = formatRating(numericValue);
         els.doubanBackupBox.classList.remove('hidden');
     } else {
         els.doubanBackupBox.classList.add('hidden');
@@ -210,8 +212,9 @@ function formatValue(value, fallback = '—') {
 }
 
 function formatCount(value) {
-    if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return '—';
-    return new Intl.NumberFormat('en-US').format(value);
+    const numericValue = toFiniteNumber(value);
+    if (numericValue === null || numericValue <= 0) return '—';
+    return new Intl.NumberFormat('en-US').format(numericValue);
 }
 
 function appendInfoCards(container, cards) {
@@ -311,6 +314,9 @@ function renderTmdbProfile(viewModel) {
     const writers = Array.isArray(detail.writer) ? detail.writer : [];
     const omdb = vm.omdbProfile && typeof vm.omdbProfile === 'object' ? vm.omdbProfile : null;
     const omdbGenres = Array.isArray(omdb?.genres) ? omdb.genres : [];
+    const tmdbRating = toFiniteNumber(detail.tmdbRating);
+    const omdbRating = toFiniteNumber(omdb?.imdb);
+    const rottenTomatoes = toFiniteNumber(omdb?.rottenTomatoes);
 
     appendInfoCards(els.omdbFields, [
         createInfoCard('Title', vm.title || candidate.title),
@@ -334,13 +340,13 @@ function renderTmdbProfile(viewModel) {
         directors.length > 0 ? createInfoCard('Director', directors, { wide: true }) : null,
         writers.length > 0 ? createInfoCard('Writer', writers, { wide: true }) : null,
         detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
-        detail.tmdbRating ? createInfoCard('TMDB Score', `${detail.tmdbRating.toFixed(1)}/10`) : null
+        tmdbRating !== null && tmdbRating > 0 ? createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`) : null
     ].filter(Boolean));
 
     appendInfoCards(els.omdbFields, omdb ? [
-        omdb.imdb ? createInfoCard('IMDb Rating', `${omdb.imdb.toFixed(1)}/10`) : null,
+        omdbRating !== null && omdbRating > 0 ? createInfoCard('IMDb Rating', `${formatRating(omdbRating)}/10`) : null,
         omdb.imdbVotes ? createInfoCard('IMDb Votes', omdb.imdbVotes) : null,
-        omdb.rottenTomatoes ? createInfoCard('Rotten Tomatoes', `${omdb.rottenTomatoes}%`) : null,
+        rottenTomatoes !== null && rottenTomatoes >= 0 ? createInfoCard('Rotten Tomatoes', `${rottenTomatoes}%`) : null,
         omdb.rated ? createInfoCard('Rated', omdb.rated) : null,
         omdb.released ? createInfoCard('Released', omdb.released) : null,
         omdb.runtime ? createInfoCard('OMDb Runtime', omdb.runtime) : null,
@@ -366,15 +372,15 @@ function renderTmdbProfile(viewModel) {
     if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
 
     renderPrimaryRating(vm.rating, 'TMDB');
-    if (vm.omdbProfile && vm.omdbProfile.imdb && els.imdbRating && els.imdbRatingBox) {
-        els.imdbRating.textContent = vm.omdbProfile.imdb.toFixed(1);
+    if (omdbRating !== null && omdbRating > 0 && els.imdbRating && els.imdbRatingBox) {
+        els.imdbRating.textContent = formatRating(omdbRating);
         els.imdbRating.className = 'text-2xl font-mono font-bold text-accent-gold';
         els.imdbRatingBox.classList.remove('hidden');
     }
 
-    if (vm.omdbProfile && vm.omdbProfile.rottenTomatoes && els.rottenRating && els.rottenRatingBox) {
-        els.rottenRating.textContent = `${vm.omdbProfile.rottenTomatoes}%`;
-        els.rottenRating.className = `text-2xl font-mono font-bold ${vm.omdbProfile.rottenTomatoes >= 75 ? 'text-green-500' : vm.omdbProfile.rottenTomatoes >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
+    if (rottenTomatoes !== null && rottenTomatoes >= 0 && els.rottenRating && els.rottenRatingBox) {
+        els.rottenRating.textContent = `${rottenTomatoes}%`;
+        els.rottenRating.className = `text-2xl font-mono font-bold ${rottenTomatoes >= 75 ? 'text-green-500' : rottenTomatoes >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
         els.rottenRatingBox.classList.remove('hidden');
     }
 }

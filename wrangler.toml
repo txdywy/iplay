@@ -2,6 +2,25 @@ name = "iplay"
 main = "worker/_worker.js"
 compatibility_date = "2024-04-23"
 
+# Cloudflare Rate Limiting bindings provide account-wide counters at the edge.
+# Keep namespace IDs stable; they only need to be unique positive integers in
+# the Cloudflare account where this Worker is deployed.
+[[ratelimits]]
+name = "API_RATE_LIMITER"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "RESOURCE_RATE_LIMITER"
+namespace_id = "1002"
+
+[ratelimits.simple]
+limit = 10
+period = 60
+
 [triggers]
 crons = ["0 */6 * * *"]
 
