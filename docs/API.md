@@ -102,13 +102,30 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
       "tmdbRating": 6.4,
       "tmdbVotes": 1205,
       "popularity": 45.2,
-      "imdbId": null
+      "imdbId": null,
+      "matchScore": 1,
+      "matchConfidence": "high",
+      "matchMethod": "title-exact"
     }
-  ]
+  ],
+  "searchMeta": {
+    "originalQuery": "流浪地球",
+    "normalizedQuery": "流浪地球",
+    "year": null,
+    "season": null,
+    "mediaType": null,
+    "strategy": "direct",
+    "confidence": "high",
+    "matchScore": 1,
+    "matchedBy": "title-exact",
+    "attempts": 1
+  }
 }
 ```
 
-**实现说明：** Worker 会先以 `zh-CN` 语言搜索，若无有效结果则自动降级到 `en-US`。结果按 `tmdbVotes` 降序排列，去重后返回。
+**实现说明：** Worker 会先以 `zh-CN` 进行多类型搜索，并对输入做 Unicode 规范化、季数/年份/发行组噪声拆解、媒体类型识别和标题变体生成。结果按匹配分数优先、评价数和热度次之排序；低置信度时会在总预算约 11 秒、最多 6 次 TMDB 请求内依次尝试 `en-US`、电影/电视剧定向搜索和年份过滤。输入为 IMDb `tt...` 时直接调用 TMDB `/find`；中文查询仍无可靠匹配时，最多从豆瓣建议接口提取 2 个别名再回查 TMDB。低于自动匹配阈值的候选不会返回给前端，避免把热门但不相关的条目误当成结果。
+
+`matchScore` 范围为 `0-1`，综合标题精确/包含/编辑距离、年份和媒体类型；`matchConfidence` 为 `high`、`medium` 或 `low`。`searchMeta.strategy` 可为 `direct`、`normalized`、`typed`、`external-id` 或 `douban-alias`，便于诊断本次命中的路径。
 
 ---
 
@@ -499,7 +516,7 @@ const detail = await TmdbAPI.getDetail(550988, 'movie');
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `search` | `(query, options = {})` | `{ page, totalResults, results[] }` |
+| `search` | `(query, options = {})` | `{ page, totalResults, results[], searchMeta }` |
 | `getDetail` | `(id, type, options = {})` | 详情对象 |
 
 ### `DoubanAPI`

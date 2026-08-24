@@ -189,7 +189,7 @@ found?      |
 | Component | File | Description |
 |-----------|------|-------------|
 | **Worker Entry** | `worker/_worker.js` | Cloudflare Worker fetch handler. Routes requests, validates methods and parameters, applies per-IP rate limiting, and manages origin-aware CORS responses. |
-| **TMDB Handler** | `_worker.js` | Search (`/api/tmdb/search`) and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Caches responses for 24h. |
+| **TMDB Handler** | `_worker.js` | Search (`/api/tmdb/search`) and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Search normalizes query intent, scores candidates, and uses bounded language/type/year/IMDb/alias fallbacks; raw upstream responses are cached for 24h. |
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **OMDb Handler** | `_worker.js` | Proxy for IMDb/Rotten Tomatoes data (`/api/omdb`). Supports search by title+year or by IMDb ID. Caches for 24h. |
 | **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Total upstream work is bounded to about 15s; complete results cache for 24h; degraded results cache for 15 minutes. |
@@ -206,7 +206,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 
 | Method | Path | Query Params | Description |
 |--------|------|--------------|-------------|
-| `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Tries zh-CN first, falls back to en-US. |
+| `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Normalizes title intent, ranks by match confidence, and uses bounded fallback queries. |
 | `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits and external IDs; retries the alternate valid type only after a `404`. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
@@ -235,9 +235,21 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
       "tmdbRating": 8.5,
       "tmdbVotes": 12345,
       "popularity": 123.45,
-      "imdbId": null
+      "imdbId": null,
+      "matchScore": 1,
+      "matchConfidence": "high",
+      "matchMethod": "title-exact"
     }
-  ]
+  ],
+  "searchMeta": {
+    "originalQuery": "...",
+    "normalizedQuery": "...",
+    "strategy": "direct",
+    "confidence": "high",
+    "matchScore": 1,
+    "matchedBy": "title-exact",
+    "attempts": 1
+  }
 }
 ```
 

@@ -223,6 +223,11 @@ const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
 const RESOURCE_MAX_QUARK_URLS_TOTAL = 100;
 const SCHEDULED_REFRESH_CONCURRENCY = 4;
 const MAX_SCHEDULED_REFRESH_TITLES = 20;
+const SEARCH_MAX_ATTEMPTS = 6;
+const SEARCH_MAX_RESULTS = 20;
+const SEARCH_MAX_ALIAS_QUERIES = 2;
+const SEARCH_ACCEPT_SCORE = 0.72;
+const SEARCH_AUTO_MATCH_SCORE = 0.56;
 
 const upstreamResponseMeta = new WeakMap();
 
@@ -402,6 +407,28 @@ function isObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function toSafeTmdbId(value) {
+    if (typeof value !== "number" && typeof value !== "string") return null;
+    if (typeof value === "string") {
+        const text = value.trim();
+        if (!/^\d+$/.test(text)) return null;
+        value = text;
+    }
+    const id = typeof value === "number" ? value : Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function toFiniteMetric(value, fallback = null) {
+    if (value === null || value === undefined || value === "") return fallback;
+    if (typeof value !== "number" && typeof value !== "string") return fallback;
+    const metric = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(metric) ? metric : fallback;
+}
+
+function pickTmdbText(...values) {
+    return values.find(value => typeof value === "string" && value.trim())?.trim() || "";
+}
+
 const _rateLimitMap = new Map();
 const RATE_LIMIT = 60;
 const RATE_WINDOW = 60000;
@@ -494,34 +521,60 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
     return null;
 }
 
-function normalizeTmdbItem(item) {
-    if (!isObject(item)) return null;
+function getTmdbMediaType(item, mediaTypeOverride = null) {
+    const mediaType = mediaTypeOverride || item?.media_type;
+    return mediaType === "movie" || mediaType === "tv" ? mediaType : null;
+}
 
-    const title = item.title || item.name || "";
-    const originalTitle = item.original_title || item.original_name || title;
-    const year = parseYear(item.release_date || item.first_air_date);
+function getTmdbTitle(item) {
+    return pickTmdbText(item?.title, item?.name);
+}
 
-    return {
-        id: item.id,
-        mediaType: item.media_type || (item.title ? "movie" : "tv"),
+function getTmdbOriginalTitle(item) {
+    return pickTmdbText(item?.original_title, item?.original_name, getTmdbTitle(item));
+}
+
+function isValidTmdbSearchItem(item, mediaTypeOverride = null) {
+    return isObject(item)
+        && toSafeTmdbId(item.id) !== null
+        && getTmdbMediaType(item, mediaTypeOverride) !== null
+        && Boolean(getTmdbTitle(item));
+}
+
+function normalizeTmdbItem(item, mediaTypeOverride = null, match = null) {
+    if (!isValidTmdbSearchItem(item, mediaTypeOverride)) return null;
+
+    const title = getTmdbTitle(item);
+    const originalTitle = getTmdbOriginalTitle(item);
+    const normalized = {
+        id: toSafeTmdbId(item.id),
+        mediaType: getTmdbMediaType(item, mediaTypeOverride),
         title,
         originalTitle,
-        year,
+        year: parseYear(typeof item.release_date === "string" ? item.release_date : item.first_air_date),
         poster: tmdbImage(item.poster_path),
         backdrop: tmdbImage(item.backdrop_path, "w780"),
-        summary: item.overview || "",
-        tmdbRating: item.vote_average ?? null,
-        tmdbVotes: item.vote_count ?? 0,
-        popularity: item.popularity ?? 0,
+        summary: typeof item.overview === "string" ? item.overview : "",
+        tmdbRating: toFiniteMetric(item.vote_average),
+        tmdbVotes: Math.max(0, Math.floor(toFiniteMetric(item.vote_count, 0))),
+        popularity: Math.max(0, toFiniteMetric(item.popularity, 0)),
         imdbId: null
     };
+
+    if (match) {
+        normalized.matchScore = Number(match.score.toFixed(3));
+        normalized.matchConfidence = match.confidence;
+        normalized.matchMethod = match.method;
+    }
+
+    return normalized;
 }
 
 function normalizeTmdbDetail(data, type) {
     if (!isObject(data)) return null;
 
-    const title = data.title || data.name || "";
-    const originalTitle = data.original_title || data.original_name || title;
+    const title = pickTmdbText(data.title, data.name);
+    const originalTitle = pickTmdbText(data.original_title, data.original_name, title);
     const year = parseYear(data.release_date || data.first_air_date);
     const credits = isObject(data.credits) ? data.credits : {};
     const cast = Array.isArray(credits.cast)
@@ -540,34 +593,35 @@ function normalizeTmdbDetail(data, type) {
     const cleanWriter = [...writer].filter(Boolean);
 
     return {
-        id: data.id,
+        id: toSafeTmdbId(data.id),
         mediaType: type,
         title,
         originalTitle,
         year,
         poster: tmdbImage(data.poster_path),
         backdrop: tmdbImage(data.backdrop_path, "w780"),
-        summary: data.overview || "",
-        genres: Array.isArray(data.genres) ? data.genres.filter(isObject).map(g => g.name).filter(Boolean) : [],
-        runtime: data.runtime ?? null,
-        status: data.status || null,
-        originalLanguage: data.original_language || null,
-        productionCompanies: Array.isArray(data.production_companies) ? data.production_companies.filter(isObject).map(c => c.name).filter(Boolean) : [],
-        productionCountries: Array.isArray(data.production_countries) ? data.production_countries.filter(isObject).map(c => c.name).filter(Boolean) : [],
+        summary: typeof data.overview === "string" ? data.overview : "",
+        genres: Array.isArray(data.genres) ? data.genres.filter(isObject).map(g => g.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
+        runtime: toFiniteMetric(data.runtime),
+        status: typeof data.status === "string" ? data.status : null,
+        originalLanguage: typeof data.original_language === "string" ? data.original_language : null,
+        productionCompanies: Array.isArray(data.production_companies) ? data.production_companies.filter(isObject).map(c => c.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
+        productionCountries: Array.isArray(data.production_countries) ? data.production_countries.filter(isObject).map(c => c.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
         cast,
         director: cleanDirector,
         writer: cleanWriter,
-        tmdbRating: data.vote_average ?? null,
-        tmdbVotes: data.vote_count ?? 0,
-        imdbId: data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : null,
-        popularity: data.popularity ?? 0
+        tmdbRating: toFiniteMetric(data.vote_average),
+        tmdbVotes: Math.max(0, Math.floor(toFiniteMetric(data.vote_count, 0))),
+        imdbId: typeof data.external_ids?.imdb_id === "string" ? data.external_ids.imdb_id : null,
+        popularity: Math.max(0, toFiniteMetric(data.popularity, 0))
     };
 }
 
 function isValidTmdbPayload(path, data) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return false;
-    if (path === "/search/multi") return Array.isArray(data.results);
-    if (/^\/(?:movie|tv)\/\d+$/.test(path)) return Number.isInteger(Number(data.id));
+    if (/^\/search\/(?:multi|movie|tv)$/.test(path)) return Array.isArray(data.results);
+    if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
+    if (/^\/(?:movie|tv)\/\d+$/.test(path)) return toSafeTmdbId(data.id) !== null;
     return true;
 }
 
@@ -658,6 +712,23 @@ async function fetchTmdbSearch(query, language, env, ctx, options = {}) {
     }, env, ctx, options);
 }
 
+async function fetchTmdbTypedSearch(mediaType, query, language, env, ctx, params = {}, options = {}) {
+    return fetchTmdbJson(`/search/${mediaType}`, {
+        query,
+        language,
+        include_adult: "false",
+        page: "1",
+        ...params
+    }, env, ctx, options);
+}
+
+async function fetchTmdbFindByExternalId(externalId, language, env, ctx, options = {}) {
+    return fetchTmdbJson(`/find/${encodeURIComponent(externalId)}`, {
+        external_source: "imdb_id",
+        language
+    }, env, ctx, options);
+}
+
 async function forEachWithConcurrency(items, concurrency, task) {
     const workerCount = Math.min(Math.max(1, concurrency), items.length);
     let nextIndex = 0;
@@ -722,12 +793,316 @@ function normalizeMatchText(value) {
         .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。/\\]/g, "");
 }
 
+function normalizeSearchInput(value) {
+    return String(value ?? "")
+        .normalize("NFKC")
+        .replace(/[‐‑‒–—]/gu, "-")
+        .replace(/\u00a0/gu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+}
+
+function compactSearchText(value) {
+    return normalizeSearchInput(value)
+        .normalize("NFKD")
+        .replace(/\p{M}/gu, "")
+        .toLowerCase()
+        .replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+function uniqueSearchValues(values, maxLength = 100, maxValues = 6) {
+    const seen = new Set();
+    const result = [];
+    for (const value of values) {
+        const normalized = normalizeSearchInput(value);
+        if (!normalized || [...normalized].length > maxLength || seen.has(normalized)) continue;
+        seen.add(normalized);
+        result.push(normalized);
+        if (result.length >= maxValues) break;
+    }
+    return result;
+}
+
+function parseChineseNumber(value) {
+    if (!value) return null;
+    if (/^\d+$/.test(value)) return Number(value);
+
+    const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+    const units = { 十: 10, 百: 100, 千: 1000 };
+    let total = 0;
+    let current = 0;
+
+    for (const character of value) {
+        if (Object.prototype.hasOwnProperty.call(digits, character)) {
+            current = current * 10 + digits[character];
+            continue;
+        }
+        const unit = units[character];
+        if (!unit) return null;
+        total += (current || 1) * unit;
+        current = 0;
+    }
+
+    const result = total + current;
+    return Number.isSafeInteger(result) && result > 0 ? result : null;
+}
+
+function extractSearchSeason(text) {
+    const match = text.match(/(?:\b(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
+    if (!match) return { value: null, match: "" };
+    const value = parseChineseNumber(match[1] || match[2]);
+    return value && value <= 99 ? { value, match: match[0] } : { value: null, match: "" };
+}
+
+function extractSearchYear(text) {
+    const matches = [...text.matchAll(/(?:^|[^\d])((?:19|20)\d{2})(?=$|[^\d])/gu)];
+    const match = matches.at(-1);
+    if (!match || text.trim() === match[1]) return { value: null, match: "" };
+    return { value: match[1], match: match[0] };
+}
+
+const SEARCH_NOISE_PATTERN = /(?:\b(?:2160p|1080p|720p|480p|4k|8k|web[- .]?(?:dl|rip)|blu?ray|brrip|dvdrip|hdtv|x26[45]|hevc|hdr10?|dolby(?:vision|atmos)?|proper|repack|movie|film|tv|series|show)\b|中字|双语|字幕|全集|完结|无删减|高清|高码|电影|电视剧|剧集|连续剧)/giu;
+
+function hasCjkText(value) {
+    return /\p{Script=Han}/u.test(value);
+}
+
+function cleanSearchTitle(text, seasonMatch, yearMatch) {
+    return normalizeSearchInput(text
+        .replace(seasonMatch, " ")
+        .replace(yearMatch, " ")
+        .replace(SEARCH_NOISE_PATTERN, " ")
+        .replace(/[()[\]{}【】（）]/gu, " ")
+        .replace(/[._]+/gu, " ")
+        .replace(/[-_:]+/gu, " ")
+        .replace(/\s+/gu, " "));
+}
+
+function buildSearchIntent(query) {
+    const originalQuery = normalizeSearchInput(query);
+    const season = extractSearchSeason(originalQuery);
+    const year = extractSearchYear(originalQuery);
+    const mediaType = season.value || /(?:\b(?:tv|series|show)\b|电视剧|剧集|连续剧)/iu.test(originalQuery)
+        ? "tv"
+        : /(?:\b(?:movie|film)\b|电影)/iu.test(originalQuery)
+            ? "movie"
+            : null;
+    const cleanedTitle = cleanSearchTitle(originalQuery, season.match, year.match);
+    const punctuationVariant = normalizeSearchInput(cleanedTitle.replace(/[‐‑‒–—]/gu, " "));
+    const aliases = cleanedTitle
+        .split(/\s*(?:\/|／|\||｜)\s*/u)
+        .map(value => value.trim())
+        .filter(value => [...value].length >= 2);
+    const variants = uniqueSearchValues([cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
+    const matchQueries = uniqueSearchValues([cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
+
+    return {
+        originalQuery,
+        normalizedQuery: variants[0] || originalQuery,
+        variants,
+        matchQueries,
+        year: year.value,
+        season: season.value,
+        mediaType,
+        hasCjk: hasCjkText(originalQuery)
+    };
+}
+
+function extractImdbIdFromQuery(query) {
+    const match = normalizeSearchInput(query).match(/(?:^|[^a-z0-9])(tt\d{5,12})(?:$|[^a-z0-9])/iu);
+    return match ? match[1].toLowerCase() : null;
+}
+
+function editSimilarity(left, right) {
+    const source = Array.from(left);
+    const target = Array.from(right);
+    if (!source.length || !target.length || source.length > 100 || target.length > 100) return 0;
+
+    let previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+    for (let row = 1; row <= source.length; row += 1) {
+        const current = [row];
+        for (let column = 1; column <= target.length; column += 1) {
+            const substitution = previous[column - 1] + (source[row - 1] === target[column - 1] ? 0 : 1);
+            current[column] = Math.min(
+                previous[column] + 1,
+                current[column - 1] + 1,
+                substitution
+            );
+        }
+        previous = current;
+    }
+
+    return Math.max(0, 1 - previous[target.length] / Math.max(source.length, target.length));
+}
+
+function scoreSearchText(query, candidate) {
+    const normalizedQuery = compactSearchText(query);
+    const normalizedCandidate = compactSearchText(candidate);
+    if (!normalizedQuery || !normalizedCandidate) return 0;
+    if (normalizedQuery === normalizedCandidate) return 1;
+    if (normalizedQuery.length < 3 || normalizedCandidate.length < 3) return 0;
+
+    if (normalizedCandidate.includes(normalizedQuery) || normalizedQuery.includes(normalizedCandidate)) {
+        const coverage = Math.min(normalizedQuery.length, normalizedCandidate.length) / Math.max(normalizedQuery.length, normalizedCandidate.length);
+        return Math.min(0.96, 0.72 + coverage * 0.24);
+    }
+
+    return Math.min(0.9, editSimilarity(normalizedQuery, normalizedCandidate) * 0.9);
+}
+
+function getSearchConfidence(score) {
+    if (score >= 0.86) return "high";
+    if (score >= 0.65) return "medium";
+    return "low";
+}
+
+function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct") {
+    if (!isValidTmdbSearchItem(item)) return null;
+
+    const title = getTmdbTitle(item);
+    const originalTitle = getTmdbOriginalTitle(item);
+    let bestScore = 0;
+    let bestMethod = "none";
+    let matchedQuery = intent.normalizedQuery;
+
+    for (const query of intent.matchQueries) {
+        for (const [field, value] of [["title", title], ["originalTitle", originalTitle]]) {
+            const score = scoreSearchText(query, value);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMethod = score === 1 ? `${field}-exact` : score >= 0.72 ? `${field}-contains` : `${field}-fuzzy`;
+                matchedQuery = query;
+            }
+        }
+    }
+
+    const candidateYear = parseYear(typeof item.release_date === "string" ? item.release_date : item.first_air_date);
+    if (intent.year && candidateYear === intent.year) bestScore += 0.1;
+    if (intent.year && candidateYear && candidateYear !== intent.year) bestScore -= 0.08;
+
+    const mediaType = getTmdbMediaType(item);
+    if (intent.mediaType && mediaType && mediaType !== intent.mediaType) return null;
+    if (intent.mediaType && mediaType === intent.mediaType) bestScore += 0.08;
+
+    const score = Math.max(0, Math.min(1, bestScore));
+    return {
+        score,
+        confidence: getSearchConfidence(score),
+        method: bestMethod,
+        matchedQuery,
+        strategy,
+        sourceIndex
+    };
+}
+
+function rankTmdbCandidates(entries, intent) {
+    const unique = new Map();
+    let sourceIndex = 0;
+
+    for (const entry of entries) {
+        if (!isObject(entry)) continue;
+        const item = entry.item;
+        if (!isValidTmdbSearchItem(item, entry.mediaType)) continue;
+        const mediaType = getTmdbMediaType(item, entry.mediaType);
+        const key = `${mediaType}:${toSafeTmdbId(item.id)}`;
+        const normalizedItem = { ...item, media_type: mediaType };
+        const scoringIntent = entry.query && !intent.matchQueries.includes(entry.query)
+            ? {
+                ...intent,
+                matchQueries: uniqueSearchValues([entry.query, ...intent.matchQueries], MAX_QUERY_LENGTH, 8)
+            }
+            : intent;
+        const candidate = {
+            item: normalizedItem,
+            mediaType,
+            strategy: entry.strategy || "direct",
+            sourceIndex,
+            match: entry.match || scoreTmdbCandidate(normalizedItem, scoringIntent, sourceIndex, entry.strategy || "direct")
+        };
+        const existing = unique.get(key);
+        if (!existing || candidate.match?.score > existing.match?.score) unique.set(key, candidate);
+        sourceIndex += 1;
+    }
+
+    return [...unique.values()]
+        .filter(entry => entry.match)
+        .sort((left, right) => (
+            right.match.score - left.match.score
+            || (toFiniteMetric(right.item.vote_count, 0) - toFiniteMetric(left.item.vote_count, 0))
+            || (toFiniteMetric(right.item.popularity, 0) - toFiniteMetric(left.item.popularity, 0))
+            || left.match.sourceIndex - right.match.sourceIndex
+        ));
+}
+
+function getTmdbSearchEntries(data, mediaTypeOverride = null, strategy = "direct", match = null, query = null) {
+    if (!Array.isArray(data?.results)) return [];
+    return data.results.map(item => ({
+        item,
+        mediaType: mediaTypeOverride,
+        strategy,
+        query,
+        ...(match ? { match } : {})
+    }));
+}
+
+function getTmdbFindEntries(data) {
+    const externalMatch = {
+        score: 1,
+        confidence: "high",
+        method: "external-id",
+        strategy: "external-id",
+        sourceIndex: 0
+    };
+    const movieEntries = Array.isArray(data?.movie_results)
+        ? data.movie_results.map(item => ({ item, mediaType: "movie", strategy: "external-id", match: externalMatch }))
+        : [];
+    const tvEntries = Array.isArray(data?.tv_results)
+        ? data.tv_results.map(item => ({ item, mediaType: "tv", strategy: "external-id", match: externalMatch }))
+        : [];
+    return [...movieEntries, ...tvEntries];
+}
+
+function shouldStopSearchFallback(error) {
+    return [401, 403, 429, 503, 504].includes(error?.status);
+}
+
+function getTopSearchMatch(ranked) {
+    return ranked[0]?.match || null;
+}
+
+function buildTmdbSearchResponse(ranked, intent, attempts) {
+    const topMatch = getTopSearchMatch(ranked);
+    const results = ranked
+        .filter(entry => entry.match.score >= SEARCH_AUTO_MATCH_SCORE)
+        .slice(0, SEARCH_MAX_RESULTS)
+        .map(entry => normalizeTmdbItem(entry.item, entry.mediaType, entry.match))
+        .filter(Boolean);
+
+    return jsonResponse({
+        page: 1,
+        totalResults: results.length,
+        results,
+        searchMeta: {
+            originalQuery: intent.originalQuery,
+            normalizedQuery: intent.normalizedQuery,
+            year: intent.year,
+            season: intent.season,
+            mediaType: intent.mediaType,
+            strategy: topMatch?.strategy || "none",
+            confidence: topMatch?.confidence || "none",
+            matchScore: topMatch ? Number(topMatch.score.toFixed(3)) : 0,
+            matchedBy: topMatch?.method || null,
+            attempts
+        }
+    });
+}
+
 function pickBestTmdbPosterCandidate(items, title, year) {
     if (!Array.isArray(items) || items.length === 0) return null;
 
     const normalizedTitle = normalizeMatchText(title);
     const scored = items
-        .filter(item => isObject(item) && (item.media_type === "movie" || item.media_type === "tv") && typeof item.poster_path === "string" && item.poster_path)
+        .filter(item => isValidTmdbSearchItem(item) && typeof item.poster_path === "string" && item.poster_path)
         .map(item => {
             const itemTitle = normalizeMatchText(item.title || item.name);
             const originalTitle = normalizeMatchText(item.original_title || item.original_name);
@@ -754,37 +1129,111 @@ async function handleTmdbSearch(query, env, ctx) {
     query = queryCheck.value;
 
     try {
+        const intent = buildSearchIntent(query);
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        let data = await fetchTmdbSearch(query, "zh-CN", env, ctx, { deadline });
+        const entries = [];
+        const attempted = new Set();
+        let attempts = 0;
+        let successfulAttempt = false;
+        let lastError = null;
+        let stopFallback = false;
 
-        const usableZh = data && Array.isArray(data.results)
-            ? data.results.some(item => isObject(item) && (item.media_type === "movie" || item.media_type === "tv"))
-            : false;
-        if (!usableZh) {
-            data = await fetchTmdbSearch(query, "en-US", env, ctx, { deadline });
-        }
+        const runSearch = async (path, searchQuery, language, params = {}, mediaType = null, strategy = "direct") => {
+            if (attempts >= SEARCH_MAX_ATTEMPTS || isDeadlineExpired(deadline) || stopFallback) {
+                return rankTmdbCandidates(entries, intent);
+            }
 
-        const results = [];
-        const seen = new Set();
+            const attemptKey = JSON.stringify([path, searchQuery, language, params]);
+            if (attempted.has(attemptKey)) return rankTmdbCandidates(entries, intent);
+            attempted.add(attemptKey);
+            attempts += 1;
 
-        if (data && Array.isArray(data.results)) {
-            for (const item of data.results) {
-                if (!isObject(item) || (item.media_type !== "movie" && item.media_type !== "tv")) continue;
-                const resultKey = `${item.media_type}:${item.id}`;
-                if (seen.has(resultKey)) continue;
-                seen.add(resultKey);
-                const normalized = normalizeTmdbItem(item);
-                if (normalized) results.push(normalized);
+            try {
+                const data = path === "/search/multi"
+                    ? await fetchTmdbSearch(searchQuery, language, env, ctx, { deadline })
+                    : await fetchTmdbTypedSearch(path.slice("/search/".length), searchQuery, language, env, ctx, params, { deadline });
+                successfulAttempt = true;
+                entries.push(...getTmdbSearchEntries(data, mediaType, strategy, null, searchQuery));
+            } catch (error) {
+                lastError = error;
+                stopFallback = shouldStopSearchFallback(error);
+            }
+
+            return rankTmdbCandidates(entries, intent);
+        };
+
+        const isAccepted = ranked => (getTopSearchMatch(ranked)?.score || 0) >= SEARCH_ACCEPT_SCORE;
+        const isLowConfidence = ranked => !isAccepted(ranked);
+        let ranked = [];
+
+        const imdbId = extractImdbIdFromQuery(query);
+        if (imdbId) {
+            try {
+                const data = await fetchTmdbFindByExternalId(imdbId, "zh-CN", env, ctx, { deadline });
+                successfulAttempt = true;
+                ranked = rankTmdbCandidates(getTmdbFindEntries(data), intent);
+                return buildTmdbSearchResponse(ranked, intent, 1);
+            } catch (error) {
+                console.error("TMDB external id search error:", error.message);
+                return jsonResponse({ error: error.message }, error.status || 502);
             }
         }
 
-        results.sort((a, b) => (b.tmdbVotes || 0) - (a.tmdbVotes || 0) || (b.popularity || 0) - (a.popularity || 0));
+        ranked = await runSearch("/search/multi", intent.originalQuery, "zh-CN");
+        if (ranked.length === 0 && !stopFallback) {
+            ranked = await runSearch("/search/multi", intent.originalQuery, "en-US");
+        }
 
-        return jsonResponse({
-            page: data && data.page ? data.page : 1,
-            totalResults: data && data.total_results ? data.total_results : results.length,
-            results
-        });
+        if (isLowConfidence(ranked) && !stopFallback) {
+            for (const variant of intent.variants.slice(0, 2)) {
+                if (compactSearchText(variant) === compactSearchText(intent.originalQuery)) continue;
+                ranked = await runSearch("/search/multi", variant, "zh-CN", {}, null, "normalized");
+                if (isAccepted(ranked)) break;
+            }
+        }
+
+        if (isLowConfidence(ranked) && !stopFallback) {
+            ranked = await runSearch("/search/multi", intent.normalizedQuery, "en-US", {}, null, "normalized");
+        }
+
+        if (isLowConfidence(ranked) && !stopFallback && (intent.mediaType || intent.year)) {
+            const typedMediaTypes = intent.mediaType ? [intent.mediaType] : ["movie", "tv"];
+            for (const mediaType of typedMediaTypes) {
+                const yearParam = intent.year
+                    ? mediaType === "movie"
+                        ? { primary_release_year: intent.year }
+                        : { first_air_date_year: intent.year }
+                    : {};
+                ranked = await runSearch(
+                    `/search/${mediaType}`,
+                    intent.normalizedQuery,
+                    "zh-CN",
+                    yearParam,
+                    mediaType,
+                    "typed"
+                );
+                if (isAccepted(ranked)) break;
+            }
+        }
+
+        if (isLowConfidence(ranked) && !stopFallback && intent.hasCjk && attempts < SEARCH_MAX_ATTEMPTS) {
+            try {
+                const aliasData = await fetchDoubanAliasCandidates(intent.normalizedQuery, ctx, deadline);
+                const aliases = extractDoubanAliasQueries(aliasData, intent.originalQuery);
+                for (const alias of aliases.slice(0, SEARCH_MAX_ALIAS_QUERIES)) {
+                    ranked = await runSearch("/search/multi", alias, "zh-CN", {}, null, "douban-alias");
+                    if (isAccepted(ranked)) break;
+                }
+            } catch (error) {
+                console.warn("Douban alias fallback skipped:", error.message);
+            }
+        }
+
+        if (!successfulAttempt && lastError && ranked.length === 0) {
+            throw lastError;
+        }
+
+        return buildTmdbSearchResponse(ranked, intent, attempts);
     } catch (e) {
         console.error("TMDB search error:", e.message);
         return jsonResponse({ error: e.message }, e.status || 502);
@@ -863,6 +1312,63 @@ async function handleDoubanSearch(query, ctx) {
         console.error("Douban search error:", e.message);
         return jsonResponse({ error: e.message }, e.status || 502);
     }
+}
+
+async function fetchDoubanAliasCandidates(query, ctx, deadline = null) {
+    const cacheKey = new Request(`https://douban-search-cache.local/?q=${encodeURIComponent(query)}`);
+    const cached = await serveCachedJson(cacheKey);
+    if (cached) {
+        try {
+            const cachedData = await readJsonWithLimit(cached);
+            return Array.isArray(cachedData) ? cachedData : [];
+        } catch {
+            await deleteCachedResponse(cacheKey);
+        }
+    }
+
+    if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
+    const res = await fetchUpstream(
+        `https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`,
+        { headers: DOUBAN_SEARCH_HEADERS },
+        remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
+    );
+
+    if (!res.ok) {
+        await releaseUpstreamResponse(res);
+        throw createHttpError(`Douban rejected with status ${res.status}`, res.status);
+    }
+
+    const data = await readJsonWithLimit(res);
+    if (!Array.isArray(data)) throw createHttpError("Douban returned an invalid response", 502);
+
+    const cacheResponse = new Response(JSON.stringify(data), {
+        status: 200,
+        headers: {
+            "Content-Type": "application/json;charset=UTF-8",
+            "Cache-Control": "public, max-age=86400"
+        }
+    });
+    scheduleCachePut(ctx, cacheKey, cacheResponse);
+    return data;
+}
+
+function extractDoubanAliasQueries(data, originalQuery) {
+    if (!Array.isArray(data)) return [];
+    const original = compactSearchText(originalQuery);
+    const aliases = [];
+    const fields = ["title", "original_title", "name", "sub_title", "aka"];
+
+    for (const item of data.slice(0, 10)) {
+        if (!isObject(item)) continue;
+        for (const field of fields) {
+            const value = item[field];
+            if (typeof value !== "string" || !value.trim()) continue;
+            if (compactSearchText(value) === original) continue;
+            aliases.push(value);
+        }
+    }
+
+    return uniqueSearchValues(aliases, MAX_QUERY_LENGTH, SEARCH_MAX_ALIAS_QUERIES);
 }
 
 async function handleDoubanDetail(id, ctx) {

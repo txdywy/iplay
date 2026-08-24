@@ -70,9 +70,12 @@ function setSearchStatus(message) {
 }
 
 function normalizeText(value) {
-    return (value || '')
+    return String(value ?? '')
+        .normalize('NFKC')
+        .normalize('NFKD')
+        .replace(/\p{M}/gu, '')
         .toLowerCase()
-        .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。·/\\]/g, '');
+        .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。·/\\]/gu, '');
 }
 
 function findBestMatch(results, query, titleFn) {
@@ -94,6 +97,12 @@ function findBestMatch(results, query, titleFn) {
 function pickBestTmdbMatch(results, query) {
     if (!Array.isArray(results) || results.length === 0) return null;
 
+    const scored = results
+        .filter(item => item && item.matchScore !== null && item.matchScore !== undefined && Number.isFinite(Number(item.matchScore)))
+        .map((item, index) => ({ item, index, score: Number(item.matchScore) }))
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+    if (scored.length > 0) return scored[0].score >= 0.56 ? scored[0].item : null;
+
     const normalizedQuery = normalizeText(query);
     const exact = results.find(item => {
         const title = normalizeText(item.title);
@@ -114,7 +123,7 @@ function pickBestTmdbMatch(results, query) {
     const yearMatch = results.find(item => item.year && String(query).includes(String(item.year)));
     if (yearMatch) return yearMatch;
 
-    return results[0];
+    return null;
 }
 
 function pickBestDoubanMatch(results, query) {
@@ -831,11 +840,11 @@ async function handleSearch() {
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
 
         if (tmdbResults.length === 0) {
-            throw new Error(`TMDB 未找到“${query}”的结果`);
+            throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
         }
 
         const candidate = pickBestTmdbMatch(tmdbResults, query);
-        if (!candidate) throw new Error(`TMDB 未找到“${query}”的匹配结果`);
+        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
 
         showToast('Signal locked. Initiating deep scan...');
 

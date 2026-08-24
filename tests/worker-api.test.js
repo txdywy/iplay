@@ -267,11 +267,10 @@ test('cache read failures fall back to the upstream response', async t => {
     );
 
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-        page: 1,
-        totalResults: 0,
-        results: []
-    });
+    const body = await response.json();
+    assert.deepEqual(body.results, []);
+    assert.equal(body.totalResults, 0);
+    assert.equal(body.searchMeta.strategy, 'none');
 });
 
 test('cache write failures do not fail an otherwise valid API response', async t => {
@@ -411,6 +410,304 @@ test('TMDB search keeps movie and TV results that share the same numeric id', as
         ['movie', 42],
         ['tv', 42]
     ]);
+});
+
+test('TMDB search ranks title confidence ahead of popularity', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        page: 1,
+        total_results: 2,
+        results: [
+            { id: 1, media_type: 'movie', title: 'Alpha Film', vote_count: 100000, popularity: 100 },
+            { id: 2, media_type: 'movie', title: 'Alpha', vote_count: 1, popularity: 1 }
+        ]
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=Alpha', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-match-score' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.results.map(item => item.id), [2, 1]);
+    assert.equal(body.results[0].matchScore, 1);
+    assert.equal(body.results[0].matchConfidence, 'high');
+    assert.equal(body.results[0].matchMethod, 'title-exact');
+    assert.equal(body.searchMeta.strategy, 'direct');
+});
+
+test('TMDB search removes season and release noise before retrying a normalized query', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedQueries = [];
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedQueries.push({ query: parsed.searchParams.get('query'), language: parsed.searchParams.get('language') });
+        if (parsed.searchParams.get('query') === '庆余年') {
+            return Response.json({
+                page: 1,
+                total_results: 2,
+                results: [
+                    { id: 30, media_type: 'movie', title: '庆余年', vote_count: 100000 },
+                    { id: 3, media_type: 'tv', name: '庆余年', original_name: 'Qing Yu Nian', first_air_date: '2019-01-01' }
+                ]
+            });
+        }
+        return Response.json({ page: 1, total_results: 0, results: [] });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=%E5%BA%86%E4%BD%99%E5%B9%B4%20%E7%AC%AC%E4%BA%8C%E5%AD%A3%201080P', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-normalized-query' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.results[0].id, 3);
+    assert.equal(body.results[0].mediaType, 'tv');
+    assert.equal(body.searchMeta.normalizedQuery, '庆余年');
+    assert.equal(body.searchMeta.season, 2);
+    assert.equal(body.searchMeta.mediaType, 'tv');
+    assert.equal(body.searchMeta.strategy, 'normalized');
+    assert.deepEqual(requestedQueries.slice(0, 3).map(item => item.query), [
+        '庆余年 第二季 1080P',
+        '庆余年 第二季 1080P',
+        '庆余年'
+    ]);
+});
+
+test('TMDB search uses typed and year-scoped endpoints for explicit movie intent', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    let typedRequest = null;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        if (parsed.pathname === '/3/search/movie') {
+            typedRequest = parsed;
+            return Response.json({
+                page: 1,
+                total_results: 1,
+                results: [{ id: 4, title: 'Example', original_title: 'Example', release_date: '2023-01-01' }]
+            });
+        }
+        return Response.json({ page: 1, total_results: 0, results: [] });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=Example%20Movie%202023', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-typed-year' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.results[0].id, 4);
+    assert.equal(body.results[0].mediaType, 'movie');
+    assert.equal(body.searchMeta.strategy, 'typed');
+    assert.ok(typedRequest);
+    assert.equal(typedRequest.searchParams.get('query'), 'Example');
+    assert.equal(typedRequest.searchParams.get('primary_release_year'), '2023');
+});
+
+test('TMDB search resolves an IMDb id through the TMDB find endpoint', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        requestedUrls.push(String(url));
+        return Response.json({
+            movie_results: [{ id: 5, title: 'Exact IMDb Movie', release_date: '2020-01-01' }],
+            tv_results: []
+        });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=tt1234567', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-imdb-find' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(requestedUrls.length, 1);
+    assert.match(requestedUrls[0], /\/3\/find\/tt1234567/);
+    assert.equal(body.results[0].id, 5);
+    assert.equal(body.results[0].matchMethod, 'external-id');
+    assert.equal(body.results[0].matchScore, 1);
+    assert.equal(body.searchMeta.strategy, 'external-id');
+});
+
+test('TMDB search filters malformed candidates before returning normalized results', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        page: 1,
+        total_results: 3,
+        results: [
+            { id: true, media_type: 'movie', title: 'Valid' },
+            { id: 6, media_type: 'movie', title: { invalid: true } },
+            { id: 7, media_type: 'movie', title: 'Valid', vote_count: 'not-a-number' }
+        ]
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=Valid', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-malformed-candidates' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.results.map(item => item.id), [7]);
+    assert.equal(body.results[0].tmdbVotes, 0);
+});
+
+test('TMDB search does not expose a popular but unrelated low-confidence candidate', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        page: 1,
+        total_results: 1,
+        results: [{ id: 9, media_type: 'movie', title: 'Completely Different', vote_count: 1000000, popularity: 999 }]
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=zz', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-low-confidence' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.results, []);
+    assert.equal(body.searchMeta.confidence, 'low');
+    assert.equal(body.searchMeta.matchScore, 0);
+});
+
+test('TMDB search uses a bounded Douban alias fallback for Chinese queries', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedHosts = [];
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedHosts.push(parsed.hostname);
+        if (parsed.hostname === 'movie.douban.com') return Response.json([{ title: '别名电影' }]);
+        if (parsed.searchParams.get('query') === '别名电影') {
+            return Response.json({
+                page: 1,
+                total_results: 1,
+                results: [{ id: 8, media_type: 'movie', title: '别名电影', release_date: '2022-01-01' }]
+            });
+        }
+        return Response.json({ page: 1, total_results: 0, results: [] });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=%E5%8E%9F%E5%A7%8B%E7%89%87%E5%90%8D', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-douban-alias' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.results.map(item => item.id), [8]);
+    assert.equal(body.searchMeta.strategy, 'douban-alias');
+    assert.ok(requestedHosts.includes('movie.douban.com'));
 });
 
 test('TMDB detail does not retry another media type after upstream rate limiting', async t => {
