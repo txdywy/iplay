@@ -53,7 +53,8 @@ export default [
         console: "readonly",
         Response: "readonly",
         Request: "readonly",
-        AbortSignal: "readonly"
+        AbortSignal: "readonly",
+        URL: "readonly"
       }
     }
   }

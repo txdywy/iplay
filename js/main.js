@@ -2,6 +2,13 @@ import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 import { copyQuarkShare, formatQuarkCopyText } from './quark.js';
 import { formatRating, toFiniteNumber } from './format.js';
+import {
+    findBestMatch,
+    pickBestTmdbMatch,
+    rankTmdbCandidates,
+    shouldConfirmTmdbCandidate
+} from './match.js';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js';
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -10,8 +17,14 @@ const els = {
     loading: document.getElementById('loadingState'),
     error: document.getElementById('errorState'),
     errorMsg: document.getElementById('errorMsg'),
+    retrySearchButton: document.getElementById('retrySearchButton'),
+    candidatePicker: document.getElementById('candidatePicker'),
+    candidatePickerTitle: document.getElementById('candidatePickerTitle'),
+    candidatePickerQuery: document.getElementById('candidatePickerQuery'),
+    candidateList: document.getElementById('candidateList'),
     results: document.getElementById('resultsArea'),
     searchStatus: document.getElementById('searchStatus'),
+    dataNotice: document.getElementById('dataNotice'),
 
     cover: document.getElementById('showCover'),
     title: document.getElementById('showTitle'),
@@ -30,6 +43,7 @@ const els = {
     rottenRating: document.getElementById('rottenRating'),
 
     tmdbFacts: document.getElementById('tmdbFacts'),
+    tmdbProfileLabel: document.getElementById('tmdbProfileLabel'),
     tmdbOverview: document.getElementById('tmdbOverview'),
     omdbPanel: document.getElementById('omdbPanel'),
     omdbFields: document.getElementById('omdbFields'),
@@ -69,61 +83,138 @@ function setSearchStatus(message) {
     setText(els.searchStatus, message);
 }
 
-function normalizeText(value) {
-    return String(value ?? '')
-        .normalize('NFKC')
-        .normalize('NFKD')
-        .replace(/\p{M}/gu, '')
-        .toLowerCase()
-        .replace(/[\s\-_:,.!?()[\]{}'"“”‘’·、，。·/\\]/gu, '');
+function hideDataNotice() {
+    if (!els.dataNotice) return;
+    clearNode(els.dataNotice);
+    els.dataNotice.classList.add('hidden');
 }
 
-function findBestMatch(results, query, titleFn) {
-    if (!Array.isArray(results) || results.length === 0) return null;
+function showDataNotice({ title, detail, actionLabel = '', onAction = null, tone = 'warning' }) {
+    if (!els.dataNotice) return;
+    clearNode(els.dataNotice);
+    els.dataNotice.className = `rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
+    els.dataNotice.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+    els.dataNotice.setAttribute('aria-live', 'polite');
 
-    const normalizedQuery = normalizeText(query);
-    const exact = results.find(item => normalizeText(titleFn(item)) === normalizedQuery);
-    if (exact) return exact;
+    const row = document.createElement('div');
+    row.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
 
-    const loose = results.find(item => {
-        const normalizedTitle = normalizeText(titleFn(item));
-        return normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle);
-    });
-    if (loose) return loose;
+    const copy = document.createElement('div');
+    copy.className = 'min-w-0';
+    const heading = document.createElement('p');
+    heading.className = `font-mono text-xs uppercase tracking-[0.2em] ${tone === 'error' ? 'text-accent-red' : 'text-accent-gold'}`;
+    heading.textContent = title;
+    const description = document.createElement('p');
+    description.className = 'mt-1 text-cinema-100/80';
+    description.textContent = detail;
+    copy.appendChild(heading);
+    copy.appendChild(description);
+    row.appendChild(copy);
 
-    return results[0];
+    if (actionLabel && typeof onAction === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'shrink-0 rounded-full border border-cinema-400/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.textContent = actionLabel;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await onAction();
+            } catch (error) {
+                if (error?.name !== 'AbortError') showToast('操作失败，请稍后重试');
+            } finally {
+                button.disabled = false;
+            }
+        });
+        row.appendChild(button);
+    }
+
+    els.dataNotice.appendChild(row);
+    els.dataNotice.classList.remove('hidden');
 }
 
-function pickBestTmdbMatch(results, query) {
-    if (!Array.isArray(results) || results.length === 0) return null;
+function hideCandidatePicker() {
+    if (!els.candidatePicker) return;
+    clearNode(els.candidateList);
+    els.candidatePicker.classList.add('hidden');
+}
 
-    const scored = results
-        .filter(item => item && item.matchScore !== null && item.matchScore !== undefined && Number.isFinite(Number(item.matchScore)))
-        .map((item, index) => ({ item, index, score: Number(item.matchScore) }))
-        .sort((left, right) => right.score - left.score || left.index - right.index);
-    if (scored.length > 0) return scored[0].score >= 0.56 ? scored[0].item : null;
+function candidateTypeLabel(candidate) {
+    if (candidate?.mediaType === 'tv' || candidate?.type === 'tv') return '剧集';
+    if (candidate?.mediaType === 'movie' || candidate?.type === 'movie') return '电影';
+    return '影视';
+}
 
-    const normalizedQuery = normalizeText(query);
-    const exact = results.find(item => {
-        const title = normalizeText(item.title);
-        const originalTitle = normalizeText(item.originalTitle);
-        return title === normalizedQuery || originalTitle === normalizedQuery;
+function candidateMatchLabel(candidate) {
+    const confidence = String(candidate?.matchConfidence || '').toLowerCase();
+    if (confidence === 'high') return '高匹配';
+    if (confidence === 'medium') return '需确认';
+    if (confidence === 'low') return '低匹配';
+    return '候选结果';
+}
+
+function renderCandidatePicker(candidates, query, onSelect) {
+    if (!els.candidatePicker || !els.candidateList) return;
+    clearNode(els.candidateList);
+    setText(els.candidatePickerQuery, `“${query}”`);
+
+    const ranked = rankTmdbCandidates(candidates).filter(candidate => candidate?.id).slice(0, 6);
+    setText(els.candidatePickerTitle, ranked.length > 1 ? '搜索到多个可能的影视条目' : '请确认这个影视条目');
+    const fragment = document.createDocumentFragment();
+    ranked.forEach(candidate => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'group rounded-2xl border border-cinema-700 bg-cinema-900/60 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+
+        const title = document.createElement('span');
+        title.className = 'block text-base font-bold leading-snug text-cinema-100 group-hover:text-white';
+        title.textContent = candidate.title || candidate.originalTitle || '未命名条目';
+
+        const originalTitle = candidate.originalTitle && candidate.originalTitle !== candidate.title
+            ? document.createElement('span')
+            : null;
+        if (originalTitle) {
+            originalTitle.className = 'mt-1 block truncate text-xs text-cinema-400';
+            originalTitle.textContent = candidate.originalTitle;
+        }
+
+        const meta = document.createElement('span');
+        meta.className = 'mt-3 block text-xs font-mono uppercase tracking-[0.18em] text-cinema-400';
+        meta.textContent = [candidate.year || '年份未知', candidateTypeLabel(candidate), candidateMatchLabel(candidate)].join(' · ');
+
+        const score = Number(candidate.matchScore);
+        const scoreText = Number.isFinite(score) ? `匹配度 ${Math.round(score * 100)}%` : 'TMDB 候选';
+        const scoreNode = document.createElement('span');
+        scoreNode.className = 'mt-2 block text-xs font-mono text-accent-gold';
+        scoreNode.textContent = scoreText;
+
+        button.appendChild(title);
+        if (originalTitle) button.appendChild(originalTitle);
+        button.appendChild(meta);
+        button.appendChild(scoreNode);
+        button.addEventListener('click', () => onSelect(candidate));
+        fragment.appendChild(button);
     });
-    if (exact) return exact;
 
-    const loose = results.find(item => {
-        const title = normalizeText(item.title);
-        const originalTitle = normalizeText(item.originalTitle);
-        return title.includes(normalizedQuery) || originalTitle.includes(normalizedQuery)
-            || (title.length >= 2 && normalizedQuery.includes(title))
-            || (originalTitle.length >= 2 && normalizedQuery.includes(originalTitle));
+    els.candidateList.appendChild(fragment);
+    els.candidatePicker.classList.toggle('hidden', ranked.length === 0);
+}
+
+function matchesMedia(query) {
+    return typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
+}
+
+function scrollToVisible(element) {
+    if (!element || !matchesMedia('(max-width: 767px)')) return;
+    requestAnimationFrame(() => {
+        const rect = element.getBoundingClientRect();
+        if (rect.top < 0 || rect.top > window.innerHeight * 0.85) {
+            element.scrollIntoView({
+                behavior: matchesMedia('(prefers-reduced-motion: reduce)') ? 'auto' : 'smooth',
+                block: 'start'
+            });
+        }
     });
-    if (loose) return loose;
-
-    const yearMatch = results.find(item => item.year && String(query).includes(String(item.year)));
-    if (yearMatch) return yearMatch;
-
-    return null;
 }
 
 function pickBestDoubanMatch(results, query) {
@@ -243,7 +334,7 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         detail,
         candidate: candidate || {},
         title: source.title || candidate?.title || '—',
-        subtitle: `${source.year || candidate?.year || '????'} // ${source.mediaType === 'movie' ? 'FILM' : source.mediaType === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
+        subtitle: `${source.year || candidate?.year || '????'} // ${(source.mediaType || source.type) === 'movie' ? 'FILM' : (source.mediaType || source.type) === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
         summary: source.summary || (wikiResult && wikiResult.extract) || candidate?.summary || '',
         genres: Array.isArray(source.genres) && source.genres.length > 0 ? source.genres : [],
         rating: source.tmdbRating ?? candidate?.tmdbRating ?? 0,
@@ -283,6 +374,10 @@ function renderTmdbFacts(viewModel) {
     const candidate = viewModel?.candidate || {};
     const detail = viewModel?.detail || {};
     const mediaType = detail.mediaType || candidate.mediaType || candidate.type || '—';
+    const seasonTotals = mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
+    const seasonEpisodes = mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
+
+    setText(els.tmdbProfileLabel, mediaType === 'movie' ? 'Movie profile' : mediaType === 'tv' ? 'Series profile' : 'Media profile');
 
     appendInfoCards(els.tmdbFacts, [
         createInfoCard('Title', viewModel?.title || candidate.title),
@@ -292,8 +387,10 @@ function renderTmdbFacts(viewModel) {
         createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
         createInfoCard('IMDb ID', detail.imdbId || candidate.imdbId || '—'),
         createInfoCard('Votes', formatCount(detail.tmdbVotes || candidate.tmdbVotes || candidate.votes || 0)),
-        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—')
-    ]);
+        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—'),
+        seasonTotals ? createInfoCard('Seasons / Episodes', seasonTotals) : null,
+        seasonEpisodes ? createInfoCard('Episodes / Season', seasonEpisodes, { wide: true }) : null
+    ].filter(Boolean));
 
     if (els.tmdbOverview) {
         els.tmdbOverview.textContent = viewModel?.summary && viewModel.summary.trim() ? viewModel.summary : '暂无 TMDB 概述';
@@ -316,7 +413,6 @@ function renderTmdbProfile(viewModel) {
     }
 
     const detail = vm.detail || {};
-    const candidate = vm.candidate || {};
     const genres = Array.isArray(vm.genres) ? vm.genres : [];
     const cast = Array.isArray(detail.cast) ? detail.cast : [];
     const directors = Array.isArray(detail.director) ? detail.director : [];
@@ -326,30 +422,26 @@ function renderTmdbProfile(viewModel) {
     const tmdbRating = toFiniteNumber(detail.tmdbRating);
     const omdbRating = toFiniteNumber(omdb?.imdb);
     const rottenTomatoes = toFiniteNumber(omdb?.rottenTomatoes);
+    const seasonTotals = detail.mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
+    const seasonEpisodes = detail.mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
     appendInfoCards(els.omdbFields, [
-        createInfoCard('Title', vm.title || candidate.title),
-        createInfoCard('Original', detail.originalTitle || candidate.originalTitle),
-        createInfoCard('Type', detail.mediaType === 'movie' ? 'FILM' : detail.mediaType === 'tv' ? 'SERIES' : formatValue(detail.mediaType || candidate.type)),
-        createInfoCard('Year', detail.year || candidate.year),
-        createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
         createInfoCard('Runtime', detail.runtime ? `${detail.runtime} min` : '—'),
+        seasonTotals ? createInfoCard('Seasons / Episodes', seasonTotals) : null,
         createInfoCard('Status', detail.status || '—'),
         createInfoCard('Language', detail.originalLanguage || '—'),
-        createInfoCard('Votes', formatCount(vm.votes)),
-        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—')
-    ]);
+        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
+        tmdbRating !== null && tmdbRating > 0 ? createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`) : null
+    ].filter(Boolean));
 
     appendInfoCards(els.omdbFields, [
-        vm.summary ? createInfoCard('Overview', vm.summary, { wide: true }) : null,
         genres.length > 0 ? createInfoCard('Genres', genres, { wide: true }) : null,
         detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('Production Companies', detail.productionCompanies, { wide: true }) : null,
         detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('Production Countries', detail.productionCountries, { wide: true }) : null,
         cast.length > 0 ? createInfoCard('Cast', cast, { wide: true }) : null,
         directors.length > 0 ? createInfoCard('Director', directors, { wide: true }) : null,
         writers.length > 0 ? createInfoCard('Writer', writers, { wide: true }) : null,
-        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
-        tmdbRating !== null && tmdbRating > 0 ? createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`) : null
+        seasonEpisodes ? createInfoCard('Episodes / Season', seasonEpisodes, { wide: true }) : null,
     ].filter(Boolean));
 
     appendInfoCards(els.omdbFields, omdb ? [
@@ -442,7 +534,7 @@ function toSafeHttpUrl(rawUrl) {
 
 function renderLinkCards(container, items, {
     emptyLabel, itemClass, cardClass, iconClass, metaClass, metaText, titleText,
-    detailText, sourceText, actionLabel, onAction, limit
+    detailText, sourceText, actionLabel, onAction, limit, initialLimit = 6
 }) {
     if (!container) return;
     clearNode(container);
@@ -461,88 +553,122 @@ function renderLinkCards(container, items, {
         return;
     }
 
-    const frag = document.createDocumentFragment();
-    safeItems.slice(0, limit).forEach(item => {
-        const li = document.createElement('li');
-        li.className = itemClass;
+    const maxItems = Number.isFinite(Number(limit)) ? Math.min(Number(limit), safeItems.length) : safeItems.length;
+    const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
-        const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
-        const hasAction = resolvedActionLabel && typeof onAction === 'function';
-        const card = document.createElement(hasAction ? 'div' : 'a');
-        card.className = cardClass;
+    const renderVisibleItems = visibleLimit => {
+        clearNode(container);
+        const frag = document.createDocumentFragment();
+        safeItems.slice(0, visibleLimit).forEach(item => {
+            const li = document.createElement('li');
+            li.className = itemClass;
 
-        const a = hasAction ? document.createElement('a') : card;
-        a.href = item.url;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        if (hasAction) a.className = 'block';
+            const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
+            const hasAction = Boolean(resolvedActionLabel && typeof onAction === 'function');
+            const card = document.createElement(hasAction ? 'div' : 'a');
+            card.className = `${cardClass} ${hasAction ? '' : 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red'}`;
 
-        const row = document.createElement('div');
-        row.className = 'flex items-start justify-between gap-3';
+            const link = hasAction ? document.createElement('a') : card;
+            link.href = item.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            if (hasAction) link.className = 'block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
 
-        const content = document.createElement('div');
-        const title = document.createElement('div');
-        title.className = 'text-sm font-medium text-cinema-100 leading-snug';
-        title.textContent = titleText(item);
+            const row = document.createElement('div');
+            row.className = 'flex items-start justify-between gap-3';
 
-        const meta = document.createElement('div');
-        meta.className = metaClass;
-        meta.textContent = metaText(item);
+            const content = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'text-sm font-medium leading-snug text-cinema-100';
+            title.textContent = titleText(item);
 
-        content.appendChild(title);
-        content.appendChild(meta);
+            const meta = document.createElement('div');
+            meta.className = metaClass;
+            meta.textContent = metaText(item);
 
-        const detail = detailText ? detailText(item) : '';
-        if (detail) {
-            const detailNode = document.createElement('div');
-            detailNode.className = 'mt-2 text-xs font-mono font-semibold tracking-wider text-accent-gold';
-            detailNode.textContent = detail;
-            content.appendChild(detailNode);
-        }
+            content.appendChild(title);
+            content.appendChild(meta);
 
-        if (sourceText) {
-            const source = document.createElement('div');
-            source.className = 'mt-2 text-xs font-mono uppercase tracking-[0.3em] text-accent-gold/80';
-            source.textContent = sourceText(item);
-            content.appendChild(source);
-        }
+            const detail = detailText ? detailText(item) : '';
+            if (detail) {
+                const detailNode = document.createElement('div');
+                detailNode.className = 'mt-2 text-xs font-mono font-semibold tracking-wider text-accent-gold';
+                detailNode.textContent = detail;
+                content.appendChild(detailNode);
+            }
 
-        const icon = document.createElement('i');
-        icon.className = iconClass;
+            if (sourceText) {
+                const source = document.createElement('div');
+                source.className = 'mt-2 text-xs font-mono uppercase tracking-[0.3em] text-accent-gold/80';
+                source.textContent = sourceText(item);
+                content.appendChild(source);
+            }
 
-        row.appendChild(content);
-        row.appendChild(icon);
-        a.appendChild(row);
+            const icon = document.createElement('i');
+            icon.className = iconClass;
+            icon.setAttribute('aria-hidden', 'true');
 
-        if (hasAction) {
-            card.appendChild(a);
+            row.appendChild(content);
+            row.appendChild(icon);
+            link.appendChild(row);
 
+            if (hasAction) {
+                card.appendChild(link);
+
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'mt-3 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-70';
+                button.textContent = resolvedActionLabel;
+                button.setAttribute('aria-live', 'polite');
+                button.addEventListener('click', async () => {
+                    button.disabled = true;
+                    try {
+                        await onAction(item);
+                        button.textContent = '已复制';
+                        showToast('提取码已复制');
+                        setTimeout(() => { button.textContent = resolvedActionLabel; }, 1600);
+                    } catch {
+                        showToast('复制失败，请手动复制密码');
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+                card.appendChild(button);
+            }
+
+            li.appendChild(card);
+            frag.appendChild(li);
+        });
+
+        if (visibleLimit < maxItems) {
+            const li = document.createElement('li');
+            li.className = 'p-3';
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'mt-3 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 disabled:cursor-wait disabled:opacity-70';
-            button.textContent = resolvedActionLabel;
-            button.addEventListener('click', async () => {
-                button.disabled = true;
-                try {
-                    await onAction(item);
-                    button.textContent = '已复制';
-                    setTimeout(() => { button.textContent = resolvedActionLabel; }, 1600);
-                } catch {
-                    showToast('复制失败，请手动复制密码');
-                } finally {
-                    button.disabled = false;
-                }
-            });
-            card.appendChild(button);
+            button.className = 'w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.textContent = `显示更多（剩余 ${maxItems - visibleLimit} 条）`;
+            button.addEventListener('click', () => renderVisibleItems(maxItems));
+            li.appendChild(button);
+            frag.appendChild(li);
+        } else if (visibleLimit > firstPageSize) {
+            const li = document.createElement('li');
+            li.className = 'p-3';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.textContent = '收起列表';
+            button.addEventListener('click', () => renderVisibleItems(firstPageSize));
+            li.appendChild(button);
+            frag.appendChild(li);
         }
 
-        li.appendChild(card);
-        frag.appendChild(li);
-    });
-    container.appendChild(frag);
+        container.appendChild(frag);
+    };
+
+    renderVisibleItems(firstPageSize);
 }
 
-function renderResourceStatus(container, { title, detail, iconClass, progressClass, isLoading = true }) {
+function renderResourceStatus(container, { title, detail, iconClass, progressClass, isLoading = true, actionLabel = '', onAction = null }) {
     if (!container) return;
     clearNode(container);
 
@@ -559,6 +685,7 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
 
     const icon = document.createElement('i');
     icon.className = `${iconClass} mt-1 opacity-80`;
+    icon.setAttribute('aria-hidden', 'true');
 
     const content = document.createElement('div');
     content.className = 'min-w-0 flex-1';
@@ -585,84 +712,108 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
         panel.appendChild(progress);
     }
 
+    if (!isLoading && actionLabel && typeof onAction === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mt-4 rounded-full border border-cinema-400/60 px-4 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.textContent = actionLabel;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await onAction();
+            } finally {
+                button.disabled = false;
+            }
+        });
+        panel.appendChild(button);
+    }
+
     li.appendChild(panel);
     container.appendChild(li);
 }
 
 function renderResourceLoadingStates(title) {
     renderResourceStatus(els.quarkUrlList, {
-        title: 'Extracting Quark direct links',
-        detail: `Scanning resource pages for ${title}`,
+        title: '正在提取夸克直链',
+        detail: `正在扫描“${title}”的资源页面`,
         iconClass: 'fas fa-cloud text-accent-red',
         progressClass: 'resource-progress-red'
     });
     renderResourceStatus(els.resourceList, {
-        title: 'Collecting source pages',
-        detail: 'Checking resource indexes and forum posts',
+        title: '正在收集资源页面',
+        detail: '正在检查资源索引和论坛帖子',
         iconClass: 'fas fa-link text-[#0099ff]',
         progressClass: 'resource-progress-blue'
     });
     renderResourceStatus(els.wpzysResourceList, {
-        title: 'Searching WPZYS Forum',
-        detail: 'Filtering matching posts that contain Quark resources',
+        title: '正在搜索 WPZYS 论坛',
+        detail: '正在筛选包含夸克资源的匹配帖子',
         iconClass: 'fas fa-comments text-accent-gold',
         progressClass: 'resource-progress-gold'
     });
 }
 
-function renderResourceErrorStates() {
+function renderResourceErrorStates(onRetry) {
     renderResourceStatus(els.quarkUrlList, {
-        title: 'Quark links are taking longer than expected',
-        detail: 'The scan can be retried with a fresh search in a moment',
+        title: '夸克直链暂时不可用',
+        detail: '资源扫描没有完成，其他影视信息仍可正常使用',
         iconClass: 'fas fa-cloud text-accent-red',
         progressClass: 'resource-progress-red',
-        isLoading: false
+        isLoading: false,
+        actionLabel: '重试资源扫描',
+        onAction: onRetry
     });
     renderResourceStatus(els.resourceList, {
-        title: 'Resource sources did not respond',
-        detail: 'Movie details are still available above',
+        title: '资源来源暂时没有响应',
+        detail: '上方影视详情仍可使用，你可以重新扫描资源',
         iconClass: 'fas fa-link text-[#0099ff]',
         progressClass: 'resource-progress-blue',
-        isLoading: false
+        isLoading: false,
+        actionLabel: '重试资源扫描',
+        onAction: onRetry
     });
     renderResourceStatus(els.wpzysResourceList, {
-        title: 'WPZYS scan paused',
-        detail: 'Forum results may be temporarily unavailable',
+        title: 'WPZYS 扫描已暂停',
+        detail: '论坛结果可能暂时不可用，你可以稍后重试',
         iconClass: 'fas fa-comments text-accent-gold',
         progressClass: 'resource-progress-gold',
-        isLoading: false
+        isLoading: false,
+        actionLabel: '重试资源扫描',
+        onAction: onRetry
     });
 }
 
 function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
-        emptyLabel: 'No raw resources detected.',
+        emptyLabel: '暂未发现资源页面',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/30 p-4 transition-[transform,background-color,border-color] hover:border-cinema-400/70 hover:bg-cinema-800/50 hover:-translate-y-0.5',
         iconClass: 'fas fa-external-link-alt text-[#0099ff] mt-1 opacity-70',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
-        limit: 6
+        limit: 12,
+        initialLimit: 6
     });
 }
 
 function renderWpzysResourceList(resources) {
     renderLinkCards(els.wpzysResourceList, resources, {
-        emptyLabel: 'No WPZYS Quark resources matched.',
+        emptyLabel: '暂未匹配到 WPZYS 夸克资源',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-[transform,background-color,border-color] hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
         iconClass: 'fas fa-comments text-accent-gold mt-1 opacity-80',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
-        limit: 8
+        limit: 12,
+        initialLimit: 6
     });
 }
 
 function renderQuarkUrls(quarkUrls) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
-        emptyLabel: 'No Quark links extracted yet.',
+        emptyLabel: '暂未提取到夸克链接',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-[transform,background-color,border-color] hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
         iconClass: 'fas fa-cloud text-accent-red mt-1 opacity-80',
@@ -673,7 +824,8 @@ function renderQuarkUrls(quarkUrls) {
         sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
-        limit: 50
+        limit: 50,
+        initialLimit: 6
     });
 }
 
@@ -741,6 +893,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
                 li.className = 'flex gap-2 items-start';
                 const icon = document.createElement('i');
                 icon.className = 'fas fa-plus text-green-500 mt-1';
+                icon.setAttribute('aria-hidden', 'true');
                 const span = document.createElement('span');
                 span.textContent = p;
                 li.appendChild(icon);
@@ -762,6 +915,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
                 li.className = 'flex gap-2 items-start';
                 const icon = document.createElement('i');
                 icon.className = 'fas fa-minus text-accent-red mt-1';
+                icon.setAttribute('aria-hidden', 'true');
                 const span = document.createElement('span');
                 span.textContent = c;
                 li.appendChild(icon);
@@ -782,7 +936,7 @@ async function safeTmdbSearch(query, options = {}) {
     try {
         return await TmdbAPI.search(query, options);
     } catch (error) {
-        if (error.name === 'AbortError') throw error;
+        if (error?.name === 'AbortError') throw error;
         console.warn('TMDB search failed:', error);
         throw error;
     }
@@ -804,10 +958,186 @@ function setSearching(isSearching) {
 
 let currentSearchId = 0;
 let currentAbortController = null;
+let currentCandidateLoadId = 0;
+let lastSearchQuery = '';
+
+function isActiveSearch(searchId, loadId = null) {
+    return searchId === currentSearchId && (loadId === null || loadId === currentCandidateLoadId);
+}
+
+function getSearchErrorMessage(error) {
+    if (error && (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError'))) {
+        return '暂时无法连接数据服务，请检查网络或稍后重试。';
+    }
+    return error?.message || '搜索失败，请稍后重试。';
+}
+
+function showSearchError(error, query, searchId) {
+    if (!isActiveSearch(searchId)) return;
+    const message = getSearchErrorMessage(error);
+    setText(els.errorMsg, message);
+    setText(els.retrySearchButton, '重试搜索');
+    els.error.classList.remove('hidden');
+    els.loading.classList.add('hidden');
+    els.results.classList.add('hidden');
+    hideCandidatePicker();
+    setSearchStatus(`搜索失败：${message}`);
+    setSearching(false);
+    lastSearchQuery = query;
+}
+
+function resetResultAnimation() {
+    els.results.querySelectorAll('.fade-up').forEach(element => {
+        element.style.animation = 'none';
+    });
+    requestAnimationFrame(() => {
+        const fadeElements = els.results.querySelectorAll('.fade-up');
+        fadeElements.forEach(element => void element.offsetHeight);
+        fadeElements.forEach(element => { element.style.animation = ''; });
+    });
+}
+
+async function loadResources(candidate, searchId, searchOptions, loadId) {
+    if (!isActiveSearch(searchId, loadId)) return;
+    renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
+
+    try {
+        const resourceResult = await ResourceAPI.search(candidate.title || candidate.originalTitle, searchOptions);
+        if (!resourceResult) throw new Error('资源服务返回了空结果');
+        if (!isActiveSearch(searchId, loadId)) return;
+        renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
+        renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
+        renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        if (!isActiveSearch(searchId, loadId)) return;
+        renderResourceErrorStates(() => loadResources(candidate, searchId, searchOptions, loadId));
+        console.debug('Resource enrichment skipped:', error);
+    }
+}
+
+function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId) {
+    const enrichmentQuery = candidate.title || candidate.originalTitle || query;
+
+    DoubanAPI.search(enrichmentQuery, searchOptions).then(async doubanSearchResult => {
+        if (!isActiveSearch(searchId, loadId)) return;
+        const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
+        const doubanMatch = pickBestDoubanMatch(doubanCandidates, enrichmentQuery);
+        if (doubanMatch && doubanMatch.id) {
+            const doubanResult = await DoubanAPI.getDetail(doubanMatch.id, searchOptions).catch(error => {
+                if (error?.name === 'AbortError') throw error;
+                return null;
+            });
+            if (!isActiveSearch(searchId, loadId) || !doubanResult) return;
+            viewModel.doubanRating = doubanResult.rating;
+            renderBackupDoubanRating(viewModel.doubanRating);
+        }
+    }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
+
+    WikiAPI.getSummary(enrichmentQuery, searchOptions).then(wikiResult => {
+        if (!isActiveSearch(searchId, loadId) || !wikiResult) return;
+        viewModel.summary = wikiResult.extract || viewModel.summary;
+        viewModel.overviewSource = wikiResult.extract ? 'ZH.WIKIPEDIA' : viewModel.overviewSource;
+        renderSynopsis(viewModel.overviewSource, viewModel.summary);
+        renderScore({
+            rating: viewModel.rating,
+            votes: viewModel.votes,
+            genres: viewModel.genres,
+            hasWiki: Boolean(wikiResult.extract),
+            summary: viewModel.summary,
+            source: 'tmdb'
+        }, 'TMDB', true);
+    }).catch(error => { if (error?.name !== 'AbortError') console.debug('Wiki enrichment skipped:', error); });
+
+    void loadResources(candidate, searchId, searchOptions, loadId);
+
+    PosterAPI.getPoster(candidate.title || candidate.originalTitle, candidate.year, searchOptions).then(posterResult => {
+        if (!isActiveSearch(searchId, loadId) || !posterResult) return;
+        viewModel.omdbProfile = posterResult.omdb
+            ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult)
+            : viewModel.omdbProfile;
+        viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
+        loadPoster(viewModel.posterUrl, viewModel.title);
+        renderTmdbProfile(viewModel);
+    }).catch(error => { if (error?.name !== 'AbortError') console.debug('Poster enrichment skipped:', error); });
+}
+
+async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false } = {}) {
+    if (!isActiveSearch(searchId)) return;
+
+    const loadId = ++currentCandidateLoadId;
+    const selectedCandidate = {
+        ...candidate,
+        mediaType: candidate?.mediaType || candidate?.type || null
+    };
+    setSearching(true);
+    hideCandidatePicker();
+    els.error.classList.add('hidden');
+    if (isRetry) {
+        showDataNotice({
+            title: '正在重新加载详情',
+            detail: '保留当前结果，正在向 TMDB 请求完整资料。'
+        });
+    } else {
+        els.results.classList.add('hidden');
+        els.loading.classList.remove('hidden');
+        showToast('正在加载影视详情…');
+    }
+
+    let tmdbDetail = null;
+    let detailError = null;
+    try {
+        tmdbDetail = await TmdbAPI.getDetail(selectedCandidate.id, selectedCandidate.mediaType, searchOptions);
+    } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        detailError = error;
+    }
+
+    if (!isActiveSearch(searchId, loadId)) return;
+
+    const viewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
+    setText(els.title, viewModel.title);
+    setText(els.subTitle, viewModel.subtitle);
+    renderGenres(viewModel.genres);
+    renderSynopsis(viewModel.overviewSource, viewModel.summary);
+    loadPoster(viewModel.posterUrl, viewModel.title);
+    renderTmdbFacts(viewModel);
+    renderTmdbProfile(viewModel);
+    renderScore({
+        rating: viewModel.rating,
+        votes: viewModel.votes,
+        genres: viewModel.genres,
+        hasWiki: false,
+        summary: viewModel.summary,
+        source: 'tmdb'
+    }, 'TMDB');
+
+    els.results.classList.remove('hidden');
+    els.loading.classList.add('hidden');
+    setSearchStatus(`已找到“${viewModel.title}”，${detailError ? '基础信息已加载' : '详情已加载'}`);
+
+    if (detailError) {
+        showDataNotice({
+            title: 'TMDB 详情暂时不可用',
+            detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
+            actionLabel: '重试详情',
+            onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true }),
+            tone: 'error'
+        });
+    } else {
+        hideDataNotice();
+    }
+
+    setSearching(false);
+    scrollToVisible(els.results);
+    startEnrichments(selectedCandidate, query, viewModel, searchId, searchOptions, loadId);
+}
 
 async function handleSearch() {
     const query = els.input.value.trim();
     if (!query) return;
+
+    lastSearchQuery = query;
 
     if (currentAbortController) {
         currentAbortController.abort();
@@ -819,19 +1149,13 @@ async function handleSearch() {
 
     els.error.classList.add('hidden');
     els.results.classList.add('hidden');
+    hideCandidatePicker();
+    hideDataNotice();
     els.loading.classList.remove('hidden');
     resetRatingBoxes();
     setSearching(true);
     setSearchStatus(`正在搜索“${query}”`);
-
-    els.results.querySelectorAll('.fade-up').forEach(el => {
-        el.style.animation = 'none';
-    });
-    requestAnimationFrame(() => {
-        const fadeEls = els.results.querySelectorAll('.fade-up');
-        fadeEls.forEach(el => void el.offsetHeight);
-        fadeEls.forEach(el => { el.style.animation = ''; });
-    });
+    resetResultAnimation();
 
     try {
         const tmdbSearch = await safeTmdbSearch(query, searchOptions);
@@ -843,104 +1167,30 @@ async function handleSearch() {
             throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
         }
 
-        const candidate = pickBestTmdbMatch(tmdbResults, query);
-        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
+        const rankedCandidates = rankTmdbCandidates(tmdbResults);
+        const candidate = pickBestTmdbMatch(rankedCandidates, query) || (rankedCandidates.length === 1 ? rankedCandidates[0] : null);
+        const requiresConfirmation = shouldConfirmTmdbCandidate(rankedCandidates) || !candidate;
 
-        showToast('Signal locked. Initiating deep scan...');
-
-        const tmdbDetail = await TmdbAPI.getDetail(candidate.id, candidate.mediaType, searchOptions).catch(e => {
-            if (e.name === 'AbortError') throw e;
-            return null;
-        });
-        if (searchId !== currentSearchId) return;
-
-        let viewModel = buildTmdbViewModel(candidate, tmdbDetail, null, null);
-
-        setText(els.title, viewModel.title);
-        setText(els.subTitle, viewModel.subtitle);
-        renderGenres(viewModel.genres);
-        renderSynopsis(viewModel.overviewSource, viewModel.summary);
-        loadPoster(viewModel.posterUrl, viewModel.title);
-        renderTmdbFacts(viewModel);
-        renderTmdbProfile(viewModel);
-        renderResourceLoadingStates(viewModel.title);
-
-        renderScore({
-            rating: viewModel.rating,
-            votes: viewModel.votes,
-            genres: viewModel.genres,
-            hasWiki: false,
-            summary: viewModel.summary,
-            source: 'tmdb'
-        }, 'TMDB');
-
-        els.results.classList.remove('hidden');
-        els.loading.classList.add('hidden');
-        setSearchStatus(`已找到“${viewModel.title}”，详情已加载`);
-        if (searchId === currentSearchId) setSearching(false);
-
-        DoubanAPI.search(query, searchOptions).then(async doubanSearchResult => {
-            if (searchId !== currentSearchId) return;
-            const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
-            const doubanMatch = pickBestDoubanMatch(doubanCandidates, query);
-            if (doubanMatch && doubanMatch.id) {
-                const doubanResult = await DoubanAPI.getDetail(doubanMatch.id, searchOptions).catch(e => {
-                    if (e.name === 'AbortError') throw e;
-                    return null;
+        if (requiresConfirmation) {
+            renderCandidatePicker(rankedCandidates, query, selectedCandidate => {
+                if (!isActiveSearch(searchId)) return;
+                void loadCandidateDetails(selectedCandidate, query, searchId, searchOptions).catch(error => {
+                    if (error?.name !== 'AbortError') showSearchError(error, query, searchId);
                 });
-                if (searchId !== currentSearchId || !doubanResult) return;
-                viewModel.doubanRating = doubanResult.rating;
-                renderBackupDoubanRating(viewModel.doubanRating);
-            }
-        }).catch(e => { if (e.name !== 'AbortError') console.debug('Douban enrichment skipped:', e); });
+            });
+            els.loading.classList.add('hidden');
+            setSearching(false);
+            setSearchStatus(`找到 ${Math.min(rankedCandidates.length, 6)} 个候选，请确认要查看的影视条目`);
+            scrollToVisible(els.candidatePicker);
+            return;
+        }
 
-        WikiAPI.getSummary(candidate.title, searchOptions).then(wikiResult => {
-            if (searchId !== currentSearchId || !wikiResult) return;
-            viewModel.summary = wikiResult.extract || viewModel.summary;
-            viewModel.overviewSource = wikiResult.extract ? 'ZH.WIKIPEDIA' : viewModel.overviewSource;
-            renderSynopsis(viewModel.overviewSource, viewModel.summary);
-            
-            renderScore({
-                rating: viewModel.rating,
-                votes: viewModel.votes,
-                genres: viewModel.genres,
-                hasWiki: Boolean(wikiResult && wikiResult.extract),
-                summary: viewModel.summary,
-                source: 'tmdb'
-            }, 'TMDB', true);
-        }).catch(e => { if (e.name !== 'AbortError') console.debug('Wiki enrichment skipped:', e); });
-
-        ResourceAPI.search(candidate.title, searchOptions).then(resourceResult => {
-            if (searchId !== currentSearchId || !resourceResult) return;
-            renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
-            renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
-            renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        }).catch(e => {
-            if (e.name === 'AbortError') return;
-            if (searchId === currentSearchId) renderResourceErrorStates();
-            console.debug('Resource enrichment skipped:', e);
-        });
-
-        PosterAPI.getPoster(candidate.title, candidate.year, searchOptions).then(posterResult => {
-            if (searchId !== currentSearchId || !posterResult) return;
-            viewModel.omdbProfile = posterResult.omdb ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult) : viewModel.omdbProfile;
-            viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
-            loadPoster(viewModel.posterUrl, viewModel.title);
-            renderTmdbProfile(viewModel);
-        }).catch(e => { if (e.name !== 'AbortError') console.debug('Poster enrichment skipped:', e); });
+        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
+        await loadCandidateDetails(candidate, query, searchId, searchOptions);
 
     } catch (err) {
-        if (err.name === 'AbortError') return;
-        if (searchId !== currentSearchId) return;
-        if (err && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))) {
-            els.errorMsg.textContent = 'Unable to connect to Cloudflare Worker. Make sure the API_BASE is correctly configured and the Worker is deployed.';
-        } else {
-            els.errorMsg.textContent = err && err.message ? err.message : 'Unknown error';
-        }
-        els.error.classList.remove('hidden');
-        els.loading.classList.add('hidden');
-        setSearchStatus(`搜索失败：${els.errorMsg.textContent}`);
-        setSearching(false);
+        if (err?.name === 'AbortError') return;
+        showSearchError(err, query, searchId);
     } finally {
         if (searchId === currentSearchId) setSearching(false);
     }
@@ -950,5 +1200,13 @@ if (els.searchForm) {
     els.searchForm.addEventListener('submit', e => {
         e.preventDefault();
         handleSearch();
+    });
+}
+
+if (els.retrySearchButton) {
+    els.retrySearchButton.addEventListener('click', () => {
+        if (!lastSearchQuery) return;
+        els.input.value = lastSearchQuery;
+        void handleSearch();
     });
 }

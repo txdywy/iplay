@@ -171,10 +171,28 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/detail?id=550988&type=movie"
   "cast": ["吴京", "屈楚萧", "李光洁", "吴孟达"],
   "director": ["郭帆"],
   "writer": ["龚格尔", "严东旭"],
+  "totalSeasons": null,
+  "totalEpisodes": null,
+  "seasons": [],
   "tmdbRating": 6.4,
   "tmdbVotes": 1205,
   "imdbId": "tt7605074",
   "popularity": 45.2
+}
+```
+
+当 `mediaType` 为 `tv` 时，`totalSeasons` 和 `totalEpisodes` 分别表示总季数和总集数；`seasons` 会按季号升序返回每季信息。特别篇使用 `seasonNumber: 0`，尚未公布集数的季度会返回 `episodeCount: null`。
+
+```json
+{
+  "totalSeasons": 3,
+  "totalEpisodes": 20,
+  "seasons": [
+    { "seasonNumber": 0, "name": "Specials", "episodeCount": 2 },
+    { "seasonNumber": 1, "name": "Season 1", "episodeCount": 10 },
+    { "seasonNumber": 2, "name": "Season 2", "episodeCount": 8 },
+    { "seasonNumber": 3, "name": "Season 3", "episodeCount": null }
+  ]
 }
 ```
 
@@ -494,6 +512,14 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 ## 前端 API Client 参考
 
 前端使用 `js/api.js` 中的模块与 Worker 通信。所有方法均支持 `options.signal` 传入 `AbortController.signal` 以取消请求。
+
+### 前端搜索与恢复行为
+
+`js/main.js` 使用 `js/match.js` 对 Worker 返回的候选进行二次判断：高置信度且分数明显领先的结果会直接加载详情；中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。
+
+详情接口失败时，页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；资源聚合失败时，三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
+
+剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。
 
 ### 通用配置
 
