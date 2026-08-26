@@ -780,6 +780,57 @@ test('TMDB detail retries the alternate media type only after a not-found respon
     assert.equal(requestedUrls.length, 2);
 });
 
+test('TMDB TV detail exposes normalized per-season episode counts', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        assert.match(String(url), /\/tv\/123/);
+        return Response.json({
+            id: 123,
+            name: '示例剧集',
+            number_of_seasons: 3,
+            number_of_episodes: 20,
+            seasons: [
+                { season_number: 2, name: 'Season 2', episode_count: 8 },
+                { season_number: 0, name: 'Specials', episode_count: 2 },
+                { season_number: 1, name: 'Season 1', episode_count: '10' },
+                { season_number: 'invalid', episode_count: 99 },
+                { season_number: 3, name: 'Season 3' }
+            ]
+        });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/detail?id=123&type=tv', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-season-counts' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.totalSeasons, 3);
+    assert.equal(body.totalEpisodes, 20);
+    assert.deepEqual(body.seasons, [
+        { seasonNumber: 0, name: 'Specials', episodeCount: 2 },
+        { seasonNumber: 1, name: 'Season 1', episodeCount: 10 },
+        { seasonNumber: 2, name: 'Season 2', episodeCount: 8 },
+        { seasonNumber: 3, name: 'Season 3', episodeCount: null }
+    ]);
+});
+
 test('TMDB upstream requests carry a timeout signal', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;

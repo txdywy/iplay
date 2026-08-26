@@ -93,15 +93,15 @@ User submits query from search form
 
 ### 2. Detail Page Flow
 
-After search, the frontend selects the best TMDB match, renders its core detail, then starts independent enrichment requests:
+After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It then renders core detail and starts independent enrichment requests:
 
 ```
 User submits a search
         |
         v
 +-------+-------+
-|  js/main.js   |  -- pickBestTmdbMatch() selects
-|               |     optimal result
+|  js/match.js  |  -- ranks candidates and decides
+|               |     whether the user must confirm
 +-------+-------+
         |
         +--------+--------+--------+--------+
@@ -123,10 +123,11 @@ User submits a search
 +-------+-------+
 |  js/main.js   |  -- Progressive rendering:
 |               |     1. Show skeleton/loading
-|               |     2. Render poster + basic info
+|               |     2. Render poster + basic info (or fallback)
 |               |     3. Render ratings (TMDB, Douban, IMDb, RT)
 |               |     4. Render AI score + analysis
 |               |     5. Render wiki summary + resources
+|               |     6. Keep partial results visible and expose retry actions
 +---------------+
 ```
 
@@ -178,8 +179,10 @@ found?      |
 | Component | File | Description |
 |-----------|------|-------------|
 | **SPA Shell** | `index.html` | Single-page application shell. Dark theme (`#0a0a0c`), Netflix-red accent (`#e50914`), film grain SVG overlay, ambient glow radial gradient, typewriter cursor animation. Responsive layout with poster sidebar + content area. |
-| **UI Controller** | `js/main.js` | Search form handling, best-match selection, progressive detail rendering, preference settings, resource states, and toast notifications. |
-| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 8s default timeout; 20s for resource search). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `ResourceAPI`, `PosterAPI`. |
+| **UI Controller** | `js/main.js` | Search form handling, candidate confirmation, progressive detail rendering, fallback/retry states, season facts, resource pagination, and toast notifications. |
+| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 12s default timeout; 18s for resource and poster aggregation). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `ResourceAPI`, `PosterAPI`. |
+| **Match Rules** | `js/match.js` | Normalizes title text, ranks TMDB candidates, and detects low-confidence or close-score results that require user confirmation. |
+| **Season Formatter** | `js/seasons.js` | Formats total seasons/episodes and per-season episode counts, including specials and unknown counts. |
 | **Quark Formatter** | `js/quark.js` | Formats share URLs and optional extraction passwords for clipboard copy. |
 | **Scoring Engine** | `js/scorer.js` | Client-side recommendation algorithm. Genre preference weights loaded from `localStorage` (key `iplay_preference_weights`). Score = base (rating) + heat (votes/wiki) + preference (genre match). Fatal flaws (score <= -2.5 genres) cap at 59. |
 | **Styles** | `css/input.css` / `css/output.css` | Tailwind CSS v4 with custom theme: `Noto Serif SC` + `Space Mono` fonts, cinema color palette (`cinema-900` through `cinema-100`), accent red and gold. |
@@ -207,7 +210,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | Method | Path | Query Params | Description |
 |--------|------|--------------|-------------|
 | `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Normalizes title intent, ranks by match confidence, and uses bounded fallback queries. |
-| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits and external IDs; retries the alternate valid type only after a `404`. |
+| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; retries the alternate valid type only after a `404`. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
 | `GET` | `/api/resource` | `q` (string) | Search By669 and WPZYS, then extract and deduplicate Quark netdisk URLs. |

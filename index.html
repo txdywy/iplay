@@ -13,11 +13,11 @@
     <meta name="twitter:title" content="iPlay · 沉浸式观影指南">
     <meta name="twitter:description" content="聚合多源评分，AI 个性化推荐，一键获取资源链接。">
     <meta name="theme-color" content="#0a0a0c">
-    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="./favicon.ico" sizes="any">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="/css/output.css" rel="stylesheet">
+    <link href="./css/output.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
@@ -35,11 +35,13 @@
         </p>
 
         <form id="searchForm" class="w-full max-w-2xl relative group flex" autocomplete="off">
-            <input type="text" id="searchInput" maxlength="100" enterkeyhint="search" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影"
-                   class="search-input w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/80 text-center leading-[normal]">
+            <input type="text" id="searchInput" maxlength="100" enterkeyhint="search" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影" aria-describedby="searchStatus"
+                   class="search-input min-w-0 w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/80 text-center leading-[normal]">
             <button type="submit" id="searchButton" aria-label="搜索"
-                    class="absolute right-4 top-1/2 -translate-y-1/2 grid h-10 w-10 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-[transform,background-color,border-color] hover:border-accent-red hover:bg-accent-red/10 active:scale-95 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-                <i class="fas fa-search"></i>
+                    class="absolute right-4 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-[transform,background-color,border-color] hover:border-accent-red hover:bg-accent-red/10 active:scale-95 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+                <svg aria-hidden="true" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m1.35-5.15a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"></path>
+                </svg>
             </button>
         </form>
         <p id="searchStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
@@ -48,13 +50,26 @@
     <main class="w-full max-w-[92rem] px-6 md:px-8 pb-24 relative z-10">
         <div id="loadingState" class="hidden flex flex-col items-center justify-center py-20 fade-up" role="status" aria-live="polite">
             <div class="w-12 h-12 border-2 border-cinema-700 border-t-accent-red rounded-full animate-spin mb-6"></div>
-            <p class="font-mono text-cinema-400 text-sm tracking-widest uppercase">Connecting to satellites<span class="cursor-blink">_</span></p>
+            <p class="font-mono text-cinema-400 text-sm tracking-widest">正在连接数据源<span class="cursor-blink" aria-hidden="true">_</span></p>
         </div>
 
+        <section id="candidatePicker" class="hidden mb-8 rounded-3xl border border-accent-gold/30 bg-cinema-800/60 p-5 md:p-6 fade-up" aria-labelledby="candidatePickerTitle">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <p class="font-mono text-xs uppercase tracking-[0.3em] text-accent-gold">请确认匹配结果</p>
+                    <h2 id="candidatePickerTitle" class="mt-2 text-xl font-bold text-cinema-100">搜索到多个可能的影视条目</h2>
+                    <p class="mt-1 text-sm text-cinema-400">输入：<span id="candidatePickerQuery" class="text-cinema-100"></span>。选择正确条目后再加载详情，避免同名误匹配。</p>
+                </div>
+                <span class="font-mono text-xs text-cinema-400">TMDB CANDIDATES</span>
+            </div>
+            <div id="candidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </section>
+
         <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center" role="alert">
-            <i class="fas fa-exclamation-triangle text-accent-red text-3xl mb-4"></i>
+            <i class="fas fa-exclamation-triangle text-accent-red text-3xl mb-4" aria-hidden="true"></i>
             <p id="errorMsg" class="text-cinema-100 font-mono text-sm"></p>
             <p class="text-cinema-400 text-xs mt-4">网络存在波动，请稍后重试。</p>
+            <button id="retrySearchButton" type="button" class="mt-5 rounded-full border border-accent-red/50 px-5 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-accent-red hover:bg-accent-red/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">重试搜索</button>
         </div>
 
         <div id="resultsArea" class="hidden space-y-10">
@@ -76,7 +91,7 @@
                     <div class="hidden lg:block bg-cinema-800/50 border border-cinema-700 rounded-2xl p-4 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
                         <div class="flex items-center justify-between gap-3 mb-3">
                             <div>
-                                <div class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Movie profile</div>
+                                <div id="tmdbProfileLabel" class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Media profile</div>
                                 <div class="text-xs text-cinema-400/70 mt-0.5">TMDB • OMDb</div>
                             </div>
                             <div class="text-right">
@@ -93,6 +108,8 @@
 
                 <!-- ── RIGHT CONTENT AREA ── -->
                 <div class="flex flex-col gap-6 min-w-0">
+
+                    <div id="dataNotice" class="hidden" aria-live="polite"></div>
 
                     <!-- Title + Subtitle -->
                     <div>
@@ -141,7 +158,7 @@
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
                         <!-- AI Recommendation Score -->
                         <div class="bg-cinema-800/50 border border-cinema-700 rounded-3xl p-5 md:p-6 relative overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.3)]">
-                            <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fas fa-microchip text-6xl"></i></div>
+                            <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fas fa-microchip text-6xl" aria-hidden="true"></i></div>
                             <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 mb-4">iPlay AI Recommendation Score</h3>
                             <div class="flex items-baseline gap-4 mb-3">
                                 <span id="recScore" class="text-5xl md:text-7xl font-black font-mono"></span>
@@ -156,11 +173,11 @@
                                 <h4 class="font-mono text-xs uppercase tracking-widest text-cinema-400 mb-3">Analysis Report</h4>
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
-                                        <h5 class="text-green-500 font-bold mb-2 text-xs"><i class="fas fa-check-circle"></i> 推荐理由</h5>
+                                        <h5 class="text-green-500 font-bold mb-2 text-xs"><i class="fas fa-check-circle" aria-hidden="true"></i> 推荐理由</h5>
                                         <ul id="prosList" class="space-y-1 text-cinema-100 text-xs"></ul>
                                     </div>
                                     <div>
-                                        <h5 class="text-accent-red font-bold mb-2 text-xs"><i class="fas fa-times-circle"></i> 避雷警告</h5>
+                                        <h5 class="text-accent-red font-bold mb-2 text-xs"><i class="fas fa-times-circle" aria-hidden="true"></i> 避雷警告</h5>
                                         <ul id="consList" class="space-y-1 text-cinema-100 text-xs"></ul>
                                     </div>
                                 </div>
@@ -169,14 +186,14 @@
 
                         <!-- Synopsis -->
                         <div class="space-y-4">
-                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 border-l-2 border-accent-red pl-3">Synopsis</h3>
+                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 border-l-2 border-accent-red pl-3">剧情简介</h3>
                             <div id="wikiSummary" class="text-cinema-100 leading-relaxed text-sm md:text-base opacity-80 font-light bg-cinema-800/35 border border-cinema-700 rounded-3xl p-5 md:p-6"></div>
                         </div>
                     </div>
 
                     <!-- TMDB Overview -->
                     <div class="bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
-                        <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 mb-4">TMDB Overview</h3>
+                        <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 mb-4">TMDB 概述</h3>
                         <div id="tmdbOverview" class="text-cinema-100 leading-relaxed text-sm md:text-base opacity-90 font-light"></div>
                     </div>
 
@@ -184,11 +201,11 @@
                     <div id="omdbPanel" class="bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
                         <div class="flex items-center justify-between gap-4 mb-4">
                             <div>
-                                <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Source Dossier</h3>
-                            <p class="text-xs text-cinema-400/80 font-mono mt-1">TMDB first, with OMDb depth layered beneath</p>
+                                <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">数据档案</h3>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">TMDB 主数据 · OMDb / IMDb 补充</p>
                             </div>
                             <div class="text-right">
-                                <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest">OMDb / IMDb</div>
+                                <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest">DETAILS</div>
                             </div>
                         </div>
                         <div id="omdbFields" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm"></div>
@@ -203,10 +220,10 @@
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
-                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Urls</h3>
-                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Direct links extracted from resource pages</p>
+                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">夸克直链</h3>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">从资源页面提取的可用链接</p>
                         </div>
-                        <i class="fas fa-cloud text-accent-red/80"></i>
+                        <i class="fas fa-cloud text-accent-red/80" aria-hidden="true"></i>
                     </div>
                     <ul id="quarkUrlList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
@@ -214,10 +231,10 @@
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
-                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Quark Resources</h3>
-                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Source pages that contain the download links</p>
+                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">夸克资源页</h3>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">包含下载链接的来源页面</p>
                         </div>
-                        <i class="fas fa-link text-[#0099ff]"></i>
+                        <i class="fas fa-link text-[#0099ff]" aria-hidden="true"></i>
                     </div>
                     <ul id="resourceList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
@@ -225,10 +242,10 @@
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>
-                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">WPZYS Forum</h3>
-                            <p class="text-xs text-cinema-400/80 font-mono mt-1">Matching forum posts filtered for Quark resources</p>
+                            <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">WPZYS 论坛</h3>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">筛选包含夸克资源的匹配帖子</p>
                         </div>
-                        <i class="fas fa-comments text-accent-gold/80"></i>
+                        <i class="fas fa-comments text-accent-gold/80" aria-hidden="true"></i>
                     </div>
                     <ul id="wpzysResourceList" class="resource-scroll-surface divide-y divide-cinema-700/50 scroll-surface pr-1"></ul>
                 </div>
@@ -236,7 +253,7 @@
         </div>
     </main>
 
-    <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-[transform,opacity] duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-6 right-6 max-w-[min(90vw,28rem)] transform translate-y-20 opacity-0 transition-[transform,opacity] duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
 
     <script type="module" src="./js/main.js"></script>
 </body>

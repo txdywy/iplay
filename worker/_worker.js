@@ -570,6 +570,32 @@ function normalizeTmdbItem(item, mediaTypeOverride = null, match = null) {
     return normalized;
 }
 
+function toNonNegativeInteger(value) {
+    const numericValue = toFiniteMetric(value);
+    return Number.isSafeInteger(numericValue) && numericValue >= 0 ? numericValue : null;
+}
+
+function normalizeTmdbSeasons(data, type) {
+    if (type !== "tv" || !Array.isArray(data.seasons)) return [];
+
+    const seenSeasonNumbers = new Set();
+    const seasons = [];
+
+    for (const season of data.seasons.filter(isObject).slice(0, 100)) {
+        const seasonNumber = toNonNegativeInteger(season.season_number);
+        if (seasonNumber === null || seenSeasonNumbers.has(seasonNumber)) continue;
+
+        seenSeasonNumbers.add(seasonNumber);
+        seasons.push({
+            seasonNumber,
+            name: pickTmdbText(season.name) || null,
+            episodeCount: toNonNegativeInteger(season.episode_count)
+        });
+    }
+
+    return seasons.sort((left, right) => left.seasonNumber - right.seasonNumber);
+}
+
 function normalizeTmdbDetail(data, type) {
     if (!isObject(data)) return null;
 
@@ -610,6 +636,9 @@ function normalizeTmdbDetail(data, type) {
         cast,
         director: cleanDirector,
         writer: cleanWriter,
+        totalSeasons: type === "tv" ? toNonNegativeInteger(data.number_of_seasons) : null,
+        totalEpisodes: type === "tv" ? toNonNegativeInteger(data.number_of_episodes) : null,
+        seasons: normalizeTmdbSeasons(data, type),
         tmdbRating: toFiniteMetric(data.vote_average),
         tmdbVotes: Math.max(0, Math.floor(toFiniteMetric(data.vote_count, 0))),
         imdbId: typeof data.external_ids?.imdb_id === "string" ? data.external_ids.imdb_id : null,
