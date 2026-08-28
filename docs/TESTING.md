@@ -12,7 +12,7 @@ iPlay 目前采用轻量级测试策略：
 
 - **CI 测试命令**: `npm test` = `node --test && npm run lint && npm run build`
 - **单元测试框架**: Node.js 内置测试运行器（无需 Jest / Vitest）
-- **E2E 测试**: 未配置
+- **浏览器烟测**: `tests/browser-smoke.mjs`，通过 Chrome DevTools Protocol 覆盖关键页面行为
 - **代码检查**: ESLint（flat config，`eslint.config.mjs`）
 - **覆盖率命令**: `npm run test:coverage`
 
@@ -64,6 +64,15 @@ iPlay 目前采用轻量级测试策略：
 npm test
 npm run test:coverage
 ```
+
+浏览器烟测不依赖额外 npm 包，但需要将脚本连接到隔离的 Chrome 页面，并先启动静态服务器：
+
+```bash
+python3 -m http.server 4173 --bind 127.0.0.1
+BROWSER_WS='ws://127.0.0.1:9224/devtools/page/<page-id>' npm run test:browser
+```
+
+烟测覆盖首屏搜索、资源区进入视口后的自动启动、资源失败重试、旧搜索请求保护，以及不支持 `IntersectionObserver` 时的定时器回退。
 
 下面的 Vitest 示例仅用于团队未来需要 watch 模式或更丰富 mock API 时参考；当前项目不依赖 Vitest。
 

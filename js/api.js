@@ -8,6 +8,7 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
 const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
 const POSTER_TIMEOUT_MS = 18000;
+const OMDB_TIMEOUT_MS = 12000;
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const controller = new AbortController();
@@ -92,6 +93,32 @@ export const WikiAPI = {
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Wiki zh fetch failed:", e);
+            return null;
+        }
+    }
+};
+
+/**
+ * OMDb 详情接口：使用 TMDB 已确认的 IMDb ID，避免再次按片名搜索。
+ */
+export const OmdbAPI = {
+    async getById(imdbId, options = {}) {
+        if (!imdbId) return null;
+        try {
+            return await fetchWithTimeout(`${API_BASE}/api/omdb?imdb=${encodeURIComponent(imdbId)}`, options, OMDB_TIMEOUT_MS);
+        } catch (e) {
+            if (e.name === 'AbortError') throw e;
+            console.debug("OMDb fetch failed:", e);
+            return null;
+        }
+    },
+    async search(title, year, options = {}) {
+        if (!title) return null;
+        try {
+            return await fetchWithTimeout(`${API_BASE}/api/omdb?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options, OMDB_TIMEOUT_MS);
+        } catch (e) {
+            if (e.name === 'AbortError') throw e;
+            console.debug("OMDb title fetch failed:", e);
             return null;
         }
     }

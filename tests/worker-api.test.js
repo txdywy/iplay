@@ -412,6 +412,86 @@ test('TMDB search keeps movie and TV results that share the same numeric id', as
     ]);
 });
 
+test('direct TMDB search and detail routes use the resized poster URL', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const value = String(url);
+        if (value.includes('/search/multi')) {
+            return Response.json({
+                page: 1,
+                total_results: 1,
+                results: [{
+                    id: 321,
+                    media_type: 'movie',
+                    title: 'Poster Check',
+                    original_title: 'Poster Check',
+                    release_date: '2024-01-01',
+                    poster_path: '/poster.jpg',
+                    backdrop_path: '/backdrop.jpg',
+                    overview: 'A poster test.',
+                    vote_average: 7.5,
+                    vote_count: 100,
+                    popularity: 10
+                }]
+            });
+        }
+        if (value.includes('/movie/321')) {
+            return Response.json({
+                id: 321,
+                title: 'Poster Check',
+                original_title: 'Poster Check',
+                release_date: '2024-01-01',
+                poster_path: '/poster.jpg',
+                backdrop_path: '/backdrop.jpg',
+                overview: 'A poster test.',
+                vote_average: 7.5,
+                vote_count: 100,
+                popularity: 10,
+                credits: {},
+                external_ids: { imdb_id: 'tt3210000' }
+            });
+        }
+        throw new Error(`Unexpected fetch: ${value}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const searchResponse = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/search?q=Poster%20Check', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-poster-search' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const searchBody = await searchResponse.json();
+
+    const detailResponse = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/detail?id=321&type=movie', {
+            headers: { 'cf-connecting-ip': 'test-tmdb-poster-detail' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const detailBody = await detailResponse.json();
+
+    assert.equal(searchResponse.status, 200);
+    assert.equal(detailResponse.status, 200);
+    assert.equal(searchBody.results[0].poster, 'https://image.tmdb.org/t/p/w500/poster.jpg');
+    assert.equal(searchBody.results[0].backdrop, 'https://image.tmdb.org/t/p/w780/backdrop.jpg');
+    assert.equal(detailBody.poster, 'https://image.tmdb.org/t/p/w500/poster.jpg');
+    assert.equal(detailBody.backdrop, 'https://image.tmdb.org/t/p/w780/backdrop.jpg');
+});
+
 test('TMDB search ranks title confidence ahead of popularity', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
@@ -1256,7 +1336,7 @@ test('resource search ignores an oversized forum response body', async t => {
 test('OMDb accepts the documented i parameter as an IMDb id alias', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
-    let upstreamUrl = '';
+    const upstreamUrls = [];
 
     globalThis.caches = {
         default: {
@@ -1265,7 +1345,7 @@ test('OMDb accepts the documented i parameter as an IMDb id alias', async t => {
         }
     };
     globalThis.fetch = async url => {
-        upstreamUrl = String(url);
+        upstreamUrls.push(String(url));
         return Response.json({
             Response: 'True',
             imdbID: 'tt1234567',
@@ -1287,7 +1367,87 @@ test('OMDb accepts the documented i parameter as an IMDb id alias', async t => {
     );
 
     assert.equal(response.status, 200);
-    assert.match(upstreamUrl, /[?&]i=tt1234567(?:&|$)/);
+    const clientParameterResponse = await worker.fetch(
+        new Request('https://worker.test/api/omdb?imdb=tt1234567', {
+            headers: { 'cf-connecting-ip': 'test-omdb-imdb-parameter' }
+        }),
+        { OMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(clientParameterResponse.status, 200);
+    assert.equal(upstreamUrls.length, 2);
+    assert.ok(upstreamUrls.every(url => /[?&]i=tt1234567(?:&|$)/.test(url)));
+});
+
+test('OMDb exposes provider application errors instead of reporting every failure as not found', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json({
+        Response: 'False',
+        Error: 'Request limit reached!'
+    });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/omdb?imdb=tt7654321', {
+            headers: { 'cf-connecting-ip': 'test-omdb-application-error' }
+        }),
+        { OMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 429);
+    assert.deepEqual(await response.json(), { error: 'OMDb: Request limit reached!' });
+});
+
+test('OMDb distinguishes malformed provider payloads from an explicit not-found response', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    let payload = {};
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json(payload);
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const malformedResponse = await worker.fetch(
+        new Request('https://worker.test/api/omdb?imdb=tt7654322', {
+            headers: { 'cf-connecting-ip': 'test-omdb-malformed-payload' }
+        }),
+        { OMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    assert.equal(malformedResponse.status, 502);
+    assert.deepEqual(await malformedResponse.json(), { error: 'OMDb returned an invalid response' });
+
+    payload = { Response: 'False', Error: 'Movie not found!' };
+    const notFoundResponse = await worker.fetch(
+        new Request('https://worker.test/api/omdb?imdb=tt7654323', {
+            headers: { 'cf-connecting-ip': 'test-omdb-explicit-not-found' }
+        }),
+        { OMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    assert.equal(notFoundResponse.status, 404);
+    assert.deepEqual(await notFoundResponse.json(), { error: 'OMDb: Not found' });
 });
 
 test('OMDb rejects malformed IMDb identifiers before calling upstream', async t => {
@@ -1562,6 +1722,7 @@ test('poster aggregation short-caches a usable result when a configured source f
 
     assert.equal(response.status, 200);
     assert.equal(body.tmdb, true);
+    assert.match(body.poster, /\/w500\//);
     assert.ok(posterCacheWrite);
     assert.equal(posterCacheWrite.cacheControl, 'public, max-age=900');
 });

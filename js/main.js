@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js';
 import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
 import { copyQuarkShare, formatQuarkCopyText } from './quark.js';
 import { formatRating, toFiniteNumber } from './format.js';
@@ -25,6 +25,9 @@ const els = {
     results: document.getElementById('resultsArea'),
     searchStatus: document.getElementById('searchStatus'),
     dataNotice: document.getElementById('dataNotice'),
+    wikiStatus: document.getElementById('wikiStatus'),
+    omdbStatus: document.getElementById('omdbStatus'),
+    resourceSection: document.getElementById('resourcesSection'),
 
     cover: document.getElementById('showCover'),
     title: document.getElementById('showTitle'),
@@ -60,6 +63,7 @@ const els = {
     consList: document.getElementById('consList'),
 
     wikiSummary: document.getElementById('wikiSummary'),
+    resourceStatus: document.getElementById('resourcesStatus'),
     resourceList: document.getElementById('resourceList'),
     wpzysResourceList: document.getElementById('wpzysResourceList'),
     quarkUrlList: document.getElementById('quarkUrlList'),
@@ -114,7 +118,7 @@ function showDataNotice({ title, detail, actionLabel = '', onAction = null, tone
     if (actionLabel && typeof onAction === 'function') {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'shrink-0 rounded-full border border-cinema-400/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.className = 'shrink-0 min-h-11 rounded-full border border-cinema-400/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
         button.textContent = actionLabel;
         button.addEventListener('click', async () => {
             button.disabled = true;
@@ -221,21 +225,53 @@ function pickBestDoubanMatch(results, query) {
     return findBestMatch(results, query, item => item.title);
 }
 
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const ICON_PATHS = Object.freeze({
+    cloud: 'M7 18a4 4 0 1 1 .6-7.95A5.5 5.5 0 0 1 18 12.5h.5a3.5 3.5 0 1 1 0 7H7Z',
+    comments: 'M5 5h14v10H9l-4 3v-3H5V5Z',
+    external: 'M14 4h6v6m0-6-8 8M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4',
+    link: 'M10 13a5 5 0 0 0 7.07 0l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15m3.15 5.93a5 5 0 0 0-7.07 0l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15',
+    minus: 'M5 12h14',
+    plus: 'M12 5v14M5 12h14'
+});
+const RESOURCE_OBSERVER_ROOT_MARGIN = '320px 0px';
+const RESOURCE_IDLE_TIMEOUT_MS = 1400;
+const RESOURCE_TIMER_FALLBACK_MS = 1200;
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
+
+function createIcon(name, className = '') {
+    const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '1.8');
+    icon.setAttribute('stroke-linecap', 'round');
+    icon.setAttribute('stroke-linejoin', 'round');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('focusable', 'false');
+    if (className) icon.setAttribute('class', className);
+
+    const path = document.createElementNS(SVG_NAMESPACE, 'path');
+    path.setAttribute('d', ICON_PATHS[name] || ICON_PATHS.link);
+    icon.appendChild(path);
+    return icon;
+}
 
 if (els.cover) {
     els.cover.addEventListener('error', () => {
-        if (els.cover.src !== POSTER_PLACEHOLDER) els.cover.src = POSTER_PLACEHOLDER;
+        els.cover.setAttribute('aria-busy', 'false');
+        if (els.cover.getAttribute('src') !== POSTER_PLACEHOLDER) els.cover.setAttribute('src', POSTER_PLACEHOLDER);
     });
+    els.cover.addEventListener('load', () => els.cover.setAttribute('aria-busy', 'false'));
 }
 
 function loadPoster(posterUrl, title = '') {
+    if (!els.cover) return;
     els.cover.alt = title ? `${title} 海报` : '影视海报';
-    if (posterUrl) {
-        els.cover.src = posterUrl;
-    } else {
-        els.cover.src = POSTER_PLACEHOLDER;
-    }
+    const nextSource = posterUrl || POSTER_PLACEHOLDER;
+    if (els.cover.getAttribute('src') === nextSource) return;
+    els.cover.setAttribute('aria-busy', String(Boolean(posterUrl)));
+    els.cover.setAttribute('src', nextSource);
 }
 
 function setText(el, value) {
@@ -488,6 +524,7 @@ function renderTmdbProfile(viewModel) {
 
 function renderSynopsis(sourceLabel, text) {
     if (!els.wikiSummary) return;
+    els.wikiSummary.setAttribute('aria-busy', 'false');
     els.wikiSummary.textContent = '';
 
     const source = document.createElement('span');
@@ -507,6 +544,17 @@ function renderSynopsis(sourceLabel, text) {
         empty.textContent = '暂无剧情简介';
         els.wikiSummary.appendChild(empty);
     }
+}
+
+function setEnrichmentStatus(element, message, isPending = false) {
+    if (!element) return;
+    element.textContent = message;
+    element.setAttribute('aria-busy', String(isPending));
+    element.classList.toggle('animate-pulse', isPending);
+}
+
+function setResourceStatus(message, isPending = false) {
+    setEnrichmentStatus(els.resourceStatus, message, isPending);
 }
 
 function safeHostname(url) {
@@ -533,7 +581,7 @@ function toSafeHttpUrl(rawUrl) {
 }
 
 function renderLinkCards(container, items, {
-    emptyLabel, itemClass, cardClass, iconClass, metaClass, metaText, titleText,
+    emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
     detailText, sourceText, actionLabel, onAction, limit, initialLimit = 6
 }) {
     if (!container) return;
@@ -604,9 +652,7 @@ function renderLinkCards(container, items, {
                 content.appendChild(source);
             }
 
-            const icon = document.createElement('i');
-            icon.className = iconClass;
-            icon.setAttribute('aria-hidden', 'true');
+            const icon = createIcon(iconName, iconClass);
 
             row.appendChild(content);
             row.appendChild(icon);
@@ -617,7 +663,7 @@ function renderLinkCards(container, items, {
 
                 const button = document.createElement('button');
                 button.type = 'button';
-                button.className = 'mt-3 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-70';
+                button.className = 'mt-3 min-h-11 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-70';
                 button.textContent = resolvedActionLabel;
                 button.setAttribute('aria-live', 'polite');
                 button.addEventListener('click', async () => {
@@ -645,7 +691,7 @@ function renderLinkCards(container, items, {
             li.className = 'p-3';
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = `显示更多（剩余 ${maxItems - visibleLimit} 条）`;
             button.addEventListener('click', () => renderVisibleItems(maxItems));
             li.appendChild(button);
@@ -655,7 +701,7 @@ function renderLinkCards(container, items, {
             li.className = 'p-3';
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = '收起列表';
             button.addEventListener('click', () => renderVisibleItems(firstPageSize));
             li.appendChild(button);
@@ -668,7 +714,7 @@ function renderLinkCards(container, items, {
     renderVisibleItems(firstPageSize);
 }
 
-function renderResourceStatus(container, { title, detail, iconClass, progressClass, isLoading = true, actionLabel = '', onAction = null }) {
+function renderResourceStatus(container, { title, detail, iconName, iconClass, progressClass, isLoading = true, actionLabel = '', onAction = null }) {
     if (!container) return;
     clearNode(container);
 
@@ -683,9 +729,7 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
     const row = document.createElement('div');
     row.className = 'flex items-start gap-3';
 
-    const icon = document.createElement('i');
-    icon.className = `${iconClass} mt-1 opacity-80`;
-    icon.setAttribute('aria-hidden', 'true');
+    const icon = createIcon(iconName, `h-5 w-5 shrink-0 ${iconClass} mt-1 opacity-80`);
 
     const content = document.createElement('div');
     content.className = 'min-w-0 flex-1';
@@ -715,7 +759,7 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
     if (!isLoading && actionLabel && typeof onAction === 'function') {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'mt-4 rounded-full border border-cinema-400/60 px-4 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.className = 'mt-4 min-h-11 rounded-full border border-cinema-400/60 px-4 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
         button.textContent = actionLabel;
         button.addEventListener('click', async () => {
             button.disabled = true;
@@ -733,31 +777,71 @@ function renderResourceStatus(container, { title, detail, iconClass, progressCla
 }
 
 function renderResourceLoadingStates(title) {
+    setResourceStatus('正在扫描资源…', true);
     renderResourceStatus(els.quarkUrlList, {
         title: '正在提取夸克直链',
         detail: `正在扫描“${title}”的资源页面`,
-        iconClass: 'fas fa-cloud text-accent-red',
+        iconName: 'cloud',
+        iconClass: 'text-accent-red',
         progressClass: 'resource-progress-red'
     });
     renderResourceStatus(els.resourceList, {
         title: '正在收集资源页面',
         detail: '正在检查资源索引和论坛帖子',
-        iconClass: 'fas fa-link text-[#0099ff]',
+        iconName: 'link',
+        iconClass: 'text-[#0099ff]',
         progressClass: 'resource-progress-blue'
     });
     renderResourceStatus(els.wpzysResourceList, {
         title: '正在搜索 WPZYS 论坛',
         detail: '正在筛选包含夸克资源的匹配帖子',
-        iconClass: 'fas fa-comments text-accent-gold',
+        iconName: 'comments',
+        iconClass: 'text-accent-gold',
         progressClass: 'resource-progress-gold'
     });
 }
 
+function renderResourceDeferredStates(title, onStart) {
+    setResourceStatus('资源扫描待启动，资源区接近视口或点击按钮后开始');
+    renderResourceStatus(els.quarkUrlList, {
+        title: '资源扫描待启动',
+        detail: `滚动到这里或点击按钮，开始扫描“${title}”`,
+        iconName: 'cloud',
+        iconClass: 'text-accent-red',
+        progressClass: 'resource-progress-red',
+        isLoading: false,
+        actionLabel: '开始扫描资源',
+        onAction: onStart
+    });
+    renderResourceStatus(els.resourceList, {
+        title: '资源页面待加载',
+        detail: '资源扫描会在影视详情先显示后开始',
+        iconName: 'link',
+        iconClass: 'text-[#0099ff]',
+        progressClass: 'resource-progress-blue',
+        isLoading: false,
+        actionLabel: '开始扫描资源',
+        onAction: onStart
+    });
+    renderResourceStatus(els.wpzysResourceList, {
+        title: '论坛结果待加载',
+        detail: '需要时再扫描论坛，减少首屏等待和无效请求',
+        iconName: 'comments',
+        iconClass: 'text-accent-gold',
+        progressClass: 'resource-progress-gold',
+        isLoading: false,
+        actionLabel: '开始扫描资源',
+        onAction: onStart
+    });
+}
+
 function renderResourceErrorStates(onRetry) {
+    setResourceStatus('资源扫描失败，可重试');
     renderResourceStatus(els.quarkUrlList, {
         title: '夸克直链暂时不可用',
         detail: '资源扫描没有完成，其他影视信息仍可正常使用',
-        iconClass: 'fas fa-cloud text-accent-red',
+        iconName: 'cloud',
+        iconClass: 'text-accent-red',
         progressClass: 'resource-progress-red',
         isLoading: false,
         actionLabel: '重试资源扫描',
@@ -766,7 +850,8 @@ function renderResourceErrorStates(onRetry) {
     renderResourceStatus(els.resourceList, {
         title: '资源来源暂时没有响应',
         detail: '上方影视详情仍可使用，你可以重新扫描资源',
-        iconClass: 'fas fa-link text-[#0099ff]',
+        iconName: 'link',
+        iconClass: 'text-[#0099ff]',
         progressClass: 'resource-progress-blue',
         isLoading: false,
         actionLabel: '重试资源扫描',
@@ -775,7 +860,8 @@ function renderResourceErrorStates(onRetry) {
     renderResourceStatus(els.wpzysResourceList, {
         title: 'WPZYS 扫描已暂停',
         detail: '论坛结果可能暂时不可用，你可以稍后重试',
-        iconClass: 'fas fa-comments text-accent-gold',
+        iconName: 'comments',
+        iconClass: 'text-accent-gold',
         progressClass: 'resource-progress-gold',
         isLoading: false,
         actionLabel: '重试资源扫描',
@@ -788,7 +874,8 @@ function renderResourceList(resources) {
         emptyLabel: '暂未发现资源页面',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/30 p-4 transition-[transform,background-color,border-color] hover:border-cinema-400/70 hover:bg-cinema-800/50 hover:-translate-y-0.5',
-        iconClass: 'fas fa-external-link-alt text-[#0099ff] mt-1 opacity-70',
+        iconName: 'external',
+        iconClass: 'h-5 w-5 shrink-0 text-[#0099ff] mt-1 opacity-70',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
@@ -802,7 +889,8 @@ function renderWpzysResourceList(resources) {
         emptyLabel: '暂未匹配到 WPZYS 夸克资源',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-[transform,background-color,border-color] hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
-        iconClass: 'fas fa-comments text-accent-gold mt-1 opacity-80',
+        iconName: 'comments',
+        iconClass: 'h-5 w-5 shrink-0 text-accent-gold mt-1 opacity-80',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
@@ -816,7 +904,8 @@ function renderQuarkUrls(quarkUrls) {
         emptyLabel: '暂未提取到夸克链接',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-[transform,background-color,border-color] hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
-        iconClass: 'fas fa-cloud text-accent-red mt-1 opacity-80',
+        iconName: 'cloud',
+        iconClass: 'h-5 w-5 shrink-0 text-accent-red mt-1 opacity-80',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
@@ -891,9 +980,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
             scoreData.report.pros.forEach(p => {
                 const li = document.createElement('li');
                 li.className = 'flex gap-2 items-start';
-                const icon = document.createElement('i');
-                icon.className = 'fas fa-plus text-green-500 mt-1';
-                icon.setAttribute('aria-hidden', 'true');
+                const icon = createIcon('plus', 'h-3 w-3 shrink-0 text-green-500 mt-1');
                 const span = document.createElement('span');
                 span.textContent = p;
                 li.appendChild(icon);
@@ -913,9 +1000,7 @@ function renderScore(data, sourceLabel, isUpdate = false) {
             scoreData.report.cons.forEach(c => {
                 const li = document.createElement('li');
                 li.className = 'flex gap-2 items-start';
-                const icon = document.createElement('i');
-                icon.className = 'fas fa-minus text-accent-red mt-1';
-                icon.setAttribute('aria-hidden', 'true');
+                const icon = createIcon('minus', 'h-3 w-3 shrink-0 text-accent-red mt-1');
                 const span = document.createElement('span');
                 span.textContent = c;
                 li.appendChild(icon);
@@ -997,9 +1082,64 @@ function resetResultAnimation() {
     });
 }
 
+let resourceScheduleCleanup = null;
+let resourceLoadStarted = false;
+
+function cancelResourceLoadSchedule() {
+    const cleanup = resourceScheduleCleanup;
+    resourceScheduleCleanup = null;
+    if (cleanup) cleanup();
+}
+
+function beginResourceLoad(candidate, searchId, searchOptions, loadId) {
+    if (!isActiveSearch(searchId, loadId) || resourceLoadStarted) return;
+    resourceLoadStarted = true;
+    cancelResourceLoadSchedule();
+    renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
+    void loadResources(candidate, searchId, searchOptions, loadId);
+}
+
+function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
+    cancelResourceLoadSchedule();
+    resourceLoadStarted = false;
+
+    const title = candidate.title || candidate.originalTitle || '当前影视';
+    const start = () => beginResourceLoad(candidate, searchId, searchOptions, loadId);
+    renderResourceDeferredStates(title, start);
+
+    let observer = null;
+    let timeoutId = null;
+    let idleId = null;
+    const cleanup = () => {
+        if (observer) observer.disconnect();
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (idleId !== null && typeof globalThis.cancelIdleCallback === 'function') {
+            globalThis.cancelIdleCallback(idleId);
+        }
+    };
+    resourceScheduleCleanup = cleanup;
+
+    const canObserveResourceSection = els.resourceSection && typeof globalThis.IntersectionObserver === 'function';
+    const idleStart = () => {
+        if (isActiveSearch(searchId, loadId)) start();
+    };
+
+    if (canObserveResourceSection) {
+        observer = new globalThis.IntersectionObserver(entries => {
+            if (entries.some(entry => entry.isIntersecting)) start();
+        }, { rootMargin: RESOURCE_OBSERVER_ROOT_MARGIN });
+        observer.observe(els.resourceSection);
+    } else {
+        if (typeof globalThis.requestIdleCallback === 'function') {
+            idleId = globalThis.requestIdleCallback(idleStart, { timeout: RESOURCE_IDLE_TIMEOUT_MS });
+        } else {
+            timeoutId = setTimeout(idleStart, RESOURCE_TIMER_FALLBACK_MS);
+        }
+    }
+}
+
 async function loadResources(candidate, searchId, searchOptions, loadId) {
     if (!isActiveSearch(searchId, loadId)) return;
-    renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
 
     try {
         const resourceResult = await ResourceAPI.search(candidate.title || candidate.originalTitle, searchOptions);
@@ -1008,16 +1148,78 @@ async function loadResources(candidate, searchId, searchOptions, loadId) {
         renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
         renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
         renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
+        setResourceStatus('资源扫描完成');
     } catch (error) {
         if (error?.name === 'AbortError') return;
         if (!isActiveSearch(searchId, loadId)) return;
-        renderResourceErrorStates(() => loadResources(candidate, searchId, searchOptions, loadId));
+        renderResourceErrorStates(() => {
+            resourceLoadStarted = false;
+            beginResourceLoad(candidate, searchId, searchOptions, loadId);
+        });
         console.debug('Resource enrichment skipped:', error);
     }
 }
 
+function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
+    setEnrichmentStatus(els.omdbStatus, '正在查找备用海报…', true);
+    return PosterAPI.getPoster(enrichmentQuery, candidate.year, searchOptions).then(posterResult => {
+        if (!isActiveSearch(searchId, loadId)) return;
+        if (!posterResult) {
+            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : '暂无备用海报');
+            return;
+        }
+
+        if (posterResult.omdb) {
+            viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
+        }
+        if (!viewModel.posterUrl && posterResult.poster) {
+            viewModel.posterUrl = posterResult.poster;
+            loadPoster(viewModel.posterUrl, viewModel.title);
+        }
+        renderTmdbProfile(viewModel);
+        setEnrichmentStatus(
+            els.omdbStatus,
+            viewModel.omdbProfile ? '已补充 OMDb 数据' : posterResult.poster ? '已找到备用海报' : '暂无备用海报'
+        );
+    }).catch(error => {
+        if (error?.name === 'AbortError') return;
+        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.omdbStatus, '暂无备用海报');
+        console.debug('Poster enrichment skipped:', error);
+    });
+}
+
+async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
+    setEnrichmentStatus(els.omdbStatus, '正在补充 OMDb 数据…', true);
+
+    let omdbProfile = null;
+    try {
+        omdbProfile = await OmdbAPI.search(enrichmentQuery, candidate.year, searchOptions);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        console.debug('OMDb title enrichment skipped:', error);
+    }
+
+    if (!isActiveSearch(searchId, loadId)) return;
+    if (omdbProfile) {
+        viewModel.omdbProfile = omdbProfile;
+        if (!viewModel.posterUrl && omdbProfile.poster) {
+            viewModel.posterUrl = omdbProfile.poster;
+            loadPoster(viewModel.posterUrl, viewModel.title);
+        }
+        renderTmdbProfile(viewModel);
+    }
+
+    if (viewModel.posterUrl) {
+        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
+        return;
+    }
+
+    await startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+}
+
 function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId) {
     const enrichmentQuery = candidate.title || candidate.originalTitle || query;
+    setEnrichmentStatus(els.wikiStatus, '正在补充中文 Wikipedia 简介…', true);
 
     DoubanAPI.search(enrichmentQuery, searchOptions).then(async doubanSearchResult => {
         if (!isActiveSearch(searchId, loadId)) return;
@@ -1035,36 +1237,67 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
 
     WikiAPI.getSummary(enrichmentQuery, searchOptions).then(wikiResult => {
-        if (!isActiveSearch(searchId, loadId) || !wikiResult) return;
-        viewModel.summary = wikiResult.extract || viewModel.summary;
-        viewModel.overviewSource = wikiResult.extract ? 'ZH.WIKIPEDIA' : viewModel.overviewSource;
-        renderSynopsis(viewModel.overviewSource, viewModel.summary);
-        renderScore({
-            rating: viewModel.rating,
-            votes: viewModel.votes,
-            genres: viewModel.genres,
-            hasWiki: Boolean(wikiResult.extract),
-            summary: viewModel.summary,
-            source: 'tmdb'
-        }, 'TMDB', true);
-    }).catch(error => { if (error?.name !== 'AbortError') console.debug('Wiki enrichment skipped:', error); });
+        if (!isActiveSearch(searchId, loadId)) return;
+        const hasWiki = Boolean(wikiResult?.extract);
+        if (hasWiki) {
+            viewModel.summary = wikiResult.extract;
+            viewModel.overviewSource = 'ZH.WIKIPEDIA';
+            renderSynopsis(viewModel.overviewSource, viewModel.summary);
+            renderScore({
+                rating: viewModel.rating,
+                votes: viewModel.votes,
+                genres: viewModel.genres,
+                hasWiki: true,
+                summary: viewModel.summary,
+                source: 'tmdb'
+            }, 'TMDB', true);
+        }
+        setEnrichmentStatus(els.wikiStatus, hasWiki ? '已补充中文 Wikipedia 简介' : '暂无中文 Wikipedia 补充');
+    }).catch(error => {
+        if (error?.name === 'AbortError') return;
+        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.wikiStatus, '暂无中文 Wikipedia 补充');
+        console.debug('Wiki enrichment skipped:', error);
+    });
 
-    void loadResources(candidate, searchId, searchOptions, loadId);
+    scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
 
-    PosterAPI.getPoster(candidate.title || candidate.originalTitle, candidate.year, searchOptions).then(posterResult => {
-        if (!isActiveSearch(searchId, loadId) || !posterResult) return;
-        viewModel.omdbProfile = posterResult.omdb
-            ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult)
-            : viewModel.omdbProfile;
-        viewModel.posterUrl = posterResult.poster || viewModel.posterUrl;
-        loadPoster(viewModel.posterUrl, viewModel.title);
-        renderTmdbProfile(viewModel);
-    }).catch(error => { if (error?.name !== 'AbortError') console.debug('Poster enrichment skipped:', error); });
+    const imdbId = viewModel.detail?.imdbId || candidate.imdbId;
+    if (imdbId) {
+        setEnrichmentStatus(els.omdbStatus, '正在补充 IMDb / OMDb 数据…', true);
+        OmdbAPI.getById(imdbId, searchOptions).then(omdbProfile => {
+            if (!isActiveSearch(searchId, loadId)) return;
+            if (omdbProfile) {
+                viewModel.omdbProfile = omdbProfile;
+                if (!viewModel.posterUrl && omdbProfile.poster) {
+                    viewModel.posterUrl = omdbProfile.poster;
+                    loadPoster(viewModel.posterUrl, viewModel.title);
+                }
+                renderTmdbProfile(viewModel);
+            }
+
+            if (!viewModel.posterUrl) {
+                void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+                return;
+            }
+            setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
+        }).catch(error => {
+            if (error?.name === 'AbortError') return;
+            if (isActiveSearch(searchId, loadId)) {
+                if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, '暂无 IMDb / OMDb 补充数据');
+                else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+            }
+            console.debug('OMDb enrichment skipped:', error);
+        });
+    } else {
+        void startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+    }
 }
 
 async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false } = {}) {
     if (!isActiveSearch(searchId)) return;
 
+    cancelResourceLoadSchedule();
+    resourceLoadStarted = false;
     const loadId = ++currentCandidateLoadId;
     const selectedCandidate = {
         ...candidate,
@@ -1139,6 +1372,8 @@ async function handleSearch() {
 
     lastSearchQuery = query;
 
+    cancelResourceLoadSchedule();
+    resourceLoadStarted = false;
     if (currentAbortController) {
         currentAbortController.abort();
     }

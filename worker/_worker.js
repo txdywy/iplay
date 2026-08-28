@@ -4,7 +4,7 @@
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
-const TMDB_POSTER_SIZE = "original";
+const TMDB_POSTER_SIZE = "w500";
 
 const ALLOWED_ORIGINS = [
     "https://iplay.hackx64.eu.org",
@@ -503,6 +503,9 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
     const data = await readJsonWithLimit(res);
     if (data.Response === "True") return data;
 
+    const applicationError = getOmdbApplicationError(data);
+    if (applicationError) throw applicationError;
+
     if (year) {
         if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
         const fallbackRes = await fetchUpstream(
@@ -517,6 +520,9 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
 
         const fallbackData = await readJsonWithLimit(fallbackRes);
         if (fallbackData.Response === "True") return fallbackData;
+
+        const fallbackApplicationError = getOmdbApplicationError(fallbackData);
+        if (fallbackApplicationError) throw fallbackApplicationError;
     }
     return null;
 }
@@ -1902,6 +1908,18 @@ function requireOmdbApiKey(env) {
     return { key };
 }
 
+function getOmdbApplicationError(data) {
+    const response = data?.Response;
+    const message = typeof data?.Error === "string" ? data.Error.trim() : "";
+    if (response === "True") return null;
+    if (response !== "False") return createHttpError("OMDb returned an invalid response", 502);
+    if (!message) return createHttpError("OMDb returned an invalid response", 502);
+    if (/not found|no such title/i.test(message)) return null;
+
+    const status = /limit|too many requests/i.test(message) ? 429 : 502;
+    return createHttpError(`OMDb: ${message}`, status);
+}
+
 async function handleOmdbById(imdbId, env, ctx) {
     const imdbIdCheck = validateImdbId(imdbId);
     if (imdbIdCheck.error) return imdbIdCheck.error;
@@ -1927,6 +1945,8 @@ async function handleOmdbById(imdbId, env, ctx) {
         if (data.Response === "True") {
             return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         }
+        const applicationError = getOmdbApplicationError(data);
+        if (applicationError) throw applicationError;
         return jsonResponse({ error: "OMDb: Not found" }, 404);
     } catch (e) {
         return jsonResponse({ error: e.message }, e.status || 502);

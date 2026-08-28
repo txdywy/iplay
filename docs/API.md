@@ -96,7 +96,7 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
       "title": "流浪地球",
       "originalTitle": "The Wandering Earth",
       "year": "2019",
-      "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
+      "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
       "backdrop": "https://image.tmdb.org/t/p/w780/yyy.jpg",
       "summary": "太阳即将毁灭，人类在地球表面建造出巨大的推进器...",
       "tmdbRating": 6.4,
@@ -159,7 +159,7 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/detail?id=550988&type=movie"
   "title": "流浪地球",
   "originalTitle": "The Wandering Earth",
   "year": "2019",
-  "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
+  "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
   "backdrop": "https://image.tmdb.org/t/p/w780/yyy.jpg",
   "summary": "太阳即将毁灭，人类在地球表面建造出巨大的推进器...",
   "genres": ["科幻", "冒险", "灾难"],
@@ -416,7 +416,7 @@ curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
 
 ```json
 {
-  "poster": "https://image.tmdb.org/t/p/w780/xxx.jpg",
+  "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
   "tmdbRating": 6.4,
   "tmdbVotes": 1205,
   "rottenTomatoes": null,
@@ -517,7 +517,7 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 
 `js/main.js` 使用 `js/match.js` 对 Worker 返回的候选进行二次判断：高置信度且分数明显领先的结果会直接加载详情；中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。
 
-详情接口失败时，页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；资源聚合失败时，三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
+详情接口失败时，页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；现代浏览器中的资源聚合默认延后到资源区接近视口或用户主动点击后执行，不支持 IntersectionObserver 的旧环境才使用空闲回调或定时回退，失败时三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
 
 剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。
 
@@ -571,6 +571,20 @@ const summary = await WikiAPI.getSummary('流浪地球');
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `getSummary` | `(query, options = {})` | `{ title, extract, thumbnail }` 或 `null` |
+
+### `OmdbAPI`
+
+```javascript
+import { OmdbAPI } from './api.js';
+
+const profile = await OmdbAPI.getById('tt7605074');
+// 网络或上游失败时返回 null；调用方可继续使用 TMDB 数据
+```
+
+| 方法 | 签名 | 返回值 |
+|------|------|--------|
+| `getById` | `(imdbId, options = {})` | OMDb 详情对象 或 `null` |
+| `search` | `(title, year, options = {})` | OMDb 详情对象 或 `null` |
 
 ### `ResourceAPI`
 

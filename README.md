@@ -42,7 +42,7 @@ iplay/
 │   └── output.css          # Tailwind CLI 构建产物（已 minify）
 ├── js/
 │   ├── main.js             # 前端主逻辑：搜索、渲染、详情展示
-│   ├── api.js              # API 客户端封装（TMDB/Douban/Wiki/Resource/Poster）
+│   ├── api.js              # API 客户端封装（TMDB/Douban/Wiki/OMDb/Resource/Poster）
 │   ├── match.js             # TMDB 候选排序与歧义确认规则
 │   ├── seasons.js           # 剧集季数与每季集数格式化
 │   ├── quark.js            # 夸克链接与提取码复制文本格式化
