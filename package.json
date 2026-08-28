@@ -7,6 +7,7 @@
     "lint": "eslint .",
     "test": "node --test && npm run lint && npm run build",
     "test:coverage": "node --test --experimental-test-coverage",
+    "test:browser": "node tests/browser-smoke.mjs",
     "build": "tailwindcss -i css/input.css -o css/output.css --minify",
     "wrangler": "npx --yes wrangler@4.106.0"
   },

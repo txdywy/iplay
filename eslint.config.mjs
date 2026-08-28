@@ -57,5 +57,18 @@ export default [
         URL: "readonly"
       }
     }
+  },
+  {
+    files: ["tests/**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        URL: "readonly"
+      }
+    }
   }
 ];

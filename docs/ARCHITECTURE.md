@@ -93,7 +93,7 @@ User submits query from search form
 
 ### 2. Detail Page Flow
 
-After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It then renders core detail and starts independent enrichment requests:
+After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It then renders core detail immediately, starts independent metadata enrichment, and defers resource scanning until it is useful:
 
 ```
 User submits a search
@@ -107,9 +107,9 @@ User submits a search
         +--------+--------+--------+--------+
         |        |        |        |        |
         v        v        v        v        v
-    TMDB     Douban    Wiki    Poster   Resource
-   Detail    Detail   Summary   API      Search
-   API       API      API               API
+    TMDB     Douban    Wiki    OMDb     Resource
+   Detail    Search   Summary  by IMDb  (deferred)
+   API       +Detail   API     ID       Search
         |        |        |        |        |
         v        v        v        v        v
 +-------+--------+--------+--------+--------+
@@ -126,7 +126,7 @@ User submits a search
 |               |     2. Render poster + basic info (or fallback)
 |               |     3. Render ratings (TMDB, Douban, IMDb, RT)
 |               |     4. Render AI score + analysis
-|               |     5. Render wiki summary + resources
+|               |     5. Render wiki summary + resource-ready states
 |               |     6. Keep partial results visible and expose retry actions
 +---------------+
 ```
@@ -178,9 +178,9 @@ found?      |
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **SPA Shell** | `index.html` | Single-page application shell. Dark theme (`#0a0a0c`), Netflix-red accent (`#e50914`), film grain SVG overlay, ambient glow radial gradient, typewriter cursor animation. Responsive layout with poster sidebar + content area. |
-| **UI Controller** | `js/main.js` | Search form handling, candidate confirmation, progressive detail rendering, fallback/retry states, season facts, resource pagination, and toast notifications. |
-| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 12s default timeout; 18s for resource and poster aggregation). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `ResourceAPI`, `PosterAPI`. |
+| **SPA Shell** | `index.html` | Single-page application shell. Dark theme (`#0a0a0c`), Netflix-red accent (`#e50914`), static film-grain pattern, ambient glow radial gradient, typewriter cursor animation. Responsive layout with poster sidebar + content area. |
+| **UI Controller** | `js/main.js` | Search form handling, candidate confirmation, progressive detail rendering, deferred resource loading, fallback/retry states, season facts, resource pagination, and toast notifications. |
+| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 12s default/OMDb timeout; 18s for resource and poster aggregation). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `OmdbAPI`, `ResourceAPI`, `PosterAPI`. |
 | **Match Rules** | `js/match.js` | Normalizes title text, ranks TMDB candidates, and detects low-confidence or close-score results that require user confirmation. |
 | **Season Formatter** | `js/seasons.js` | Formats total seasons/episodes and per-season episode counts, including specials and unknown counts. |
 | **Quark Formatter** | `js/quark.js` | Formats share URLs and optional extraction passwords for clipboard copy. |
@@ -232,7 +232,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
       "title": "...",
       "originalTitle": "...",
       "year": "2024",
-      "poster": "https://image.tmdb.org/t/p/w780/...",
+      "poster": "https://image.tmdb.org/t/p/w500/...",
       "backdrop": "https://image.tmdb.org/t/p/w780/...",
       "summary": "...",
       "tmdbRating": 8.5,
