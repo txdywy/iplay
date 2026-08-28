@@ -1,6 +1,6 @@
 {
   "name": "iplay",
-  "version": "1.0.0",
+  "version": "1.0.1.0",
   "private": true,
   "description": "一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
