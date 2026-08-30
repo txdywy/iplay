@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.2.0] - 2026-08-30
+
+### Added
+
+- Added an isolated Chrome smoke runner and CI job covering progressive details, retry recovery, stale-search cancellation, poster fallback, and mobile layout.
+
+### Changed
+
+- Search results now render immediately while TMDB details, metadata, and resources fill in asynchronously.
+- The Worker now coalesces identical upstream requests and reports partial resource results for transparent recovery.
+
+### Fixed
+
+- Resource and poster retries now bypass stale cached data.
+- Production Workers fail closed when distributed rate-limit bindings are unavailable.
+- Poster fallback and child-request cancellation prevent broken images and stale responses from replacing current results.
+
 ## [1.0.1.0] - 2026-08-28
 
 ### Added

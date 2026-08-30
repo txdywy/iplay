@@ -53,6 +53,12 @@ async function waitFor(expression, timeoutMs = 5000) {
 
 await command('Page.enable');
 await command('Runtime.enable');
+await command('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true
+});
 await command('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
         const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
@@ -74,7 +80,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             matchScore: 1,
             matchConfidence: 'high'
         });
-        window.__smoke = { calls: [], resourceCalls: 0 };
+        window.__smoke = { calls: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {} };
         window.requestIdleCallback = undefined;
         window.cancelIdleCallback = undefined;
         if (new URL(location.href).searchParams.has('fallback')) window.IntersectionObserver = undefined;
@@ -93,14 +99,41 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         }, { once: true });
                     });
                 }
-                const ids = { 'Test Movie': 100, 'Slow Movie': 101, 'Fresh Movie': 102, 'Fallback Movie': 103, 'No IMDb Movie': 104 };
-                return json({ results: [candidate(query, ids[query] || 104)] });
+                const ids = {
+                    'Test Movie': 100,
+                    'Slow Movie': 101,
+                    'Fresh Movie': 102,
+                    'Fallback Movie': 103,
+                    'No IMDb Movie': 104,
+                    'Broken Poster Movie': 105,
+                    'Progressive Movie': 106,
+                    'Retry Detail Movie': 107
+                };
+                const candidatePoster = query === 'Broken Poster Movie' ? 'https://images.example/broken-poster.jpg' : poster;
+                return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }] });
             }
             if (url.pathname === '/api/tmdb/detail') {
+                window.__smoke.detailCalls += 1;
                 const id = Number(url.searchParams.get('id'));
-                const titles = { 100: 'Test Movie', 101: 'Slow Movie', 102: 'Fresh Movie', 103: 'Fallback Movie', 104: 'No IMDb Movie' };
+                const titles = {
+                    100: 'Test Movie',
+                    101: 'Slow Movie',
+                    102: 'Fresh Movie',
+                    103: 'Fallback Movie',
+                    104: 'No IMDb Movie',
+                    105: 'Broken Poster Movie',
+                    106: 'Progressive Movie',
+                    107: 'Retry Detail Movie'
+                };
                 const title = titles[id] || 'Smoke Movie';
-                return json({
+                if (id === 106) {
+                    await new Promise(resolve => setTimeout(resolve, 450));
+                }
+                if (id === 107) {
+                    window.__smoke.detailAttempts[id] = (window.__smoke.detailAttempts[id] || 0) + 1;
+                    if (window.__smoke.detailAttempts[id] === 1) return json({ error: 'temporary detail outage' }, 503);
+                }
+                const response = json({
                     ...candidate(title, id),
                     genres: ['Drama'],
                     runtime: 120,
@@ -111,8 +144,11 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     cast: ['Smoke Actor'],
                     director: ['Smoke Director'],
                     writer: ['Smoke Writer'],
-                    imdbId: id === 104 ? '' : 'tt1234567'
+                    imdbId: id === 104 ? '' : 'tt1234567',
+                    summary: id === 106 ? '详情已到达。' : 'A browser smoke test detail.'
                 });
+                window.__smoke.detailResolved += 1;
+                return response;
             }
             if (url.pathname === '/api/douban/search') return json([]);
             if (url.pathname === '/api/wiki/zh') return json({ extract: '中文烟测简介。' });
@@ -120,11 +156,22 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
                 if (window.__smoke.resourceCalls === 1) return json({ error: 'temporary resource outage' }, 502);
+                if (window.__smoke.resourceCalls === 2) return json({
+                    partial: true,
+                    resourceMeta: { partial: true, providers: { by669: 'failed', wpzys: 'ok' }, failedPages: 1 },
+                    resources: [{ title: 'Smoke resource', url: 'https://resource.example/smoke' }],
+                    wpzysResources: [],
+                    quarkUrls: []
+                });
                 return json({
                     resources: [{ title: 'Smoke resource', url: 'https://resource.example/smoke' }],
                     wpzysResources: [{ title: 'Smoke forum', url: 'https://forum.example/smoke' }],
                     quarkUrls: [{ title: 'Smoke Quark', url: 'https://pan.quark.cn/s/smoke', password: 'abcd' }]
                 });
+            }
+            if (url.pathname === '/api/poster') {
+                window.__smoke.posterCalls += 1;
+                return json({ poster: 'https://images.example/fallback-poster.jpg' });
             }
             return json({});
         };
@@ -142,7 +189,7 @@ async function search(query) {
 async function assertSearchReady(title) {
     await waitFor(`document.querySelector('#showTitle')?.textContent === ${JSON.stringify(title)}`);
     assert.equal(await evaluate('document.querySelector("#errorState:not(.hidden)") === null'), true);
-    assert.equal(await evaluate('document.body.scrollWidth === document.documentElement.scrollWidth'), true);
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
 }
 
 async function runObserverFlow() {
@@ -160,8 +207,13 @@ async function runObserverFlow() {
 
     await evaluate("document.querySelector('#resourcesSection button')?.click()");
     await waitFor('window.__smoke.resourceCalls === 2');
+    await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
+    await evaluate("document.querySelector('#resourcesNotice button')?.click()");
+    await waitFor('window.__smoke.resourceCalls === 3');
     await waitFor("Boolean(document.querySelector('#resourceList a[href=\\\"https://resource.example/smoke\\\"]'))");
     assert.equal(await evaluate('document.querySelector("#quarkUrlList a")?.getAttribute("href")'), 'https://pan.quark.cn/s/smoke');
+    const calls = await evaluate('window.__smoke.calls');
+    assert.ok(calls.some(call => call.includes('/api/resource?q=Test%20Movie&refresh=1')));
 }
 
 async function runStaleSearchFlow() {
@@ -174,6 +226,28 @@ async function runStaleSearchFlow() {
     assert.equal(await evaluate('document.querySelector("#showTitle")?.textContent'), 'Fresh Movie');
 }
 
+async function runProgressiveFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Progressive Movie');
+    await assertSearchReady('Progressive Movie');
+    assert.equal(await evaluate('document.querySelector("#loadingState")?.classList.contains("hidden")'), true);
+    assert.equal(await evaluate('window.__smoke.detailResolved'), 0, 'the base result should render before slow detail resolves');
+    await waitFor('window.__smoke.detailResolved === 1');
+    await waitFor("document.querySelector('#omdbFields')?.textContent.includes('Smoke Studio')");
+}
+
+async function runDetailRetryFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Retry Detail Movie');
+    await assertSearchReady('Retry Detail Movie');
+    await waitFor("document.querySelector('#dataNotice button')?.textContent.includes('重试详情')");
+    await evaluate("document.querySelector('#dataNotice button')?.click()");
+    await waitFor('window.__smoke.detailAttempts[107] === 2');
+    await waitFor("document.querySelector('#dataNotice')?.classList.contains('hidden')");
+}
+
 async function runTitleOmdbFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -183,6 +257,18 @@ async function runTitleOmdbFlow() {
     const calls = await evaluate('window.__smoke.calls');
     assert.ok(calls.some(call => call.includes('/api/omdb?title=No%20IMDb%20Movie&year=2024')));
     assert.equal(calls.some(call => call.startsWith('/api/poster?')), false, 'an existing TMDB poster should avoid a second poster search');
+}
+
+async function runBrokenPosterFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Broken Poster Movie');
+    await assertSearchReady('Broken Poster Movie');
+    await evaluate("document.querySelector('#showCover')?.dispatchEvent(new Event('error'))");
+    await waitFor('window.__smoke.posterCalls === 1');
+    await waitFor("document.querySelector('#showCover')?.getAttribute('src') === 'https://images.example/fallback-poster.jpg'");
+    const calls = await evaluate('window.__smoke.calls');
+    assert.ok(calls.some(call => call.includes('/api/poster?title=Broken%20Poster%20Movie&year=2024&refresh=1')));
 }
 
 async function runTimerFallbackFlow() {
@@ -197,9 +283,12 @@ async function runTimerFallbackFlow() {
 try {
     await runObserverFlow();
     await runStaleSearchFlow();
+    await runProgressiveFlow();
+    await runDetailRetryFlow();
     await runTitleOmdbFlow();
+    await runBrokenPosterFlow();
     await runTimerFallbackFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'retry', 'stale-search', 'title-omdb', 'timer-fallback'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback'] }));
 } finally {
     socket.close();
 }

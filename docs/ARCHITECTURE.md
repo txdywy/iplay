@@ -66,7 +66,7 @@ User submits query from search form
         v
 +-------+-------+
 |   js/api.js   |  -- fetchWithTimeout() to Worker
-|  (TmdbAPI)    |     AbortController, 8s default
+|  (TmdbAPI)    |     AbortController, 12s default
 +-------+-------+
         |
         v
@@ -364,7 +364,7 @@ Worker deploy (manual or via Wrangler CLI):
 ### CORS Handling
 
 - Worker responds to `OPTIONS` with `GET, OPTIONS` and echoes `Access-Control-Allow-Origin` only for allowed origins.
-- The built-in allowlist includes `https://iplay.hackx64.eu.org`, local Wrangler origins, and localhost/127.0.0.1 on port 8080. Deployments can add up to 20 comma-separated origins with `CORS_ALLOWED_ORIGINS`.
+- The built-in allowlist includes `https://iplay.hackx64.eu.org`, local Wrangler origins, and localhost/127.0.0.1 on ports 4173 and 8080. Deployments can add up to 20 comma-separated origins with `CORS_ALLOWED_ORIGINS`.
 - Responses include `Vary: Origin` to keep shared caches origin-safe.
 
 ### Rate Limiting and Caching
@@ -374,7 +374,7 @@ Worker deploy (manual or via Wrangler CLI):
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
 - Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v5-cache.local/`, and `https://poster-v1-cache.local/`) to avoid polluting external cache namespaces.
-- The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota.
+- The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
 
 ### Data Privacy
 

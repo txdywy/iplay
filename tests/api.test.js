@@ -37,6 +37,23 @@ test('API clients encode queries and return JSON responses', async t => {
     assert.match(requestedUrl, /\/api\/tmdb\/search\?q=a%20b$/);
 });
 
+test('resource and poster retries request fresh Worker data', async t => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+    globalThis.fetch = async url => {
+        requestedUrls.push(String(url));
+        return Response.json({ ok: true });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { PosterAPI } = await import('../js/api.js');
+    await ResourceAPI.search('retry me', {}, { refresh: true });
+    await PosterAPI.getPoster('retry me', 2024, {}, { refresh: true });
+
+    assert.match(requestedUrls[0], /\/api\/resource\?q=retry%20me&refresh=1$/);
+    assert.match(requestedUrls[1], /\/api\/poster\?title=retry%20me&year=2024&refresh=1$/);
+});
+
 test('API client timeout aborts a request after the documented default', async t => {
     const originalFetch = globalThis.fetch;
     t.mock.timers.enable({ apis: ['setTimeout'] });

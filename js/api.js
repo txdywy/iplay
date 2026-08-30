@@ -125,8 +125,9 @@ export const OmdbAPI = {
 };
 
 export const ResourceAPI = {
-    async search(query, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}`, options, RESOURCE_TIMEOUT_MS);
+    async search(query, options = {}, { refresh = false } = {}) {
+        const refreshParam = refresh ? '&refresh=1' : '';
+        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${refreshParam}`, options, RESOURCE_TIMEOUT_MS);
     }
 };
 
@@ -134,10 +135,11 @@ export const ResourceAPI = {
  * 海报专用接口：优先 TMDB，再向 OMDb 兜底
  */
 export const PosterAPI = {
-    async getPoster(title, year, options = {}) {
+    async getPoster(title, year, options = {}, { refresh = false } = {}) {
         if (!title) return null;
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options, POSTER_TIMEOUT_MS);
+            const refreshParam = refresh ? '&refresh=1' : '';
+            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}${refreshParam}`, options, POSTER_TIMEOUT_MS);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Poster fetch failed:", e);

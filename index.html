@@ -71,7 +71,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="m12 3 9.25 17H2.75L12 3Zm0 6v5m0 3h.01"></path>
             </svg>
             <p id="errorMsg" class="text-cinema-100 font-mono text-sm"></p>
-            <p class="text-cinema-400 text-xs mt-4">网络存在波动，请稍后重试。</p>
+            <p id="errorHint" class="text-cinema-400 text-xs mt-4">网络或数据源存在波动，请稍后重试。</p>
             <button id="retrySearchButton" type="button" class="mt-5 min-h-11 rounded-full border border-accent-red/50 px-5 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-accent-red hover:bg-accent-red/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">重试搜索</button>
         </div>
 
@@ -116,7 +116,7 @@
 
                     <!-- Title + Subtitle -->
                     <div>
-                        <h2 id="showTitle" class="text-4xl md:text-5xl xl:text-6xl font-black leading-[0.92] tracking-tight"></h2>
+                        <h2 id="showTitle" tabindex="-1" class="break-words text-4xl md:text-5xl xl:text-6xl font-black leading-[0.92] tracking-tight focus:outline-none"></h2>
                         <p id="showSubTitle" class="text-cinema-400 font-mono text-xs md:text-sm uppercase tracking-[0.32em] mt-3"></p>
                     </div>
 
@@ -227,6 +227,7 @@
                  ═══════════════════════════════════════════════ -->
             <section id="resourcesSection" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 fade-up delay-200 items-start" aria-label="资源来源">
                 <p id="resourcesStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+                <div id="resourcesNotice" class="hidden md:col-span-2 lg:col-span-3 rounded-2xl border border-accent-gold/40 bg-accent-gold/10 p-4" role="status" aria-live="polite" aria-atomic="true"></div>
                 <div class="bg-cinema-800/30 border border-cinema-700 rounded-3xl p-2 md:p-3 shadow-[0_20px_60px_rgba(0,0,0,0.2)] min-h-0">
                     <div class="px-3 pt-2 pb-3 flex items-center justify-between gap-3 border-b border-cinema-700/50 mb-1">
                         <div>

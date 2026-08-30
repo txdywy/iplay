@@ -7,3 +7,7 @@ TMDB_ACCESS_TOKEN=your_tmdb_v4_read_access_token
 
 # Optional comma-separated frontend origins beyond the built-in local origins.
 # CORS_ALLOWED_ORIGINS=https://yourname.github.io
+
+# Keep local development on the in-memory limiter. Production must use
+# ENVIRONMENT=production together with both Cloudflare rate-limit bindings.
+ENVIRONMENT=development

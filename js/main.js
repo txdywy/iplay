@@ -17,6 +17,7 @@ const els = {
     loading: document.getElementById('loadingState'),
     error: document.getElementById('errorState'),
     errorMsg: document.getElementById('errorMsg'),
+    errorHint: document.getElementById('errorHint'),
     retrySearchButton: document.getElementById('retrySearchButton'),
     candidatePicker: document.getElementById('candidatePicker'),
     candidatePickerTitle: document.getElementById('candidatePickerTitle'),
@@ -28,6 +29,7 @@ const els = {
     wikiStatus: document.getElementById('wikiStatus'),
     omdbStatus: document.getElementById('omdbStatus'),
     resourceSection: document.getElementById('resourcesSection'),
+    resourceNotice: document.getElementById('resourcesNotice'),
 
     cover: document.getElementById('showCover'),
     title: document.getElementById('showTitle'),
@@ -239,6 +241,9 @@ const RESOURCE_IDLE_TIMEOUT_MS = 1400;
 const RESOURCE_TIMER_FALLBACK_MS = 1200;
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
 
+let posterLoadToken = 0;
+let activePosterContext = null;
+
 function createIcon(name, className = '') {
     const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
     icon.setAttribute('viewBox', '0 0 24 24');
@@ -257,20 +262,97 @@ function createIcon(name, className = '') {
     return icon;
 }
 
+function getTmdbPosterSourceSet(posterUrl) {
+    if (typeof posterUrl !== 'string') return '';
+    const match = posterUrl.match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)w500(\/[^?]+)(?:\?.*)?$/);
+    if (!match) return '';
+    return `${match[1]}w300${match[2]} 300w, ${posterUrl} 500w`;
+}
+
+function pickPosterFallback(posterResult, failedSource) {
+    const candidates = [
+        posterResult?.omdb?.poster,
+        posterResult?.poster
+    ];
+    return candidates
+        .map(value => toSafeHttpUrl(value))
+        .find(value => value && value !== failedSource) || null;
+}
+
+function handlePosterLoadError() {
+    if (!els.cover) return;
+    const failedSource = els.cover.getAttribute('src');
+    const token = Number(els.cover.dataset.posterToken);
+    const context = activePosterContext;
+
+    els.cover.setAttribute('aria-busy', 'false');
+    if (failedSource === POSTER_PLACEHOLDER) return;
+    if (!context || context.token !== token || context.source !== failedSource) return;
+
+    if (context.fallbackAttempted || !context.searchOptions || !context.viewModel) {
+        loadPoster(null, context.title, { ...context, fallbackAttempted: true });
+        return;
+    }
+
+    context.fallbackAttempted = true;
+    setEnrichmentStatus(els.omdbStatus, '海报加载失败，正在查找备用海报…', true);
+    const { viewModel, searchId, loadId, searchOptions } = context;
+
+    void PosterAPI.getPoster(context.enrichmentQuery || context.title, context.year, searchOptions, { refresh: true })
+        .then(posterResult => {
+            if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
+            const fallbackPoster = pickPosterFallback(posterResult, failedSource);
+            if (fallbackPoster) {
+                viewModel.posterUrl = fallbackPoster;
+                loadPoster(fallbackPoster, viewModel.title, { ...context, fallbackAttempted: true });
+                renderTmdbProfile(viewModel);
+                setEnrichmentStatus(els.omdbStatus, posterResult?.omdb ? '已补充 OMDb 数据并更换海报' : '已找到备用海报');
+                return;
+            }
+
+            loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
+            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据，暂无可用海报' : '暂无可用海报');
+        })
+        .catch(error => {
+            if (error?.name === 'AbortError') return;
+            if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
+            loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
+            setEnrichmentStatus(els.omdbStatus, '备用海报暂时不可用');
+            console.debug('Broken poster fallback skipped:', error);
+        });
+}
+
 if (els.cover) {
-    els.cover.addEventListener('error', () => {
-        els.cover.setAttribute('aria-busy', 'false');
-        if (els.cover.getAttribute('src') !== POSTER_PLACEHOLDER) els.cover.setAttribute('src', POSTER_PLACEHOLDER);
-    });
+    els.cover.addEventListener('error', handlePosterLoadError);
     els.cover.addEventListener('load', () => els.cover.setAttribute('aria-busy', 'false'));
 }
 
-function loadPoster(posterUrl, title = '') {
+function loadPoster(posterUrl, title = '', context = {}) {
     if (!els.cover) return;
-    els.cover.alt = title ? `${title} 海报` : '影视海报';
     const nextSource = posterUrl || POSTER_PLACEHOLDER;
-    if (els.cover.getAttribute('src') === nextSource) return;
+    const previous = activePosterContext;
+    const loadKey = context.loadKey || '';
+    const fallbackAttempted = context.fallbackAttempted ?? (
+        previous?.loadKey === loadKey && previous.source === nextSource
+            ? previous.fallbackAttempted
+            : false
+    );
+    const token = ++posterLoadToken;
+    activePosterContext = {
+        ...context,
+        title,
+        source: nextSource,
+        posterUrl: posterUrl || null,
+        fallbackAttempted,
+        token
+    };
+
+    els.cover.dataset.posterToken = String(token);
+    els.cover.alt = title ? `${title} 海报` : '影视海报';
+    els.cover.setAttribute('srcset', getTmdbPosterSourceSet(posterUrl));
+    els.cover.setAttribute('sizes', posterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '');
     els.cover.setAttribute('aria-busy', String(Boolean(posterUrl)));
+    if (els.cover.getAttribute('src') === nextSource) return;
     els.cover.setAttribute('src', nextSource);
 }
 
@@ -377,7 +459,7 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         votes: source.tmdbVotes ?? candidate?.tmdbVotes ?? candidate?.votes ?? 0,
         posterUrl: source.poster || candidate?.poster || (posterResult && !posterResult.tmdb ? posterResult.poster : null),
         omdbProfile,
-        overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : detail && detail.summary ? 'TMDB' : 'NO DATA'
+        overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : source.summary ? 'TMDB' : 'NO DATA'
     };
 }
 
@@ -557,6 +639,65 @@ function setResourceStatus(message, isPending = false) {
     setEnrichmentStatus(els.resourceStatus, message, isPending);
 }
 
+function hideResourceNotice() {
+    if (!els.resourceNotice) return;
+    clearNode(els.resourceNotice);
+    els.resourceNotice.classList.add('hidden');
+}
+
+function renderResourceNotice(resourceResult, onRetry) {
+    if (!els.resourceNotice) return;
+    clearNode(els.resourceNotice);
+
+    const meta = resourceResult?.resourceMeta || {};
+    const providers = meta.providers || {};
+    const failedProviders = Object.entries(providers)
+        .filter(([, status]) => status === 'failed')
+        .map(([provider]) => provider === 'by669' ? '资源页' : provider === 'wpzys' ? 'WPZYS' : provider);
+    const failedPages = Number(meta.failedPages) || 0;
+    const detail = failedProviders.length > 0
+        ? `${failedProviders.join('、')}暂时没有响应，已保留其他可用结果。`
+        : failedPages > 0
+            ? `有 ${failedPages} 个资源页面暂时无法打开，已保留其他可用结果。`
+            : '部分资源尚未完成提取，已保留当前可用结果。';
+
+    const row = document.createElement('div');
+    row.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
+
+    const copy = document.createElement('div');
+    copy.className = 'min-w-0';
+    const heading = document.createElement('p');
+    heading.className = 'font-mono text-xs uppercase tracking-[0.2em] text-accent-gold';
+    heading.textContent = '资源扫描部分完成';
+    const description = document.createElement('p');
+    description.className = 'mt-1 text-sm text-cinema-100/80';
+    description.textContent = detail;
+    copy.appendChild(heading);
+    copy.appendChild(description);
+    row.appendChild(copy);
+
+    if (typeof onRetry === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'min-h-11 shrink-0 rounded-full border border-accent-gold/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-accent-gold hover:bg-accent-gold/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.textContent = '重试补全资源';
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await onRetry();
+            } catch (error) {
+                if (error?.name !== 'AbortError') showToast('资源重试失败，请稍后再试');
+            } finally {
+                button.disabled = false;
+            }
+        });
+        row.appendChild(button);
+    }
+
+    els.resourceNotice.appendChild(row);
+    els.resourceNotice.classList.remove('hidden');
+}
+
 function safeHostname(url) {
     const safeUrl = toSafeHttpUrl(url);
     if (!safeUrl) return '—';
@@ -604,7 +745,7 @@ function renderLinkCards(container, items, {
     const maxItems = Number.isFinite(Number(limit)) ? Math.min(Number(limit), safeItems.length) : safeItems.length;
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
-    const renderVisibleItems = visibleLimit => {
+    const renderVisibleItems = (visibleLimit, restoreControlFocus = false) => {
         clearNode(container);
         const frag = document.createDocumentFragment();
         safeItems.slice(0, visibleLimit).forEach(item => {
@@ -693,7 +834,7 @@ function renderLinkCards(container, items, {
             button.type = 'button';
             button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = `显示更多（剩余 ${maxItems - visibleLimit} 条）`;
-            button.addEventListener('click', () => renderVisibleItems(maxItems));
+            button.addEventListener('click', () => renderVisibleItems(maxItems, true));
             li.appendChild(button);
             frag.appendChild(li);
         } else if (visibleLimit > firstPageSize) {
@@ -703,12 +844,18 @@ function renderLinkCards(container, items, {
             button.type = 'button';
             button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = '收起列表';
-            button.addEventListener('click', () => renderVisibleItems(firstPageSize));
+            button.addEventListener('click', () => renderVisibleItems(firstPageSize, true));
             li.appendChild(button);
             frag.appendChild(li);
         }
 
         container.appendChild(frag);
+        if (restoreControlFocus) {
+            requestAnimationFrame(() => {
+                const controls = container.querySelectorAll('button');
+                controls[controls.length - 1]?.focus({ preventScroll: true });
+            });
+        }
     };
 
     renderVisibleItems(firstPageSize);
@@ -777,6 +924,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, p
 }
 
 function renderResourceLoadingStates(title) {
+    hideResourceNotice();
     setResourceStatus('正在扫描资源…', true);
     renderResourceStatus(els.quarkUrlList, {
         title: '正在提取夸克直链',
@@ -802,6 +950,7 @@ function renderResourceLoadingStates(title) {
 }
 
 function renderResourceDeferredStates(title, onStart) {
+    hideResourceNotice();
     setResourceStatus('资源扫描待启动，资源区接近视口或点击按钮后开始');
     renderResourceStatus(els.quarkUrlList, {
         title: '资源扫描待启动',
@@ -836,6 +985,7 @@ function renderResourceDeferredStates(title, onStart) {
 }
 
 function renderResourceErrorStates(onRetry) {
+    hideResourceNotice();
     setResourceStatus('资源扫描失败，可重试');
     renderResourceStatus(els.quarkUrlList, {
         title: '夸克直链暂时不可用',
@@ -1017,6 +1167,45 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     }
 }
 
+function createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
+    return {
+        candidate,
+        enrichmentQuery,
+        viewModel,
+        searchId,
+        searchOptions,
+        loadId,
+        loadKey: `${searchId}:${loadId}`,
+        year: candidate?.year || viewModel?.detail?.year || ''
+    };
+}
+
+function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
+    setText(els.title, viewModel.title);
+    setText(els.subTitle, viewModel.subtitle);
+    renderGenres(viewModel.genres);
+    renderSynopsis(viewModel.overviewSource, viewModel.summary);
+    loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
+    renderTmdbFacts(viewModel);
+    renderTmdbProfile(viewModel);
+    renderScore({
+        rating: viewModel.rating,
+        votes: viewModel.votes,
+        genres: viewModel.genres,
+        hasWiki: viewModel.overviewSource === 'ZH.WIKIPEDIA',
+        summary: viewModel.summary,
+        source: 'tmdb'
+    }, 'TMDB', isUpdate);
+}
+
+function focusResultHeading() {
+    requestAnimationFrame(() => {
+        if (els.title && typeof els.title.focus === 'function') {
+            els.title.focus({ preventScroll: true });
+        }
+    });
+}
+
 async function safeTmdbSearch(query, options = {}) {
     try {
         return await TmdbAPI.search(query, options);
@@ -1043,6 +1232,8 @@ function setSearching(isSearching) {
 
 let currentSearchId = 0;
 let currentAbortController = null;
+let currentCandidateAbortController = null;
+let currentCandidateAbortCleanup = null;
 let currentCandidateLoadId = 0;
 let lastSearchQuery = '';
 
@@ -1057,10 +1248,37 @@ function getSearchErrorMessage(error) {
     return error?.message || '搜索失败，请稍后重试。';
 }
 
+function getSearchErrorHint(error) {
+    if (error?.status === 429) return '请求比较频繁，请稍等片刻后再试。';
+    if (error?.status === 503) return '数据服务暂时不可用，稍后重试通常即可恢复。';
+    if (error?.status === 504 || /timed out|timeout|超时/i.test(error?.message || '')) {
+        return '数据源响应较慢，重试会重新发起一次请求。';
+    }
+    if (/未找到/.test(error?.message || '')) return '可以补充年份、季数或更完整的片名。';
+    if (error && (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError'))) {
+        return '请检查网络连接，确认后再重试。';
+    }
+    return '网络或数据源存在波动，请稍后重试。';
+}
+
+function showEmptySearchError() {
+    setText(els.errorMsg, '请输入电影或剧集名称');
+    setText(els.errorHint, '输入片名后按 Enter 或点击搜索。');
+    els.error.classList.remove('hidden');
+    els.loading.classList.add('hidden');
+    els.results.classList.add('hidden');
+    hideCandidatePicker();
+    hideDataNotice();
+    setSearchStatus('请输入电影或剧集名称');
+    setSearching(false);
+    els.input?.focus();
+}
+
 function showSearchError(error, query, searchId) {
     if (!isActiveSearch(searchId)) return;
     const message = getSearchErrorMessage(error);
     setText(els.errorMsg, message);
+    setText(els.errorHint, getSearchErrorHint(error));
     setText(els.retrySearchButton, '重试搜索');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
@@ -1084,6 +1302,38 @@ function resetResultAnimation() {
 
 let resourceScheduleCleanup = null;
 let resourceLoadStarted = false;
+let resourceResultState = null;
+
+function abortCandidateRequests() {
+    if (currentCandidateAbortCleanup) currentCandidateAbortCleanup();
+    currentCandidateAbortCleanup = null;
+    if (currentCandidateAbortController) currentCandidateAbortController.abort();
+    currentCandidateAbortController = null;
+}
+
+function createCandidateRequestOptions(searchOptions = {}) {
+    abortCandidateRequests();
+    const controller = new AbortController();
+    const parentSignal = searchOptions.signal;
+    let cleanup = null;
+
+    if (parentSignal) {
+        const abortFromParent = () => controller.abort();
+        if (parentSignal.aborted) controller.abort();
+        else {
+            parentSignal.addEventListener('abort', abortFromParent, { once: true });
+            cleanup = () => parentSignal.removeEventListener('abort', abortFromParent);
+        }
+    }
+
+    currentCandidateAbortController = controller;
+    currentCandidateAbortCleanup = cleanup;
+    return { ...searchOptions, signal: controller.signal };
+}
+
+function resourceCandidateKey(candidate) {
+    return `${candidate?.mediaType || candidate?.type || 'media'}:${candidate?.id || candidate?.title || candidate?.originalTitle || ''}`;
+}
 
 function cancelResourceLoadSchedule() {
     const cleanup = resourceScheduleCleanup;
@@ -1091,16 +1341,20 @@ function cancelResourceLoadSchedule() {
     if (cleanup) cleanup();
 }
 
-function beginResourceLoad(candidate, searchId, searchOptions, loadId) {
+function beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
     if (!isActiveSearch(searchId, loadId) || resourceLoadStarted) return;
     resourceLoadStarted = true;
     cancelResourceLoadSchedule();
     renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
-    void loadResources(candidate, searchId, searchOptions, loadId);
+    void loadResources(candidate, searchId, searchOptions, loadId, { refresh });
 }
 
 function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     cancelResourceLoadSchedule();
+    if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+        resourceLoadStarted = true;
+        return;
+    }
     resourceLoadStarted = false;
 
     const title = candidate.title || candidate.originalTitle || '当前影视';
@@ -1138,23 +1392,38 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     }
 }
 
-async function loadResources(candidate, searchId, searchOptions, loadId) {
+async function loadResources(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
     if (!isActiveSearch(searchId, loadId)) return;
 
     try {
-        const resourceResult = await ResourceAPI.search(candidate.title || candidate.originalTitle, searchOptions);
+        const resourceResult = await ResourceAPI.search(candidate.title || candidate.originalTitle, searchOptions, { refresh });
         if (!resourceResult) throw new Error('资源服务返回了空结果');
         if (!isActiveSearch(searchId, loadId)) return;
+        resourceResultState = {
+            candidateKey: resourceCandidateKey(candidate),
+            result: resourceResult
+        };
         renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
         renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
         renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        setResourceStatus('资源扫描完成');
+        if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
+            setResourceStatus('资源扫描部分完成，可重试补全');
+            renderResourceNotice(resourceResult, async () => {
+                resourceResultState = null;
+                resourceLoadStarted = false;
+                beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
+            });
+        } else {
+            hideResourceNotice();
+            setResourceStatus('资源扫描完成');
+        }
     } catch (error) {
         if (error?.name === 'AbortError') return;
         if (!isActiveSearch(searchId, loadId)) return;
         renderResourceErrorStates(() => {
+            resourceResultState = null;
             resourceLoadStarted = false;
-            beginResourceLoad(candidate, searchId, searchOptions, loadId);
+            beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
         });
         console.debug('Resource enrichment skipped:', error);
     }
@@ -1162,6 +1431,7 @@ async function loadResources(candidate, searchId, searchOptions, loadId) {
 
 function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
     setEnrichmentStatus(els.omdbStatus, '正在查找备用海报…', true);
+    const posterContext = createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
     return PosterAPI.getPoster(enrichmentQuery, candidate.year, searchOptions).then(posterResult => {
         if (!isActiveSearch(searchId, loadId)) return;
         if (!posterResult) {
@@ -1174,7 +1444,7 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
         }
         if (!viewModel.posterUrl && posterResult.poster) {
             viewModel.posterUrl = posterResult.poster;
-            loadPoster(viewModel.posterUrl, viewModel.title);
+            loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
         setEnrichmentStatus(
@@ -1190,6 +1460,7 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
 
 async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
     setEnrichmentStatus(els.omdbStatus, '正在补充 OMDb 数据…', true);
+    const posterContext = createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
 
     let omdbProfile = null;
     try {
@@ -1204,7 +1475,7 @@ async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searc
         viewModel.omdbProfile = omdbProfile;
         if (!viewModel.posterUrl && omdbProfile.poster) {
             viewModel.posterUrl = omdbProfile.poster;
-            loadPoster(viewModel.posterUrl, viewModel.title);
+            loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
     }
@@ -1217,7 +1488,41 @@ async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searc
     await startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
 }
 
-function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId) {
+function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
+    const imdbId = viewModel.detail?.imdbId || candidate.imdbId;
+    if (!imdbId) {
+        void startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+        return;
+    }
+
+    setEnrichmentStatus(els.omdbStatus, '正在补充 IMDb / OMDb 数据…', true);
+    OmdbAPI.getById(imdbId, searchOptions).then(omdbProfile => {
+        if (!isActiveSearch(searchId, loadId)) return;
+        if (omdbProfile) {
+            viewModel.omdbProfile = omdbProfile;
+            if (!viewModel.posterUrl && omdbProfile.poster) {
+                viewModel.posterUrl = omdbProfile.poster;
+                loadPoster(viewModel.posterUrl, viewModel.title, createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId));
+            }
+            renderTmdbProfile(viewModel);
+        }
+
+        if (!viewModel.posterUrl) {
+            void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+            return;
+        }
+        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
+    }).catch(error => {
+        if (error?.name === 'AbortError') return;
+        if (isActiveSearch(searchId, loadId)) {
+            if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, '暂无 IMDb / OMDb 补充数据');
+            else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+        }
+        console.debug('OMDb enrichment skipped:', error);
+    });
+}
+
+function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId, detailPromise = Promise.resolve()) {
     const enrichmentQuery = candidate.title || candidate.originalTitle || query;
     setEnrichmentStatus(els.wikiStatus, '正在补充中文 Wikipedia 简介…', true);
 
@@ -1261,44 +1566,25 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
 
     scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
 
-    const imdbId = viewModel.detail?.imdbId || candidate.imdbId;
-    if (imdbId) {
-        setEnrichmentStatus(els.omdbStatus, '正在补充 IMDb / OMDb 数据…', true);
-        OmdbAPI.getById(imdbId, searchOptions).then(omdbProfile => {
-            if (!isActiveSearch(searchId, loadId)) return;
-            if (omdbProfile) {
-                viewModel.omdbProfile = omdbProfile;
-                if (!viewModel.posterUrl && omdbProfile.poster) {
-                    viewModel.posterUrl = omdbProfile.poster;
-                    loadPoster(viewModel.posterUrl, viewModel.title);
-                }
-                renderTmdbProfile(viewModel);
-            }
-
-            if (!viewModel.posterUrl) {
-                void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-                return;
-            }
-            setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
-        }).catch(error => {
-            if (error?.name === 'AbortError') return;
+    void detailPromise
+        .then(() => {
             if (isActiveSearch(searchId, loadId)) {
-                if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, '暂无 IMDb / OMDb 补充数据');
-                else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+                startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
             }
-            console.debug('OMDb enrichment skipped:', error);
+        })
+        .catch(error => {
+            if (error?.name !== 'AbortError') console.debug('Detail enrichment gate skipped:', error);
         });
-    } else {
-        void startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-    }
 }
 
 async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false } = {}) {
     if (!isActiveSearch(searchId)) return;
 
     cancelResourceLoadSchedule();
-    resourceLoadStarted = false;
     const loadId = ++currentCandidateLoadId;
+    const candidateOptions = createCandidateRequestOptions(searchOptions);
+    resourceLoadStarted = false;
+    if (!isRetry) resourceResultState = null;
     const selectedCandidate = {
         ...candidate,
         mediaType: candidate?.mediaType || candidate?.type || null
@@ -1317,63 +1603,78 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         showToast('正在加载影视详情…');
     }
 
-    let tmdbDetail = null;
-    let detailError = null;
-    try {
-        tmdbDetail = await TmdbAPI.getDetail(selectedCandidate.id, selectedCandidate.mediaType, searchOptions);
-    } catch (error) {
-        if (error?.name === 'AbortError') throw error;
-        detailError = error;
-    }
-
-    if (!isActiveSearch(searchId, loadId)) return;
-
-    const viewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
-    setText(els.title, viewModel.title);
-    setText(els.subTitle, viewModel.subtitle);
-    renderGenres(viewModel.genres);
-    renderSynopsis(viewModel.overviewSource, viewModel.summary);
-    loadPoster(viewModel.posterUrl, viewModel.title);
-    renderTmdbFacts(viewModel);
-    renderTmdbProfile(viewModel);
-    renderScore({
-        rating: viewModel.rating,
-        votes: viewModel.votes,
-        genres: viewModel.genres,
-        hasWiki: false,
-        summary: viewModel.summary,
-        source: 'tmdb'
-    }, 'TMDB');
+    const viewModel = buildTmdbViewModel(selectedCandidate, null, null, null);
+    const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
+    const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
+    renderViewModel(viewModel, posterContext);
 
     els.results.classList.remove('hidden');
     els.loading.classList.add('hidden');
-    setSearchStatus(`已找到“${viewModel.title}”，${detailError ? '基础信息已加载' : '详情已加载'}`);
-
-    if (detailError) {
-        showDataNotice({
-            title: 'TMDB 详情暂时不可用',
-            detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
-            actionLabel: '重试详情',
-            onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true }),
-            tone: 'error'
-        });
-    } else {
-        hideDataNotice();
-    }
-
+    setSearchStatus(`已找到“${viewModel.title}”，正在补充详情`);
     setSearching(false);
     scrollToVisible(els.results);
-    startEnrichments(selectedCandidate, query, viewModel, searchId, searchOptions, loadId);
+    focusResultHeading();
+
+    const detailPromise = TmdbAPI.getDetail(selectedCandidate.id, selectedCandidate.mediaType, candidateOptions)
+        .then(tmdbDetail => {
+            if (!isActiveSearch(searchId, loadId)) return null;
+
+            const existingSummary = viewModel.overviewSource === 'ZH.WIKIPEDIA' ? viewModel.summary : '';
+            const existingPoster = viewModel.posterUrl;
+            const existingOmdbProfile = viewModel.omdbProfile;
+            const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
+            Object.assign(viewModel, detailViewModel);
+            if (existingSummary) {
+                viewModel.summary = existingSummary;
+                viewModel.overviewSource = 'ZH.WIKIPEDIA';
+            }
+            if (existingPoster) viewModel.posterUrl = existingPoster;
+            if (existingOmdbProfile) viewModel.omdbProfile = existingOmdbProfile;
+            renderViewModel(viewModel, posterContext, { isUpdate: true });
+            setSearchStatus(`已找到“${viewModel.title}”，详情已加载`);
+            hideDataNotice();
+            return tmdbDetail;
+        })
+        .catch(error => {
+            if (error?.name === 'AbortError') throw error;
+            if (isActiveSearch(searchId, loadId)) {
+                setSearchStatus(`已找到“${viewModel.title}”，基础信息已加载`);
+                showDataNotice({
+                    title: 'TMDB 详情暂时不可用',
+                    detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
+                    actionLabel: '重试详情',
+                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true }),
+                    tone: 'error'
+                });
+            }
+            console.debug('TMDB detail skipped:', error);
+            return null;
+        });
+
+    startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId, detailPromise);
+    await detailPromise;
 }
 
 async function handleSearch() {
     const query = els.input.value.trim();
-    if (!query) return;
+    if (!query) {
+        currentSearchId += 1;
+        currentAbortController?.abort();
+        abortCandidateRequests();
+        cancelResourceLoadSchedule();
+        resourceLoadStarted = false;
+        resourceResultState = null;
+        lastSearchQuery = '';
+        showEmptySearchError();
+        return;
+    }
 
     lastSearchQuery = query;
 
     cancelResourceLoadSchedule();
     resourceLoadStarted = false;
+    resourceResultState = null;
+    abortCandidateRequests();
     if (currentAbortController) {
         currentAbortController.abort();
     }

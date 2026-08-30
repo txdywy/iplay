@@ -30,8 +30,10 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
    - `TMDB_API_KEY`（可选，作为备用）
    - `OMDB_API_KEY`（可选；未配置时 OMDb 功能不可用，项目不内置 Key）
    - `CORS_ALLOWED_ORIGINS`（可选；额外允许的前端 Origin，以英文逗号分隔）
-5. 保存并部署。
-6. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
+   - `ENVIRONMENT=production`（必填；缺少生产限流 binding 时让 Worker fail closed）
+5. 到 **Settings → Bindings** 配置两个 Rate Limiting bindings，名称必须分别为 `API_RATE_LIMITER` 和 `RESOURCE_RATE_LIMITER`，并与 `wrangler.toml` 中的 namespace ID 保持一致。
+6. 保存并部署。
+7. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
 
 ### 方式二：Wrangler CLI
 
@@ -44,7 +46,7 @@ npm run wrangler -- secret put OMDB_API_KEY
 npm run wrangler -- deploy
 ```
 
-TMDB 两种凭据选择一种即可。自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
+TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `ENVIRONMENT=production`，并保留 `API_RATE_LIMITER` / `RESOURCE_RATE_LIMITER` 两个 binding；自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
 
 ### Worker 配置
 
