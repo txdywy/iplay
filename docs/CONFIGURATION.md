@@ -16,6 +16,8 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `TMDB_API_KEY` | Fallback | — | TMDB v3 API Key. Used as a fallback if `TMDB_ACCESS_TOKEN` is not set. Passed as a query parameter (`api_key`). |
 | `OMDB_API_KEY` | Optional | — | Enables OMDb-backed IMDb ratings, Rotten Tomatoes scores, and poster metadata. No key is bundled; OMDb endpoints return `503` when it is unset. |
 | `CORS_ALLOWED_ORIGINS` | Optional | — | Comma-separated additional frontend origins. At most 20 configured values are read. |
+| `ENVIRONMENT` | Production required | — | Set to `production` in the deployed Worker. When production rate-limit bindings are missing, requests fail closed with `503` instead of using an isolate-local counter. |
+| `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
 
 ### Setting Secrets via Wrangler CLI
 
@@ -54,6 +56,7 @@ TMDB_ACCESS_TOKEN=your_tmdb_v4_token_here
 TMDB_API_KEY=your_tmdb_v3_key_here
 OMDB_API_KEY=your_omdb_key_here
 CORS_ALLOWED_ORIGINS=https://preview.example.com,http://localhost:4173
+ENVIRONMENT=development
 ```
 
 > **Note:** `.dev.vars` is already listed in `.gitignore` to prevent accidental commits of secrets.
@@ -94,7 +97,7 @@ period = 60
 | `API_RATE_LIMITER` | `60 / 60s` | Cloudflare Rate Limiting binding for ordinary API routes. The namespace ID is `1001`. |
 | `RESOURCE_RATE_LIMITER` | `10 / 60s` | Cloudflare Rate Limiting binding for `/api/resource`, whose upstream fan-out is more expensive. The namespace ID is `1002`. |
 
-The Worker calls the Cloudflare Rate Limiting bindings when they are available. A process-local limiter remains only as a development/test fallback when bindings are absent. If a configured production binding is malformed or unavailable, requests fail closed with `503` instead of silently falling back to a per-isolate counter. The fallback is not a substitute for the account-wide production counters.
+The Worker calls the Cloudflare Rate Limiting bindings when they are available. A process-local limiter remains only as a development/test fallback when bindings are absent. Set `ENVIRONMENT=production` for deployed Workers; if a production binding is malformed or unavailable, requests fail closed with `503` instead of silently falling back to a per-isolate counter. The fallback is not a substitute for the account-wide production counters.
 
 ### Deploying the Worker
 

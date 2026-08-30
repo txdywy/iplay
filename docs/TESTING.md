@@ -324,7 +324,7 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 |------|------|----------|
 | 慢网 | Chrome DevTools Network Throttling 3G | 显示加载状态，请求可完成 |
 | 断网 | 断开网络后搜索 | 显示错误状态，不崩溃 |
-| 超时 | 模拟 API 响应 > 8s | 请求超时，显示错误提示 |
+| 超时 | 模拟 API 响应 > 12s | 请求超时，显示错误提示 |
 | 请求取消 | 连续快速提交不同搜索 | 旧请求被 AbortController 取消，仅展示最新结果 |
 
 ---
@@ -357,7 +357,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: git diff --exit-code -- css/output.css
+      - uses: browser-actions/setup-chrome@v1
+      - run: npm run test:browser:ci
 ```
+
+浏览器冒烟脚本会启动隔离的无头 Chrome 和本地静态服务器，覆盖渐进详情、详情重试、资源部分成功恢复、连续搜索取消、海报失败兜底及旧环境定时回退。
 
 ---
 

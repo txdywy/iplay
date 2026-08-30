@@ -10,8 +10,10 @@ test('static shell keeps project-site assets relative and exposes recovery regio
     assert.match(indexHtml, /href="\.\/css\/output\.css"/);
     assert.match(indexHtml, /id="candidatePicker"/);
     assert.match(indexHtml, /id="retrySearchButton"/);
+    assert.match(indexHtml, /id="errorHint"/);
     assert.match(indexHtml, /id="dataNotice"/);
     assert.match(indexHtml, /id="resourcesSection"/);
+    assert.match(indexHtml, /id="resourcesNotice"/);
     assert.match(indexHtml, /id="showCover"[^>]*width="400"[^>]*height="600"[^>]*loading="eager"[^>]*decoding="async"[^>]*fetchpriority="high"/);
     assert.match(indexHtml, /id="searchButton"[^>]*>[\s\S]*?<svg/);
 });
@@ -28,6 +30,9 @@ test('result enrichment keeps the critical path independent from resource scanni
     assert.match(mainJs, /scheduleResourceLoad\(candidate, searchId, searchOptions, loadId\)/);
     assert.match(mainJs, /OmdbAPI\.getById\(imdbId, searchOptions\)/);
     assert.match(mainJs, /OmdbAPI\.search\(enrichmentQuery, candidate\.year, searchOptions\)/);
+    assert.match(mainJs, /new AbortController\(\)/);
+    assert.match(mainJs, /资源扫描部分完成/);
+    assert.match(mainJs, /海报加载失败，正在查找备用海报/);
     const enrichmentBlock = mainJs.slice(mainJs.indexOf('function startEnrichments'), mainJs.indexOf('async function loadCandidateDetails'));
     assert.doesNotMatch(enrichmentBlock, /loadResources\(/);
     assert.doesNotMatch(mainJs, /document\.createElement\('i'\)/);

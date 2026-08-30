@@ -2032,3 +2032,248 @@ test('scheduled refresh limits title fan-out concurrency', async t => {
     await refreshPromise;
     assert.ok(maxActiveRequests <= 4, `expected at most 4 concurrent refreshes, got ${maxActiveRequests}`);
 });
+test('production refuses to fall back to a per-isolate rate limiter', async t => {
+    muteConsole(t, 'error');
+    const response = await worker.fetch(
+        new Request('https://worker.test/not-found', {
+            headers: { 'cf-connecting-ip': 'test-production-rate-limit' }
+        }),
+        { ENVIRONMENT: 'production' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('retry-after'), '60');
+});
+
+test('cacheable responses expose their cache policy to clients', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => Response.json([]);
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/douban/search?q=cache-header', {
+            headers: { 'cf-connecting-ip': 'test-cache-header' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=86400');
+});
+
+test('resource responses expose provider and detail partial-failure metadata', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const value = String(url);
+        if (value.startsWith('https://by669.org/api/discussions')) {
+            return Response.json({ data: [{ id: 'metadata-1', attributes: { title: 'Metadata resource' } }] });
+        }
+        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+            return new Response('temporarily unavailable', { status: 503 });
+        }
+        if (value === 'https://by669.org/d/metadata-1') return new Response('', { status: 200 });
+        throw new Error('Unexpected fetch: ' + value);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/resource?q=partial-metadata', {
+            headers: { 'cf-connecting-ip': 'test-resource-partial-metadata' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.partial, true);
+    assert.deepEqual(body.resourceMeta.providers, { by669: 'ok', wpzys: 'failed' });
+    assert.equal(body.resourceMeta.selectedPages, 1);
+    assert.equal(body.resourceMeta.attemptedPages, 1);
+    assert.equal(body.resourceMeta.failedPages, 0);
+});
+
+test('concurrent identical TMDB requests share one upstream fetch', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async () => {
+        fetchCalls += 1;
+        await new Promise(resolve => globalThis.setTimeout(resolve, 20));
+        return Response.json({
+            page: 1,
+            total_results: 1,
+            results: [{
+                id: 654,
+                media_type: 'movie',
+                title: 'Concurrent Movie',
+                release_date: '2026-01-01',
+                vote_count: 1
+            }]
+        });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const request = clientIp => new Request('https://worker.test/api/tmdb/search?q=Concurrent%20Movie', {
+        headers: { 'cf-connecting-ip': clientIp }
+    });
+    const [first, second] = await Promise.all([
+        worker.fetch(request('test-tmdb-coalesce-1'), { TMDB_API_KEY: 'test-key' }, { waitUntil() {} }),
+        worker.fetch(request('test-tmdb-coalesce-2'), { TMDB_API_KEY: 'test-key' }, { waitUntil() {} })
+    ]);
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal((await first.json()).results[0].id, 654);
+    assert.equal((await second.json()).results[0].id, 654);
+    assert.equal(fetchCalls, 1);
+});
+
+test('resource refresh bypasses a cached partial result', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const cacheEntries = new Map();
+    const cacheWrites = [];
+    let wpzysCalls = 0;
+    let providerCalls = 0;
+
+    globalThis.caches = {
+        default: {
+            match: async key => {
+                const cached = cacheEntries.get(String(key.url || key));
+                return cached ? cached.clone() : null;
+            },
+            put: async (key, response) => {
+                cacheEntries.set(String(key.url || key), response);
+            }
+        }
+    };
+    globalThis.fetch = async url => {
+        providerCalls += 1;
+        const parsed = new globalThis.URL(String(url));
+        if (parsed.hostname === 'by669.org') return Response.json({ data: [] });
+        if (parsed.hostname === 'www.wpzys.org') {
+            wpzysCalls += 1;
+            if (wpzysCalls === 1) return new Response('provider unavailable', { status: 503 });
+            return new Response('<html><body>No matching resources</body></html>');
+        }
+        throw new Error('Unexpected provider request: ' + url);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const context = { waitUntil(promise) { cacheWrites.push(promise); } };
+    const request = suffix => new Request(`https://worker.test/api/resource?q=refresh-cache${suffix}`, {
+        headers: { 'cf-connecting-ip': 'test-resource-refresh-cache' }
+    });
+
+    const first = await worker.fetch(request(''), {}, context);
+    assert.equal((await first.json()).partial, true);
+    await Promise.all(cacheWrites.splice(0));
+    const callsAfterPartial = providerCalls;
+
+    const cached = await worker.fetch(request(''), {}, context);
+    assert.equal((await cached.json()).partial, true);
+    assert.equal(providerCalls, callsAfterPartial);
+
+    const refreshed = await worker.fetch(request('&refresh=1'), {}, context);
+    const refreshedBody = await refreshed.json();
+    assert.equal(refreshedBody.partial, false);
+    assert.ok(providerCalls > callsAfterPartial);
+});
+
+test('poster refresh bypasses cached TMDB poster data', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const cacheEntries = new Map();
+    const cacheWrites = [];
+    let tmdbCalls = 0;
+
+    globalThis.caches = {
+        default: {
+            match: async key => {
+                const cached = cacheEntries.get(String(key.url || key));
+                return cached ? cached.clone() : null;
+            },
+            put: async (key, response) => {
+                cacheEntries.set(String(key.url || key), response);
+            }
+        }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        if (parsed.hostname !== 'api.themoviedb.org') throw new Error('Unexpected provider request: ' + url);
+        tmdbCalls += 1;
+        return Response.json({
+            page: 1,
+            total_results: 1,
+            results: [{
+                id: 901,
+                media_type: 'movie',
+                title: 'Poster Refresh Movie',
+                release_date: '2024-01-01',
+                poster_path: tmdbCalls === 1 ? '/broken.jpg' : '/fresh.jpg',
+                vote_count: 10,
+                popularity: 1
+            }]
+        });
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const context = { waitUntil(promise) { cacheWrites.push(promise); } };
+    const request = suffix => new Request(`https://worker.test/api/poster?title=Poster%20Refresh%20Movie&year=2024${suffix}`, {
+        headers: { 'cf-connecting-ip': 'test-poster-refresh-cache' }
+    });
+    const env = { TMDB_API_KEY: 'test-key' };
+
+    const first = await worker.fetch(request(''), env, context);
+    assert.equal((await first.json()).poster, 'https://image.tmdb.org/t/p/w500/broken.jpg');
+    await Promise.all(cacheWrites.splice(0));
+
+    const cached = await worker.fetch(request(''), env, context);
+    assert.equal((await cached.json()).poster, 'https://image.tmdb.org/t/p/w500/broken.jpg');
+    assert.equal(tmdbCalls, 1);
+
+    const refreshed = await worker.fetch(request('&refresh=1'), env, context);
+    assert.equal((await refreshed.json()).poster, 'https://image.tmdb.org/t/p/w500/fresh.jpg');
+    assert.equal(tmdbCalls, 2);
+});

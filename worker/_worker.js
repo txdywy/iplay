@@ -11,6 +11,8 @@ const ALLOWED_ORIGINS = [
     "http://localhost:8787",
     "http://127.0.0.1:8787",
     "http://localhost:3000",
+    "http://127.0.0.1:4173",
+    "http://localhost:4173",
     "http://localhost:8080",
     "http://127.0.0.1:8080"
 ];
@@ -112,7 +114,11 @@ export default {
             }
 
             if (path === "/api/resource") {
-                return withCors(await handleResourceSearch(url.searchParams.get("q"), ctx), request, env);
+                return withCors(await handleResourceSearch(
+                    url.searchParams.get("q"),
+                    ctx,
+                    { refresh: url.searchParams.get("refresh") === "1" }
+                ), request, env);
             }
 
             if (path === "/api/omdb") {
@@ -124,7 +130,13 @@ export default {
             }
 
             if (path === "/api/poster") {
-                return withCors(await handlePosterSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request, env);
+                return withCors(await handlePosterSearch(
+                    url.searchParams.get("title"),
+                    url.searchParams.get("year"),
+                    env,
+                    ctx,
+                    { refresh: url.searchParams.get("refresh") === "1" }
+                ), request, env);
             }
 
             if (path === "/api/wiki/zh") {
@@ -146,7 +158,8 @@ export default {
 
 function jsonResponse(data, status = 200, extraHeaders = {}) {
     const headers = new Headers({
-        "Content-Type": "application/json;charset=UTF-8"
+        "Content-Type": "application/json;charset=UTF-8",
+        "Cache-Control": "no-store"
     });
     for (const [key, value] of Object.entries(extraHeaders)) headers.set(key, value);
 
@@ -230,6 +243,20 @@ const SEARCH_ACCEPT_SCORE = 0.72;
 const SEARCH_AUTO_MATCH_SCORE = 0.56;
 
 const upstreamResponseMeta = new WeakMap();
+const inFlightRequests = new Map();
+
+function withInFlight(key, task) {
+    const existing = inFlightRequests.get(key);
+    if (existing) return existing;
+
+    const promise = Promise.resolve().then(task);
+    inFlightRequests.set(key, promise);
+    promise.then(
+        () => { if (inFlightRequests.get(key) === promise) inFlightRequests.delete(key); },
+        () => { if (inFlightRequests.get(key) === promise) inFlightRequests.delete(key); }
+    );
+    return promise;
+}
 
 function getErrorStatus(error, fallback = 500) {
     return Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
@@ -375,8 +402,8 @@ function scheduleCachePut(ctx, cacheKey, response) {
 
 function cacheJson(ctx, cacheKey, data, maxAge) {
     const response = jsonResponse(data);
+    response.headers.set("Cache-Control", `public, max-age=${maxAge}`);
     const toCache = response.clone();
-    toCache.headers.set("Cache-Control", `public, max-age=${maxAge}`);
     scheduleCachePut(ctx, cacheKey, toCache);
     return response;
 }
@@ -482,6 +509,13 @@ async function checkRateLimit(ip, path, env) {
             console.error("Cloudflare rate limiter failed:", error?.message || error);
             return null;
         }
+    }
+
+    const requiresDistributedLimiter = String(env?.ENVIRONMENT || "").toLowerCase() === "production"
+        || String(env?.REQUIRE_DISTRIBUTED_RATE_LIMIT || "").toLowerCase() === "true";
+    if (requiresDistributedLimiter) {
+        console.error("Cloudflare rate limiter binding is required in production");
+        return null;
     }
 
     return checkLocalRateLimit(`${routeKey}:${ip}`, isResourceRoute ? 10 : RATE_LIMIT);
@@ -666,6 +700,22 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
         throw createHttpError("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY", 503);
     }
 
+    const keyUrl = new URL(`${TMDB_BASE}${path}`);
+    Object.entries(params || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+            keyUrl.searchParams.set(key, value);
+        }
+    });
+    const inFlightKey = `tmdb:${keyUrl.toString()}:${options.refreshCache ? "refresh" : "cached"}`;
+    return withInFlight(inFlightKey, () => fetchTmdbJsonUncoalesced(path, params, env, ctx, options));
+}
+
+async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
+    const auth = getTmdbAuth(env);
+    if (!auth) {
+        throw createHttpError("Missing TMDB_ACCESS_TOKEN or TMDB_API_KEY", 503);
+    }
+
     const url = new URL(`${TMDB_BASE}${path}`);
     Object.entries(params || {}).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== "") {
@@ -705,7 +755,7 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
     } catch (error) {
         if (cachedResponse) {
             await deleteCachedResponse(cacheKey);
-            return fetchTmdbJson(path, params, env, ctx, { ...options, refreshCache: true });
+            return fetchTmdbJsonUncoalesced(path, params, env, ctx, { ...options, refreshCache: true });
         }
         if (error.status) throw error;
         throw createHttpError("TMDB returned invalid JSON", 502);
@@ -719,7 +769,7 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
     if (!isValidTmdbPayload(path, data)) {
         if (cachedResponse) {
             await deleteCachedResponse(cacheKey);
-            return fetchTmdbJson(path, params, env, ctx, { ...options, refreshCache: true });
+            return fetchTmdbJsonUncoalesced(path, params, env, ctx, { ...options, refreshCache: true });
         }
         throw createHttpError("TMDB returned an invalid response", 502);
     }
@@ -1859,13 +1909,25 @@ function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOUR
     return selected;
 }
 
-async function handleResourceSearch(query, ctx) {
+async function handleResourceSearch(query, ctx, { refresh = false } = {}) {
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
+
+    const response = await withInFlight(
+        `resource:${refresh ? "refresh:" : ""}${query}`,
+        () => handleResourceSearchUncoalesced(query, ctx, { refresh })
+    );
+    return response.clone();
+}
+
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } = {}) {
     const queryCheck = validateRequiredText(query, "query");
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
     const cacheKey = new Request(`https://resource-search-v5-cache.local/?q=${encodeURIComponent(query)}`);
-    const cached = await serveCachedJson(cacheKey);
+    const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
@@ -1895,7 +1957,18 @@ async function handleResourceSearch(query, ctx) {
         return cacheJson(ctx, cacheKey, {
             resources,
             wpzysResources,
-            quarkUrls: detailResult.quarkUrls
+            quarkUrls: detailResult.quarkUrls,
+            partial: isPartial,
+            resourceMeta: {
+                partial: isPartial,
+                providers: {
+                    by669: by669Result.status === "fulfilled" ? "ok" : "failed",
+                    wpzys: wpzysResult.status === "fulfilled" ? "ok" : "failed"
+                },
+                selectedPages: detailResources.length,
+                attemptedPages: detailResult.attemptedPages,
+                failedPages: detailResult.failedPages
+            }
         }, isPartial ? 900 : 43200);
     } catch (e) {
         return jsonResponse({ error: e.message }, e.status || 502);
@@ -2037,7 +2110,24 @@ function extractOmdbProfile(data) {
     };
 }
 
-async function handlePosterSearch(title, year, env, ctx) {
+async function handlePosterSearch(title, year, env, ctx, { refresh = false } = {}) {
+    const titleCheck = validateRequiredText(title, "title");
+    if (titleCheck.error) return titleCheck.error;
+    title = titleCheck.value;
+
+    const yearCheck = validateOptionalYear(year);
+    if (yearCheck.error) return yearCheck.error;
+    year = yearCheck.value;
+
+    const configuredSources = `${getTmdbAuth(env) ? "tmdb" : ""}-${getOmdbApiKey(env) ? "omdb" : ""}`;
+    const response = await withInFlight(
+        `poster:${refresh ? "refresh:" : ""}${title}:${year}:${configuredSources}`,
+        () => handlePosterSearchUncoalesced(title, year, env, ctx, { refresh })
+    );
+    return response.clone();
+}
+
+async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = false } = {}) {
     const titleCheck = validateRequiredText(title, "title");
     if (titleCheck.error) return titleCheck.error;
     title = titleCheck.value;
@@ -2054,13 +2144,13 @@ async function handlePosterSearch(title, year, env, ctx) {
 
     const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
     const cacheKey = new Request(`https://poster-v1-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
-    const cached = await serveCachedJson(cacheKey);
+    const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
         const deadline = createDeadline(POSTER_TOTAL_TIMEOUT_MS);
         const [tmdbResult, omdbResult] = await Promise.allSettled([
-            tryTmdbForPoster(title, year, env, ctx, deadline),
+            tryTmdbForPoster(title, year, env, ctx, deadline, { refreshCache: refresh }),
             tryOmdbForPoster(title, year, env, deadline)
         ]);
 
@@ -2102,13 +2192,13 @@ async function handlePosterSearch(title, year, env, ctx) {
     }
 }
 
-async function tryTmdbForPoster(title, year, env, ctx, deadline = null) {
+async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refreshCache = false } = {}) {
     let searchData = await fetchTmdbJson("/search/multi", {
         query: title,
         language: "zh-CN",
         include_adult: "false",
         page: "1"
-    }, env, ctx, { deadline });
+    }, env, ctx, { deadline, refreshCache });
 
     let candidates = Array.isArray(searchData.results)
         ? searchData.results.filter(item => isObject(item) && (!year || parseYear(item.release_date || item.first_air_date) === String(year)))
@@ -2121,7 +2211,7 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null) {
             language: "en-US",
             include_adult: "false",
             page: "1"
-        }, env, ctx, { deadline });
+        }, env, ctx, { deadline, refreshCache });
         candidates = Array.isArray(searchData.results)
             ? searchData.results.filter(item => isObject(item) && (!year || parseYear(item.release_date || item.first_air_date) === String(year)))
             : [];
