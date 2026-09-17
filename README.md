@@ -74,6 +74,10 @@ iplay/
    npm run wrangler -- secret put OMDB_API_KEY
    ```
    然后按提示粘贴对应的密钥值。
+7. 仓库已提供 `.github/workflows/deploy-worker.yml`。当 `main` 分支中涉及 `worker/` 或 `wrangler.toml` 的修改合并后，GitHub Actions 会先执行 `deploy --dry-run`，再自动发布 Worker，并通过 `--keep-vars` 保留 Dashboard 中已有的变量和密钥。首次启用前，请在 GitHub 仓库的 **Settings** -> **Secrets and variables** -> **Actions** 中配置：
+   - `CLOUDFLARE_API_TOKEN`：可执行该 Worker 部署的 Cloudflare API Token
+   - `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID
+   配置完成后，可在 **Actions** 页面手动运行一次 `Deploy Cloudflare Worker` 验证凭据；之后相关 `main` 合并会自动部署。
 
 ### 2. 部署前端 (GitHub Pages)
 1. Fork 本仓库。
