@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.3.0] - 2026-09-17
+
+### Added
+
+- Actor-name searches now list the actor's TV and movie credits, with each work linking to its full detail view.
+- Cast names in detail views are now searchable, enabling direct navigation from one actor to another.
+
+### Changed
+
+- TMDB actor credits are normalized, deduplicated, and exposed through a dedicated person-search API with recoverable fallback behavior.
+
 ## [1.0.2.0] - 2026-08-30
 
 ### Added
