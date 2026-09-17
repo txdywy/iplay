@@ -112,6 +112,24 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const candidatePoster = query === 'Broken Poster Movie' ? 'https://images.example/broken-poster.jpg' : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }] });
             }
+            if (url.pathname === '/api/tmdb/person') {
+                const query = url.searchParams.get('q') || '';
+                if (query !== 'Smoke Actor' && query !== 'Clickable Actor') return json({});
+                return json({
+                    person: {
+                        id: 900,
+                        name: query,
+                        originalName: query,
+                        profile: poster,
+                        matchScore: 1,
+                        matchConfidence: 'high'
+                    },
+                    credits: [
+                        { ...candidate('Smoke Series', 201), mediaType: 'tv', title: 'Smoke Series', originalTitle: 'Smoke Series', character: 'Lead' },
+                        { ...candidate('Actor Movie', 200), mediaType: 'movie', title: 'Actor Movie', originalTitle: 'Actor Movie', character: 'Guest' }
+                    ]
+                });
+            }
             if (url.pathname === '/api/tmdb/detail') {
                 window.__smoke.detailCalls += 1;
                 const id = Number(url.searchParams.get('id'));
@@ -123,7 +141,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     104: 'No IMDb Movie',
                     105: 'Broken Poster Movie',
                     106: 'Progressive Movie',
-                    107: 'Retry Detail Movie'
+                    107: 'Retry Detail Movie',
+                    200: 'Actor Movie',
+                    201: 'Smoke Series'
                 };
                 const title = titles[id] || 'Smoke Movie';
                 if (id === 106) {
@@ -142,6 +162,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     productionCompanies: ['Smoke Studio'],
                     productionCountries: ['United States'],
                     cast: ['Smoke Actor'],
+                    castDetails: [{ id: 900, name: 'Clickable Actor', character: 'Lead' }],
                     director: ['Smoke Director'],
                     writer: ['Smoke Writer'],
                     imdbId: id === 104 ? '' : 'tt1234567',
@@ -280,6 +301,26 @@ async function runTimerFallbackFlow() {
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 1, 'old browsers should use the bounded timer fallback');
 }
 
+async function runActorFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Smoke Actor');
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelector('#actorResultsTitle')?.textContent"), 'Smoke Actor');
+    assert.equal(await evaluate("document.querySelector('#actor-tv-title')?.textContent.includes('电视剧')"), true);
+    assert.equal(await evaluate("document.querySelector('#actor-movie-title')?.textContent.includes('电影')"), true);
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 2);
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
+
+    await evaluate("document.querySelector('#actorCreditList button[data-media-id=\\\"200\\\"]')?.click()");
+    await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
+    await waitFor("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')");
+
+    await evaluate("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Clickable Actor'");
+    assert.equal(await evaluate("document.querySelector('#actorResultsArea:not(.hidden)') !== null"), true);
+}
+
 try {
     await runObserverFlow();
     await runStaleSearchFlow();
@@ -288,7 +329,8 @@ try {
     await runTitleOmdbFlow();
     await runBrokenPosterFlow();
     await runTimerFallbackFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback'] }));
+    await runActorFlow();
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback', 'actor-search-and-navigation'] }));
 } finally {
     socket.close();
 }

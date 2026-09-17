@@ -191,6 +191,126 @@ test('TMDB search rejects blank queries before calling an upstream service', asy
     assert.deepEqual(await response.json(), { error: 'Missing query' });
 });
 
+test('TMDB person search rejects blank actor names before calling an upstream service', async () => {
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=%20%20%20', {
+            headers: { 'cf-connecting-ip': 'test-blank-person-query' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'Missing query' });
+});
+
+test('TMDB person search returns normalized movie and TV credits', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedPaths = [];
+
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async () => undefined
+        }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedPaths.push(parsed.pathname);
+        if (parsed.pathname === '/3/search/person') {
+            return Response.json({
+                page: 1,
+                total_results: 1,
+                results: [{
+                    id: 900,
+                    name: 'Smoke Actor',
+                    original_name: 'Smoke Actor',
+                    known_for_department: 'Acting',
+                    popularity: 42,
+                    profile_path: '/actor.jpg'
+                }]
+            });
+        }
+        if (parsed.pathname === '/3/person/900') {
+            return Response.json({
+                id: 900,
+                name: 'Smoke Actor',
+                original_name: 'Smoke Actor',
+                known_for_department: 'Acting',
+                profile_path: '/actor.jpg',
+                combined_credits: {
+                    cast: [
+                        {
+                            id: 201,
+                            media_type: 'tv',
+                            name: 'Smoke Series',
+                            original_name: 'Smoke Series',
+                            first_air_date: '2025-01-01',
+                            overview: 'A series credit.',
+                            vote_average: 8.1,
+                            vote_count: 100,
+                            popularity: 10,
+                            character: 'Lead'
+                        },
+                        {
+                            id: 200,
+                            media_type: 'movie',
+                            title: 'Smoke Film',
+                            original_title: 'Smoke Film',
+                            release_date: '2024-01-01',
+                            overview: 'A film credit.',
+                            vote_average: 7.5,
+                            vote_count: 80,
+                            popularity: 9,
+                            character: 'Guest'
+                        },
+                        {
+                            id: 200,
+                            media_type: 'movie',
+                            title: 'Smoke Film',
+                            release_date: '2024-01-01',
+                            character: 'Guest'
+                        }
+                    ]
+                }
+            });
+        }
+        throw new Error(`Unexpected fetch: ${parsed.pathname}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=Smoke%20Actor', {
+            headers: { 'cf-connecting-ip': 'test-person-credits' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.person, {
+        id: 900,
+        name: 'Smoke Actor',
+        originalName: 'Smoke Actor',
+        profile: 'https://image.tmdb.org/t/p/w185/actor.jpg',
+        knownForDepartment: 'Acting',
+        matchScore: 1,
+        matchConfidence: 'high',
+        matchMethod: 'name-exact'
+    });
+    assert.deepEqual(body.credits.map(item => [item.mediaType, item.id, item.title, item.character]), [
+        ['tv', 201, 'Smoke Series', 'Lead'],
+        ['movie', 200, 'Smoke Film', 'Guest']
+    ]);
+    assert.equal(body.totalResults, 2);
+    assert.deepEqual(requestedPaths, ['/3/search/person', '/3/person/900']);
+});
+
 test('TMDB detail rejects non-numeric identifiers before building an upstream URL', async () => {
     const response = await worker.fetch(
         new Request('https://worker.test/api/tmdb/detail?id=..%2F..%2Faccount&type=movie', {
@@ -455,7 +575,9 @@ test('direct TMDB search and detail routes use the resized poster URL', async t 
                 vote_average: 7.5,
                 vote_count: 100,
                 popularity: 10,
-                credits: {},
+                credits: {
+                    cast: [{ id: 77, name: 'Poster Actor', character: 'Lead', profile_path: '/actor.jpg' }]
+                },
                 external_ids: { imdb_id: 'tt3210000' }
             });
         }
@@ -490,6 +612,13 @@ test('direct TMDB search and detail routes use the resized poster URL', async t 
     assert.equal(searchBody.results[0].backdrop, 'https://image.tmdb.org/t/p/w780/backdrop.jpg');
     assert.equal(detailBody.poster, 'https://image.tmdb.org/t/p/w500/poster.jpg');
     assert.equal(detailBody.backdrop, 'https://image.tmdb.org/t/p/w780/backdrop.jpg');
+    assert.deepEqual(detailBody.cast, ['Poster Actor']);
+    assert.deepEqual(detailBody.castDetails, [{
+        id: 77,
+        name: 'Poster Actor',
+        character: 'Lead',
+        profile: 'https://image.tmdb.org/t/p/w185/actor.jpg'
+    }]);
 });
 
 test('TMDB search ranks title confidence ahead of popularity', async t => {

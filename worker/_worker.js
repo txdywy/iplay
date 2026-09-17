@@ -96,6 +96,10 @@ export default {
                 return withCors(await handleTmdbSearch(url.searchParams.get("q"), env, ctx), request, env);
             }
 
+            if (path === "/api/tmdb/person") {
+                return withCors(await handleTmdbPersonSearch(url.searchParams.get("q"), env, ctx), request, env);
+            }
+
             if (path === "/api/tmdb/detail") {
                 return withCors(await handleTmdbDetail(
                     url.searchParams.get("id"),
@@ -239,6 +243,7 @@ const MAX_SCHEDULED_REFRESH_TITLES = 20;
 const SEARCH_MAX_ATTEMPTS = 6;
 const SEARCH_MAX_RESULTS = 20;
 const SEARCH_MAX_ALIAS_QUERIES = 2;
+const PERSON_MAX_RESULTS = 200;
 const SEARCH_ACCEPT_SCORE = 0.72;
 const SEARCH_AUTO_MATCH_SCORE = 0.56;
 
@@ -643,9 +648,15 @@ function normalizeTmdbDetail(data, type) {
     const originalTitle = pickTmdbText(data.original_title, data.original_name, title);
     const year = parseYear(data.release_date || data.first_air_date);
     const credits = isObject(data.credits) ? data.credits : {};
-    const cast = Array.isArray(credits.cast)
-        ? credits.cast.filter(isObject).slice(0, 8).map(person => person.name).filter(Boolean)
+    const castDetails = Array.isArray(credits.cast)
+        ? credits.cast.filter(isObject).slice(0, 8).map(person => ({
+            id: toSafeTmdbId(person.id),
+            name: pickTmdbText(person.name),
+            character: pickTmdbText(person.character) || null,
+            profile: tmdbImage(person.profile_path, "w185")
+        })).filter(person => person.name)
         : [];
+    const cast = castDetails.map(person => person.name);
     const crew = Array.isArray(credits.crew) ? credits.crew.filter(isObject) : [];
     const director = new Set();
     const writer = new Set();
@@ -674,6 +685,7 @@ function normalizeTmdbDetail(data, type) {
         productionCompanies: Array.isArray(data.production_companies) ? data.production_companies.filter(isObject).map(c => c.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
         productionCountries: Array.isArray(data.production_countries) ? data.production_countries.filter(isObject).map(c => c.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
         cast,
+        castDetails,
         director: cleanDirector,
         writer: cleanWriter,
         totalSeasons: type === "tv" ? toNonNegativeInteger(data.number_of_seasons) : null,
@@ -688,7 +700,7 @@ function normalizeTmdbDetail(data, type) {
 
 function isValidTmdbPayload(path, data) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return false;
-    if (/^\/search\/(?:multi|movie|tv)$/.test(path)) return Array.isArray(data.results);
+    if (/^\/search\/(?:multi|movie|tv|person)$/.test(path)) return Array.isArray(data.results);
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
     if (/^\/(?:movie|tv)\/\d+$/.test(path)) return toSafeTmdbId(data.id) !== null;
     return true;
@@ -811,6 +823,15 @@ async function fetchTmdbFindByExternalId(externalId, language, env, ctx, options
     return fetchTmdbJson(`/find/${encodeURIComponent(externalId)}`, {
         external_source: "imdb_id",
         language
+    }, env, ctx, options);
+}
+
+async function fetchTmdbPersonSearch(query, language, env, ctx, options = {}) {
+    return fetchTmdbJson("/search/person", {
+        query,
+        language,
+        include_adult: "false",
+        page: "1"
     }, env, ctx, options);
 }
 
@@ -1206,6 +1227,155 @@ function pickBestTmdbPosterCandidate(items, title, year) {
         .sort((a, b) => b.score - a.score);
 
     return scored.length > 0 ? scored[0].item : null;
+}
+
+function getTmdbPersonName(person) {
+    return pickTmdbText(person?.name, person?.original_name);
+}
+
+function scoreTmdbPerson(query, person) {
+    const names = [person?.name, person?.original_name].filter(value => typeof value === "string" && value.trim());
+    const score = Math.max(0, ...names.map(name => scoreSearchText(query, name)));
+    const departmentBonus = person?.known_for_department === "Acting" ? 0.04 : 0;
+    return Math.min(1, score + departmentBonus);
+}
+
+function normalizeTmdbPerson(person, query, match = null) {
+    if (!isObject(person) || toSafeTmdbId(person.id) === null || !getTmdbPersonName(person)) return null;
+
+    const normalized = {
+        id: toSafeTmdbId(person.id),
+        name: getTmdbPersonName(person),
+        originalName: pickTmdbText(person.original_name, person.name),
+        profile: tmdbImage(person.profile_path, "w185"),
+        knownForDepartment: typeof person.known_for_department === "string" ? person.known_for_department : null
+    };
+
+    if (match) {
+        normalized.matchScore = Number(match.score.toFixed(3));
+        normalized.matchConfidence = getSearchConfidence(match.score);
+        normalized.matchMethod = match.method;
+    } else if (query) {
+        const score = scoreTmdbPerson(query, person);
+        normalized.matchScore = Number(score.toFixed(3));
+        normalized.matchConfidence = getSearchConfidence(score);
+        normalized.matchMethod = score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy";
+    }
+
+    return normalized;
+}
+
+function normalizeTmdbPersonCredits(data) {
+    const cast = Array.isArray(data?.combined_credits?.cast) ? data.combined_credits.cast : [];
+    const seen = new Set();
+    const credits = [];
+
+    for (const item of cast) {
+        if (!isObject(item)) continue;
+        const mediaType = getTmdbMediaType(item)
+            || (typeof item.first_air_date === "string" ? "tv" : typeof item.release_date === "string" ? "movie" : null);
+        const normalized = normalizeTmdbItem(item, mediaType);
+        if (!normalized) continue;
+
+        const key = `${normalized.mediaType}:${normalized.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        credits.push({
+            ...normalized,
+            character: pickTmdbText(item.character) || null,
+            creditId: typeof item.credit_id === "string" ? item.credit_id : null
+        });
+        if (credits.length >= PERSON_MAX_RESULTS) break;
+    }
+
+    return credits.sort((left, right) => (
+        (Number(right.year) || 0) - (Number(left.year) || 0)
+        || (right.popularity || 0) - (left.popularity || 0)
+        || left.title.localeCompare(right.title)
+    ));
+}
+
+async function handleTmdbPersonSearch(query, env, ctx) {
+    const queryCheck = validateRequiredText(query, "query");
+    if (queryCheck.error) return queryCheck.error;
+    query = queryCheck.value;
+
+    try {
+        const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
+        const people = [];
+        const languages = ["zh-CN", "en-US"];
+        let attempts = 0;
+        let lastError = null;
+
+        for (const language of languages) {
+            if (isDeadlineExpired(deadline)) break;
+            attempts += 1;
+            try {
+                const data = await fetchTmdbPersonSearch(query, language, env, ctx, { deadline });
+                if (Array.isArray(data?.results)) {
+                    people.push(...data.results);
+                    if (data.results.some(person => scoreTmdbPerson(query, person) >= SEARCH_ACCEPT_SCORE)) break;
+                }
+            } catch (error) {
+                lastError = error;
+                if (shouldStopSearchFallback(error)) break;
+            }
+        }
+
+        if (people.length === 0 && lastError) throw lastError;
+
+        const rankedPeople = people
+            .filter(person => isObject(person) && toSafeTmdbId(person.id) !== null)
+            .map((person, sourceIndex) => {
+                const score = scoreTmdbPerson(query, person);
+                return {
+                    person,
+                    score,
+                    method: score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy",
+                    sourceIndex
+                };
+            })
+            .sort((left, right) => (
+                right.score - left.score
+                || (right.person.known_for_department === "Acting" ? 1 : 0) - (left.person.known_for_department === "Acting" ? 1 : 0)
+                || (toFiniteMetric(right.person.popularity, 0) - toFiniteMetric(left.person.popularity, 0))
+                || left.sourceIndex - right.sourceIndex
+            ));
+
+        const best = rankedPeople[0];
+        if (!best || best.score < SEARCH_ACCEPT_SCORE) {
+            return jsonResponse({
+                person: null,
+                credits: [],
+                totalResults: 0,
+                searchMeta: { query, attempts, confidence: "none", matchScore: 0 }
+            });
+        }
+
+        const personId = toSafeTmdbId(best.person.id);
+        const personData = await fetchTmdbJson(`/person/${personId}`, {
+            language: "zh-CN",
+            append_to_response: "combined_credits"
+        }, env, ctx, { deadline });
+        const person = normalizeTmdbPerson(personData, query, best);
+        const credits = normalizeTmdbPersonCredits(personData);
+
+        return jsonResponse({
+            person,
+            credits,
+            totalResults: credits.length,
+            searchMeta: {
+                query,
+                attempts,
+                confidence: best.score >= 0.86 ? "high" : "medium",
+                matchScore: Number(best.score.toFixed(3)),
+                matchedBy: best.method
+            }
+        });
+    } catch (error) {
+        console.error("TMDB person search error:", error.message);
+        return jsonResponse({ error: error.message }, error.status || 502);
+    }
 }
 
 async function handleTmdbSearch(query, env, ctx) {

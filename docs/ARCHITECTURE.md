@@ -6,8 +6,8 @@
 
 iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV recommendation web application with a "dark cinema" retro aesthetic. The system aggregates data from multiple public sources (TMDB, Douban, OMDb, Wikipedia, and resource sites) to provide personalized viewing recommendations. It follows a serverless, zero-cost architecture: a static frontend hosted on GitHub Pages paired with a Cloudflare Worker acting as a CORS-bypass proxy and data aggregator at the edge.
 
-**Primary inputs:** User search queries (Chinese or English movie/TV titles).  
-**Primary outputs:** Aggregated detail pages with ratings, plot summaries, cast info, resource links, and a personalized AI recommendation score.
+**Primary inputs:** User search queries (Chinese or English movie/TV titles or actor names).
+**Primary outputs:** Aggregated detail pages with ratings, plot summaries, cast info, resource links, and a personalized AI recommendation score; actor queries also return grouped filmography results.
 
 ---
 
@@ -179,8 +179,8 @@ found?      |
 | Component | File | Description |
 |-----------|------|-------------|
 | **SPA Shell** | `index.html` | Single-page application shell. Dark theme (`#0a0a0c`), Netflix-red accent (`#e50914`), static film-grain pattern, ambient glow radial gradient, typewriter cursor animation. Responsive layout with poster sidebar + content area. |
-| **UI Controller** | `js/main.js` | Search form handling, candidate confirmation, progressive detail rendering, deferred resource loading, fallback/retry states, season facts, resource pagination, and toast notifications. |
-| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 12s default/OMDb timeout; 18s for resource and poster aggregation). Exports `TmdbAPI`, `DoubanAPI`, `WikiAPI`, `OmdbAPI`, `ResourceAPI`, `PosterAPI`. |
+| **UI Controller** | `js/main.js` | Search form handling for titles and actors, grouped filmography cards, clickable cast names, candidate confirmation, progressive detail rendering, deferred resource loading, fallback/retry states, season facts, resource pagination, and toast notifications. |
+| **API Client** | `js/api.js` | API client with `fetchWithTimeout` (AbortController, 12s default/OMDb timeout; 18s for resource and poster aggregation). Exports `TmdbAPI` (title, person, and detail search), `DoubanAPI`, `WikiAPI`, `OmdbAPI`, `ResourceAPI`, `PosterAPI`. |
 | **Match Rules** | `js/match.js` | Normalizes title text, ranks TMDB candidates, and detects low-confidence or close-score results that require user confirmation. |
 | **Season Formatter** | `js/seasons.js` | Formats total seasons/episodes and per-season episode counts, including specials and unknown counts. |
 | **Quark Formatter** | `js/quark.js` | Formats share URLs and optional extraction passwords for clipboard copy. |
@@ -192,7 +192,7 @@ found?      |
 | Component | File | Description |
 |-----------|------|-------------|
 | **Worker Entry** | `worker/_worker.js` | Cloudflare Worker fetch handler. Routes requests, validates methods and parameters, applies per-IP rate limiting, and manages origin-aware CORS responses. |
-| **TMDB Handler** | `_worker.js` | Search (`/api/tmdb/search`) and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Search normalizes query intent, scores candidates, and uses bounded language/type/year/IMDb/alias fallbacks; raw upstream responses are cached for 24h. |
+| **TMDB Handler** | `_worker.js` | Title search (`/api/tmdb/search`), actor filmography search (`/api/tmdb/person`), and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Searches normalize query intent, score matches, and use bounded fallbacks; raw upstream responses are cached for 24h. |
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **OMDb Handler** | `_worker.js` | Proxy for IMDb/Rotten Tomatoes data (`/api/omdb`). Supports search by title+year or by IMDb ID. Caches for 24h. |
 | **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Total upstream work is bounded to about 15s; complete results cache for 24h; degraded results cache for 15 minutes. |
@@ -210,6 +210,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | Method | Path | Query Params | Description |
 |--------|------|--------------|-------------|
 | `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Normalizes title intent, ranks by match confidence, and uses bounded fallback queries. |
+| `GET` | `/api/tmdb/person` | `q` (string) | Match an actor name and return normalized movie / TV cast credits, with profile and match metadata. |
 | `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; retries the alternate valid type only after a `404`. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |

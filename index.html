@@ -36,7 +36,7 @@
         </p>
 
         <form id="searchForm" class="w-full max-w-2xl relative group flex" autocomplete="off">
-            <input type="text" id="searchInput" maxlength="100" enterkeyhint="search" placeholder="搜索剧集 / 电影..." aria-label="搜索剧集或电影" aria-describedby="searchStatus"
+            <input type="text" id="searchInput" maxlength="100" enterkeyhint="search" placeholder="搜索剧集 / 电影 / 演员..." aria-label="搜索剧集、电影或演员" aria-describedby="searchStatus"
                    class="search-input min-w-0 w-full px-8 py-5 pr-16 rounded-full text-white text-xl md:text-2xl font-serif placeholder-cinema-400/80 text-center leading-[normal]">
             <button type="submit" id="searchButton" aria-label="搜索"
                     class="absolute right-4 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-full border border-cinema-700 bg-cinema-900/70 text-accent-red transition-[transform,background-color,border-color] hover:border-accent-red hover:bg-accent-red/10 active:scale-95 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
@@ -64,6 +64,23 @@
                 <span class="font-mono text-xs text-cinema-400">TMDB CANDIDATES</span>
             </div>
             <div id="candidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </section>
+
+        <section id="actorResultsArea" class="hidden mb-8 rounded-3xl border border-cinema-700 bg-cinema-800/50 p-5 md:p-6 fade-up" aria-labelledby="actorResultsTitle">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div class="flex min-w-0 items-center gap-4 text-left">
+                    <div id="actorProfileWrapper" class="hidden h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-cinema-700 bg-cinema-900">
+                        <img id="actorProfile" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="演员头像" class="h-full w-full object-cover" width="64" height="64" loading="lazy" decoding="async">
+                    </div>
+                    <div class="min-w-0">
+                        <p class="font-mono text-xs uppercase tracking-[0.3em] text-accent-gold">演员作品</p>
+                        <h2 id="actorResultsTitle" tabindex="-1" class="mt-2 break-words text-2xl font-bold text-cinema-100 focus:outline-none"></h2>
+                        <p id="actorResultsMeta" class="mt-1 text-sm text-cinema-400"></p>
+                    </div>
+                </div>
+                <span class="shrink-0 font-mono text-xs text-cinema-400">TMDB CREDITS</span>
+            </div>
+            <div id="actorCreditList" class="mt-6 space-y-8"></div>
         </section>
 
         <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center" role="alert">

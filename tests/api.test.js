@@ -37,6 +37,23 @@ test('API clients encode queries and return JSON responses', async t => {
     assert.match(requestedUrl, /\/api\/tmdb\/search\?q=a%20b$/);
 });
 
+test('TMDB person API encodes actor names', async t => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = '';
+    globalThis.fetch = async (url, options = {}) => {
+        requestedUrl = String(url);
+        assert.ok(options.signal instanceof AbortSignal);
+        return Response.json({ person: { name: 'A B' }, credits: [] });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { TmdbAPI } = await import('../js/api.js');
+    const result = await TmdbAPI.searchPerson('A B');
+
+    assert.deepEqual(result, { person: { name: 'A B' }, credits: [] });
+    assert.match(requestedUrl, /\/api\/tmdb\/person\?q=A%20B$/);
+});
+
 test('resource and poster retries request fresh Worker data', async t => {
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];

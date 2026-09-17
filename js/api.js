@@ -67,6 +67,9 @@ export const TmdbAPI = {
     async search(query, options = {}) {
         return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}`, options);
     },
+    async searchPerson(query, options = {}) {
+        return fetchWithTimeout(`${API_BASE}/api/tmdb/person?q=${encodeURIComponent(query)}`, options);
+    },
     async getDetail(id, type, options = {}) {
         let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
         if (type) url += `&type=${encodeURIComponent(type)}`;

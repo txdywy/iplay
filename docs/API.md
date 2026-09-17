@@ -129,7 +129,48 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
 
 ---
 
-### 2. TMDB 详情
+### 2. TMDB 演员作品搜索
+
+按演员姓名匹配 TMDB 人物，并返回该人物的电影 / 电视剧出演作品。前端点击作品后会继续调用 TMDB 详情接口，因此作品详情与直接搜索片名的结果一致。
+
+```
+GET /api/tmdb/person?q={actorName}
+```
+
+**Example Response：**
+
+```json
+{
+  "person": {
+    "id": 31,
+    "name": "汤姆·汉克斯",
+    "originalName": "Tom Hanks",
+    "profile": "https://image.tmdb.org/t/p/w185/xxx.jpg",
+    "knownForDepartment": "Acting",
+    "matchScore": 1,
+    "matchConfidence": "high",
+    "matchMethod": "name-exact"
+  },
+  "credits": [
+    {
+      "id": 13,
+      "mediaType": "movie",
+      "title": "阿甘正传",
+      "originalTitle": "Forrest Gump",
+      "year": "1994",
+      "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
+      "character": "Forrest Gump"
+    }
+  ],
+  "totalResults": 1
+}
+```
+
+无可靠人物匹配时返回 `person: null` 与空的 `credits`；前端会继续按影视标题搜索。
+
+---
+
+### 3. TMDB 详情
 
 获取指定电影或电视剧的详细信息，包含演职员表。
 
@@ -169,6 +210,9 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/detail?id=550988&type=movie"
   "productionCompanies": ["中国电影股份有限公司", "北京文化"],
   "productionCountries": ["China"],
   "cast": ["吴京", "屈楚萧", "李光洁", "吴孟达"],
+  "castDetails": [
+    { "id": 208, "name": "吴京", "character": "刘培强", "profile": "https://image.tmdb.org/t/p/w185/xxx.jpg" }
+  ],
   "director": ["郭帆"],
   "writer": ["龚格尔", "严东旭"],
   "totalSeasons": null,
@@ -198,7 +242,7 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/detail?id=550988&type=movie"
 
 ---
 
-### 3. 豆瓣搜索
+### 4. 豆瓣搜索
 
 通过豆瓣电影搜索接口获取搜索结果。
 
@@ -242,7 +286,7 @@ curl "https://iplayw.hackx64.eu.org/api/douban/search?q=流浪地球"
 
 ---
 
-### 4. 豆瓣详情
+### 5. 豆瓣详情
 
 通过 HTML 抓取获取豆瓣电影详情页信息。
 
@@ -278,7 +322,7 @@ curl "https://iplayw.hackx64.eu.org/api/douban/detail?id=26266893"
 
 ---
 
-### 5. 资源搜索（夸克网盘）
+### 6. 资源搜索（夸克网盘）
 
 搜索影视资源的夸克网盘分享链接。
 
@@ -334,7 +378,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 
 ---
 
-### 6. OMDb 代理
+### 7. OMDb 代理
 
 代理 OMDb API，用于获取 IMDb 评分、烂番茄评分和海报等信息。
 
@@ -390,7 +434,7 @@ curl "https://iplayw.hackx64.eu.org/api/omdb?title=The+Wandering+Earth&year=2019
 
 ---
 
-### 7. 海报获取
+### 8. 海报获取
 
 智能海报获取接口：优先从 TMDB 获取高清海报，失败时自动降级到 OMDb。若中文标题在 OMDb 未找到，还会尝试通过中文 Wikipedia 查找英文标题后再搜索 OMDb。
 
@@ -454,7 +498,7 @@ curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
 
 ---
 
-### 8. 中文 Wikipedia 摘要
+### 9. 中文 Wikipedia 摘要
 
 获取中文 Wikipedia 页面摘要。
 
@@ -497,6 +541,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | 接口 | 缓存时长 | 缓存键 |
 |------|----------|--------|
 | `/api/tmdb/search` | 24h | TMDB 原始请求 URL |
+| `/api/tmdb/person` | 24h | TMDB 人物搜索与 combined credits 请求 URL |
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
@@ -517,7 +562,7 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 
 ### 前端搜索与恢复行为
 
-`js/main.js` 使用 `js/match.js` 对 Worker 返回的候选进行二次判断：高置信度且分数明显领先的结果会直接加载详情；中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。
+`js/main.js` 会并行检查标题和演员意图：命中高置信度演员时按电视剧 / 电影分组展示出演作品；影视查询则使用 `js/match.js` 对 Worker 返回的候选进行二次判断，高置信度且分数明显领先的结果会直接加载详情，中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。详情页的 TMDB / OMDb 演员名以按钮形式复用演员搜索。
 
 搜索结果会先于详情接口出现，详情接口失败时页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；现代浏览器中的资源聚合默认延后到资源区接近视口或用户主动点击后执行，不支持 IntersectionObserver 的旧环境才使用空闲回调或定时回退。资源接口返回部分成功时，三个资源列表会保留可用内容，并显示“重试补全资源”；完全失败时三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
 
@@ -538,6 +583,9 @@ import { TmdbAPI } from './api.js';
 // 搜索
 const results = await TmdbAPI.search('流浪地球');
 
+// 演员作品
+const filmography = await TmdbAPI.searchPerson('汤姆·汉克斯');
+
 // 详情
 const detail = await TmdbAPI.getDetail(550988, 'movie');
 ```
@@ -545,6 +593,7 @@ const detail = await TmdbAPI.getDetail(550988, 'movie');
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `search` | `(query, options = {})` | `{ page, totalResults, results[], searchMeta }` |
+| `searchPerson` | `(query, options = {})` | `{ person, credits[], totalResults }` |
 | `getDetail` | `(id, type, options = {})` | 详情对象 |
 
 ### `DoubanAPI`
