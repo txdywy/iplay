@@ -1,13 +1,10 @@
-name: Deploy Cloudflare Worker
+name: Deploy Cloudflare Worker (manual)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "worker/**"
-      - "wrangler.toml"
-      - "package.json"
-      - "package-lock.json"
+  # Production deploys currently run from a trusted local machine using the
+  # local Wrangler OAuth session. Keep this workflow available for a future
+  # GitHub-secrets setup, but do not run it on every main push while those
+  # secrets are intentionally absent.
   workflow_dispatch:
 
 permissions:

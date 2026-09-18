@@ -35,7 +35,7 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 6. 保存并部署。
 7. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
 
-### 方式二：Wrangler CLI
+### 方式二：Wrangler CLI（当前推荐）
 
 ```bash
 cd iplay
@@ -43,10 +43,20 @@ npm run wrangler -- login
 npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 npm run wrangler -- secret put TMDB_API_KEY
 npm run wrangler -- secret put OMDB_API_KEY
-npm run wrangler -- deploy
+npm run deploy:worker:dry-run
+npm run deploy:worker -- --message "本次变更说明"
 ```
 
 TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `ENVIRONMENT=production`，并保留 `API_RATE_LIMITER` / `RESOURCE_RATE_LIMITER` 两个 binding；自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
+
+当前生产 Worker 使用本机 Wrangler OAuth 配置部署，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
+
+### GitHub Actions（暂不自动部署 Worker）
+
+`.github/workflows/deploy-worker.yml` 目前只保留手动触发入口，不会因 `main` 推送自动运行。这样可以避免仓库未配置 Cloudflare Secrets 时产生必然失败的部署任务。若未来切换到 GitHub Actions，需要配置以下仓库 Secrets：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
 ### Worker 配置
 
