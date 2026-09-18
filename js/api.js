@@ -68,7 +68,19 @@ export const TmdbAPI = {
         return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}`, options);
     },
     async searchPerson(query, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/tmdb/person?q=${encodeURIComponent(query)}`, options);
+        const {
+            personId,
+            offset,
+            limit,
+            mediaType,
+            ...requestOptions
+        } = options;
+        const params = [`q=${encodeURIComponent(query)}`];
+        if (personId) params.push(`id=${encodeURIComponent(personId)}`);
+        if (offset !== undefined && offset !== null) params.push(`offset=${encodeURIComponent(offset)}`);
+        if (limit !== undefined && limit !== null) params.push(`limit=${encodeURIComponent(limit)}`);
+        if (mediaType) params.push(`mediaType=${encodeURIComponent(mediaType)}`);
+        return fetchWithTimeout(`${API_BASE}/api/tmdb/person?${params.join('&')}`, requestOptions);
     },
     async getDetail(id, type, options = {}) {
         let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;

@@ -66,6 +66,18 @@
             <div id="candidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
         </section>
 
+        <section id="actorCandidatePicker" class="hidden mb-8 rounded-3xl border border-accent-gold/30 bg-cinema-800/60 p-5 md:p-6 fade-up" aria-labelledby="actorCandidatePickerTitle">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <p class="font-mono text-xs uppercase tracking-[0.3em] text-accent-gold">请确认演员</p>
+                    <h2 id="actorCandidatePickerTitle" class="mt-2 text-xl font-bold text-cinema-100">搜索到多个同名演员</h2>
+                    <p class="mt-1 text-sm text-cinema-400">输入：<span id="actorCandidatePickerQuery" class="text-cinema-100"></span>。请选择正确的人物，再查看其电影和电视剧作品。</p>
+                </div>
+                <span class="font-mono text-xs text-cinema-400">TMDB PEOPLE</span>
+            </div>
+            <div id="actorCandidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </section>
+
         <section id="actorResultsArea" class="hidden mb-8 rounded-3xl border border-cinema-700 bg-cinema-800/50 p-5 md:p-6 fade-up" aria-labelledby="actorResultsTitle">
             <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div class="flex min-w-0 items-center gap-4 text-left">
@@ -80,7 +92,14 @@
                 </div>
                 <span class="shrink-0 font-mono text-xs text-cinema-400">TMDB CREDITS</span>
             </div>
+            <div id="actorFilters" class="mt-5 flex flex-wrap gap-2" role="toolbar" aria-label="筛选演员作品">
+                <button id="actorFilterAll" type="button" data-actor-filter="" aria-pressed="true" class="min-h-11 rounded-full border border-accent-red/60 bg-accent-red/10 px-4 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-accent-red hover:bg-accent-red/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">全部 <span class="ml-1 text-cinema-400"></span></button>
+                <button id="actorFilterTv" type="button" data-actor-filter="tv" aria-pressed="false" class="min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs font-mono text-cinema-300 transition-colors hover:border-accent-red/70 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">电视剧 <span class="ml-1 text-cinema-500"></span></button>
+                <button id="actorFilterMovie" type="button" data-actor-filter="movie" aria-pressed="false" class="min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs font-mono text-cinema-300 transition-colors hover:border-accent-red/70 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">电影 <span class="ml-1 text-cinema-500"></span></button>
+            </div>
+            <div id="actorNotice" class="hidden mt-4 rounded-2xl border border-accent-gold/30 bg-accent-gold/10 px-4 py-3 text-sm text-cinema-100" role="status" aria-live="polite"></div>
             <div id="actorCreditList" class="mt-6 space-y-8"></div>
+            <button id="actorLoadMore" type="button" class="hidden mt-6 min-h-11 w-full rounded-full border border-cinema-600 px-5 py-3 text-xs font-mono text-cinema-100 transition-colors hover:border-accent-red hover:bg-accent-red/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60">加载更多作品</button>
         </section>
 
         <div id="errorState" class="hidden fade-up bg-cinema-800/80 border border-accent-red/30 p-6 rounded-2xl text-center" role="alert">

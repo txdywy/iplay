@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.4.0] - 2026-09-18
+
+### Added
+
+- Added same-name actor candidate selection, TV / movie filters, paginated filmography loading, and browser history restoration for actor and detail views.
+
+### Changed
+
+- Actor filmographies now return the complete normalized credit set through bounded pages instead of silently truncating at 200 entries.
+- Title searches skip the actor endpoint when a reliable title match is already available, reducing unnecessary upstream requests.
+
+### Fixed
+
+- Actor endpoint failures are surfaced as recoverable UI errors instead of being silently treated as title-search misses.
+- Cast actor controls now meet the mobile touch-target baseline.
+
 ## [1.0.3.0] - 2026-09-17
 
 ### Added

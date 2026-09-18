@@ -109,12 +109,64 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Progressive Movie': 106,
                     'Retry Detail Movie': 107
                 };
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor'].includes(query)) {
+                    return json({ results: [], searchMeta: { matchScore: 0 } });
+                }
                 const candidatePoster = query === 'Broken Poster Movie' ? 'https://images.example/broken-poster.jpg' : poster;
-                return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }] });
+                return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
             if (url.pathname === '/api/tmdb/person') {
                 const query = url.searchParams.get('q') || '';
+                if (url.searchParams.get('id') === '901') {
+                    return json({
+                        person: { id: 901, name: 'Ambiguous Actor', originalName: 'Ambiguous Actor', profile: poster, matchScore: 1, matchConfidence: 'high' },
+                        credits: [{ ...candidate('Selected Film', 304), mediaType: 'movie', title: 'Selected Film', originalTitle: 'Selected Film' }],
+                        totalResults: 1,
+                        offset: 0,
+                        limit: 36,
+                        hasMore: false,
+                        counts: { tv: 0, movie: 1 }
+                    });
+                }
+                if (query === 'Ambiguous Actor') {
+                    return json({
+                        person: null,
+                        credits: [],
+                        personCandidates: [
+                            { id: 901, name: 'Ambiguous Actor', originalName: 'Ambiguous Actor', matchScore: 1, profile: poster },
+                            { id: 902, name: 'Ambiguous Actor', originalName: 'Ambiguous Actor', matchScore: 1, profile: poster }
+                        ],
+                        searchMeta: { ambiguous: true, matchScore: 1 }
+                    });
+                }
+                if (query === 'Paged Actor') {
+                    const pagedCredits = [
+                        { ...candidate('Paged Film 1', 301), mediaType: 'movie', title: 'Paged Film 1', originalTitle: 'Paged Film 1' },
+                        { ...candidate('Paged Film 2', 302), mediaType: 'movie', title: 'Paged Film 2', originalTitle: 'Paged Film 2' },
+                        { ...candidate('Paged Series', 303), mediaType: 'tv', title: 'Paged Series', originalTitle: 'Paged Series' }
+                    ];
+                    const offset = Number(url.searchParams.get('offset') || 0);
+                    const limit = 2;
+                    const page = pagedCredits.slice(offset, offset + limit);
+                    return json({
+                        person: { id: 903, name: query, originalName: query, profile: poster, matchScore: 1, matchConfidence: 'high' },
+                        credits: page,
+                        totalResults: pagedCredits.length,
+                        offset,
+                        limit,
+                        hasMore: offset + page.length < pagedCredits.length,
+                        counts: { tv: 1, movie: 2 }
+                    });
+                }
                 if (query !== 'Smoke Actor' && query !== 'Clickable Actor') return json({});
+                const allCredits = [
+                    { ...candidate('Smoke Series', 201), mediaType: 'tv', title: 'Smoke Series', originalTitle: 'Smoke Series', character: 'Lead' },
+                    { ...candidate('Actor Movie', 200), mediaType: 'movie', title: 'Actor Movie', originalTitle: 'Actor Movie', character: 'Guest' }
+                ];
+                const requestedType = url.searchParams.get('mediaType');
+                const filteredCredits = requestedType ? allCredits.filter(credit => credit.mediaType === requestedType) : allCredits;
+                const offset = Number(url.searchParams.get('offset') || 0);
+                const page = filteredCredits.slice(offset, offset + 36);
                 return json({
                     person: {
                         id: 900,
@@ -124,10 +176,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         matchScore: 1,
                         matchConfidence: 'high'
                     },
-                    credits: [
-                        { ...candidate('Smoke Series', 201), mediaType: 'tv', title: 'Smoke Series', originalTitle: 'Smoke Series', character: 'Lead' },
-                        { ...candidate('Actor Movie', 200), mediaType: 'movie', title: 'Actor Movie', originalTitle: 'Actor Movie', character: 'Guest' }
-                    ]
+                    credits: page,
+                    totalResults: filteredCredits.length,
+                    offset,
+                    limit: 36,
+                    hasMore: offset + page.length < filteredCredits.length,
+                    counts: { tv: 1, movie: 1 }
                 });
             }
             if (url.pathname === '/api/tmdb/detail') {
@@ -311,14 +365,51 @@ async function runActorFlow() {
     assert.equal(await evaluate("document.querySelector('#actor-movie-title')?.textContent.includes('电影')"), true);
     assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 2);
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('actor') === 'Smoke Actor'"), true);
+
+    await evaluate("document.querySelector('#actorFilterTv')?.click()");
+    await waitFor("document.querySelector('#actor-tv-title') && document.querySelectorAll('#actorCreditList button[data-media-id]').length === 1");
+    assert.equal(await evaluate('window.__smoke.calls.some(call => call.includes("mediaType=tv"))'), true);
+    await evaluate("document.querySelector('#actorFilterAll')?.click()");
+    await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 2");
 
     await evaluate("document.querySelector('#actorCreditList button[data-media-id=\\\"200\\\"]')?.click()");
     await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
+    assert.equal(await evaluate("location.search.includes('id=200') && location.search.includes('type=movie')"), true);
     await waitFor("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')");
 
     await evaluate("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Clickable Actor'");
     assert.equal(await evaluate("document.querySelector('#actorResultsArea:not(.hidden)') !== null"), true);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('actor') === 'Clickable Actor'"), true);
+
+    await evaluate('history.back()');
+    await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
+    await evaluate('history.back()');
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Smoke Actor'");
+}
+
+async function runActorCandidateFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Ambiguous Actor');
+    await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCandidateList button[data-person-id]').length"), 2);
+    await evaluate("document.querySelector('#actorCandidateList button[data-person-id=\\\"901\\\"]')?.click()");
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Ambiguous Actor'");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length"), 1);
+}
+
+async function runActorPaginationFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Paged Actor');
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 2);
+    assert.equal(await evaluate("document.querySelector('#actorLoadMore:not(.hidden)') !== null"), true);
+    await evaluate("document.querySelector('#actorLoadMore')?.click()");
+    await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 3");
+    assert.equal(await evaluate("document.querySelector('#actorLoadMore.hidden') !== null"), true);
 }
 
 try {
@@ -330,7 +421,9 @@ try {
     await runBrokenPosterFlow();
     await runTimerFallbackFlow();
     await runActorFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback', 'actor-search-and-navigation'] }));
+    await runActorCandidateFlow();
+    await runActorPaginationFlow();
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-pagination-and-filter'] }));
 } finally {
     socket.close();
 }

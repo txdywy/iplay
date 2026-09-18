@@ -16,6 +16,9 @@ test('static shell keeps project-site assets relative and exposes recovery regio
     assert.match(indexHtml, /id="resourcesNotice"/);
     assert.match(indexHtml, /id="actorResultsArea"/);
     assert.match(indexHtml, /id="actorCreditList"/);
+    assert.match(indexHtml, /id="actorCandidatePicker"/);
+    assert.match(indexHtml, /id="actorFilters"/);
+    assert.match(indexHtml, /id="actorLoadMore"/);
     assert.match(indexHtml, /id="showCover"[^>]*width="400"[^>]*height="600"[^>]*loading="eager"[^>]*decoding="async"[^>]*fetchpriority="high"/);
     assert.match(indexHtml, /id="searchButton"[^>]*>[\s\S]*?<svg/);
 });
@@ -37,6 +40,9 @@ test('result enrichment keeps the critical path independent from resource scanni
     assert.match(mainJs, /海报加载失败，正在查找备用海报/);
     assert.match(mainJs, /TmdbAPI\.searchPerson\(query, options\)/);
     assert.match(mainJs, /dataset\.actorName = name/);
+    assert.match(mainJs, /pushState\(\{ kind: 'actor'/);
+    assert.match(mainJs, /addEventListener\('popstate'/);
+    assert.match(mainJs, /mediaType: mediaType \|\| undefined/);
     const enrichmentBlock = mainJs.slice(mainJs.indexOf('function startEnrichments'), mainJs.indexOf('async function loadCandidateDetails'));
     assert.doesNotMatch(enrichmentBlock, /loadResources\(/);
     assert.doesNotMatch(mainJs, /document\.createElement\('i'\)/);

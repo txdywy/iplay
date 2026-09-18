@@ -210,7 +210,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | Method | Path | Query Params | Description |
 |--------|------|--------------|-------------|
 | `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Normalizes title intent, ranks by match confidence, and uses bounded fallback queries. |
-| `GET` | `/api/tmdb/person` | `q` (string) | Match an actor name and return normalized movie / TV cast credits, with profile and match metadata. |
+| `GET` | `/api/tmdb/person` | `q` (string), `id`, `offset`, `limit`, `mediaType` | Match an actor name or load a selected person; returns paginated movie / TV cast credits, counts, and match metadata. |
 | `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; retries the alternate valid type only after a `404`. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |

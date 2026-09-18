@@ -311,6 +311,169 @@ test('TMDB person search returns normalized movie and TV credits', async t => {
     assert.deepEqual(requestedPaths, ['/3/search/person', '/3/person/900']);
 });
 
+test('TMDB person search paginates the full filmography and applies media filters', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedPaths = [];
+    const cast = Array.from({ length: 205 }, (_, index) => {
+        const mediaType = index % 2 === 0 ? 'movie' : 'tv';
+        return {
+            id: 1000 + index,
+            media_type: mediaType,
+            ...(mediaType === 'tv'
+                ? { name: `Series ${index}`, original_name: `Series ${index}`, first_air_date: '2025-01-01' }
+                : { title: `Film ${index}`, original_title: `Film ${index}`, release_date: '2025-01-01' }),
+            vote_average: 7,
+            vote_count: 10,
+            popularity: 1,
+            character: `Character ${index}`
+        };
+    });
+
+    globalThis.caches = {
+        default: { match: async () => null, put: async () => undefined }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedPaths.push(parsed.pathname);
+        if (parsed.pathname === '/3/search/person') {
+            return Response.json({ results: [{ id: 901, name: 'Paginated Actor', original_name: 'Paginated Actor', known_for_department: 'Acting' }] });
+        }
+        if (parsed.pathname === '/3/person/901') {
+            return Response.json({
+                id: 901,
+                name: 'Paginated Actor',
+                original_name: 'Paginated Actor',
+                known_for_department: 'Acting',
+                combined_credits: { cast }
+            });
+        }
+        throw new Error(`Unexpected fetch: ${parsed.pathname}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=Paginated%20Actor&offset=198&limit=10', {
+            headers: { 'cf-connecting-ip': 'test-person-pagination' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.totalResults, 205);
+    assert.equal(body.offset, 198);
+    assert.equal(body.limit, 10);
+    assert.equal(body.credits.length, 7);
+    assert.equal(body.hasMore, false);
+    assert.deepEqual(body.counts, { tv: 102, movie: 103 });
+    assert.deepEqual(requestedPaths, ['/3/search/person', '/3/person/901']);
+
+    const filteredResponse = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=Paginated%20Actor&offset=0&limit=2&mediaType=tv', {
+            headers: { 'cf-connecting-ip': 'test-person-pagination-filter' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const filteredBody = await filteredResponse.json();
+    assert.equal(filteredResponse.status, 200);
+    assert.equal(filteredBody.totalResults, 102);
+    assert.equal(filteredBody.credits.length, 2);
+    assert.equal(filteredBody.credits.every(item => item.mediaType === 'tv'), true);
+    assert.equal(filteredBody.hasMore, true);
+    assert.deepEqual(filteredBody.counts, { tv: 102, movie: 103 });
+});
+
+test('TMDB person search asks the user to choose between ambiguous same-name people', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedPaths = [];
+
+    globalThis.caches = {
+        default: { match: async () => null, put: async () => undefined }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedPaths.push(parsed.pathname);
+        if (parsed.pathname === '/3/search/person') {
+            return Response.json({
+                results: [
+                    { id: 910, name: '同名演员', original_name: '同名演员', known_for_department: 'Acting', popularity: 30, profile_path: '/one.jpg' },
+                    { id: 911, name: '同名演员', original_name: '同名演员', known_for_department: 'Acting', popularity: 20, profile_path: '/two.jpg' }
+                ]
+            });
+        }
+        throw new Error(`Unexpected fetch: ${parsed.pathname}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=%E5%90%8C%E5%90%8D%E6%BC%94%E5%91%98', {
+            headers: { 'cf-connecting-ip': 'test-person-ambiguous' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.person, null);
+    assert.deepEqual(body.personCandidates.map(candidate => candidate.id), [910, 911]);
+    assert.equal(body.searchMeta.ambiguous, true);
+    assert.deepEqual(requestedPaths, ['/3/search/person']);
+});
+
+test('TMDB person search can load a selected person directly without a second name search', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const requestedPaths = [];
+
+    globalThis.caches = {
+        default: { match: async () => null, put: async () => undefined }
+    };
+    globalThis.fetch = async url => {
+        const parsed = new globalThis.URL(String(url));
+        requestedPaths.push(parsed.pathname);
+        if (parsed.pathname === '/3/person/912') {
+            return Response.json({
+                id: 912,
+                name: 'Selected Actor',
+                original_name: 'Selected Actor',
+                known_for_department: 'Acting',
+                combined_credits: { cast: [] }
+            });
+        }
+        throw new Error(`Unexpected fetch: ${parsed.pathname}`);
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?q=Selected%20Actor&id=912&limit=12', {
+            headers: { 'cf-connecting-ip': 'test-person-id-selection' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.person.id, 912);
+    assert.equal(body.totalResults, 0);
+    assert.equal(body.hasMore, false);
+    assert.deepEqual(requestedPaths, ['/3/person/912']);
+});
+
 test('TMDB detail rejects non-numeric identifiers before building an upstream URL', async () => {
     const response = await worker.fetch(
         new Request('https://worker.test/api/tmdb/detail?id=..%2F..%2Faccount&type=movie', {

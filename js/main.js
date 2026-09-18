@@ -28,7 +28,17 @@ const els = {
     actorProfile: document.getElementById('actorProfile'),
     actorTitle: document.getElementById('actorResultsTitle'),
     actorMeta: document.getElementById('actorResultsMeta'),
+    actorCandidatePicker: document.getElementById('actorCandidatePicker'),
+    actorCandidatePickerTitle: document.getElementById('actorCandidatePickerTitle'),
+    actorCandidatePickerQuery: document.getElementById('actorCandidatePickerQuery'),
+    actorCandidateList: document.getElementById('actorCandidateList'),
+    actorFilters: document.getElementById('actorFilters'),
+    actorFilterAll: document.getElementById('actorFilterAll'),
+    actorFilterTv: document.getElementById('actorFilterTv'),
+    actorFilterMovie: document.getElementById('actorFilterMovie'),
+    actorNotice: document.getElementById('actorNotice'),
     actorCreditList: document.getElementById('actorCreditList'),
+    actorLoadMore: document.getElementById('actorLoadMore'),
     results: document.getElementById('resultsArea'),
     searchStatus: document.getElementById('searchStatus'),
     dataNotice: document.getElementById('dataNotice'),
@@ -151,12 +161,40 @@ function hideCandidatePicker() {
     els.candidatePicker.classList.add('hidden');
 }
 
+function hideActorCandidatePicker() {
+    if (!els.actorCandidatePicker) return;
+    clearNode(els.actorCandidateList);
+    els.actorCandidatePicker.classList.add('hidden');
+}
+
+function abortActorPageRequests() {
+    if (currentActorPageController) currentActorPageController.abort();
+    currentActorPageController = null;
+}
+
+function showActorNotice(message, tone = 'warning') {
+    if (!els.actorNotice) return;
+    els.actorNotice.textContent = message;
+    els.actorNotice.className = `mt-4 rounded-2xl border px-4 py-3 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10 text-cinema-100' : 'border-accent-gold/30 bg-accent-gold/10 text-cinema-100'}`;
+    els.actorNotice.classList.remove('hidden');
+}
+
+function hideActorNotice() {
+    if (!els.actorNotice) return;
+    els.actorNotice.textContent = '';
+    els.actorNotice.classList.add('hidden');
+}
+
 function hideActorResults() {
+    abortActorPageRequests();
+    actorResultState = null;
+    hideActorNotice();
     if (!els.actorResults) return;
     clearNode(els.actorCreditList);
     els.actorResults.classList.add('hidden');
     els.actorProfileWrapper?.classList.add('hidden');
     if (els.actorProfile) els.actorProfile.removeAttribute('srcset');
+    if (els.actorLoadMore) els.actorLoadMore.classList.add('hidden');
 }
 
 function focusActorHeading() {
@@ -225,36 +263,50 @@ function createActorCreditCard(credit, query, searchId, searchOptions) {
     return button;
 }
 
-function renderActorResults(personResult, query, searchId, searchOptions) {
-    if (!els.actorResults || !els.actorCreditList) return false;
+function updateActorFilterControls() {
+    const state = actorResultState;
+    if (!state) return;
+    const counts = state.counts || {};
+    const filters = [
+        [els.actorFilterAll, '', '全部', state.totalResults],
+        [els.actorFilterTv, 'tv', '电视剧', counts.tv || 0],
+        [els.actorFilterMovie, 'movie', '电影', counts.movie || 0]
+    ];
+    filters.forEach(([button, mediaType, label, count]) => {
+        if (!button) return;
+        const active = state.mediaType === mediaType;
+        button.setAttribute('aria-pressed', String(active));
+        button.classList.toggle('border-accent-red/60', active);
+        button.classList.toggle('bg-accent-red/10', active);
+        button.classList.toggle('border-cinema-700', !active);
+        button.classList.toggle('text-cinema-100', active);
+        button.classList.toggle('text-cinema-300', !active);
+        const countNode = button.querySelector('span');
+        if (countNode) countNode.textContent = `(${Number(count || 0)})`;
+        button.setAttribute('aria-label', `${label} ${Number(count || 0)} 部`);
+    });
+}
 
-    const person = personResult?.person;
-    const credits = Array.isArray(personResult?.credits) ? personResult.credits.filter(credit => credit?.id && credit?.mediaType) : [];
-    if (!person || credits.length === 0) return false;
+function updateActorPaginationControls() {
+    const state = actorResultState;
+    if (!state || !els.actorLoadMore) return;
+    els.actorLoadMore.classList.toggle('hidden', !state.hasMore);
+    els.actorLoadMore.disabled = Boolean(state.loading);
+    els.actorLoadMore.textContent = state.loading ? '正在加载作品…' : '加载更多作品';
+}
 
+function renderActorCreditList() {
+    const state = actorResultState;
+    if (!state || !els.actorCreditList) return;
     clearNode(els.actorCreditList);
-    setText(els.actorTitle, person.name || query);
-    setText(els.actorMeta, `共 ${credits.length} 部出演作品，点击作品查看完整详情`);
-
-    const profileUrl = toSafeHttpUrl(person.profile);
-    if (els.actorProfile && els.actorProfileWrapper && profileUrl) {
-        els.actorProfile.src = profileUrl;
-        els.actorProfile.alt = `${person.name || query} 头像`;
-        els.actorProfileWrapper.classList.remove('hidden');
-        els.actorProfile.addEventListener('error', () => {
-            els.actorProfileWrapper.classList.add('hidden');
-        }, { once: true });
-    } else {
-        els.actorProfileWrapper?.classList.add('hidden');
-    }
 
     const groups = [
         { mediaType: 'tv', label: '电视剧' },
         { mediaType: 'movie', label: '电影' }
-    ];
+    ].filter(group => !state.mediaType || group.mediaType === state.mediaType);
     const fragment = document.createDocumentFragment();
     groups.forEach(group => {
-        const items = credits.filter(credit => credit.mediaType === group.mediaType);
+        const items = state.loadedCredits.filter(credit => credit.mediaType === group.mediaType);
         if (items.length === 0) return;
 
         const section = document.createElement('section');
@@ -270,15 +322,197 @@ function renderActorResults(personResult, query, searchId, searchOptions) {
 
         const grid = document.createElement('div');
         grid.className = 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
-        items.forEach(credit => grid.appendChild(createActorCreditCard(credit, query, searchId, searchOptions)));
+        items.forEach(credit => grid.appendChild(createActorCreditCard(credit, state.query, state.searchId, state.searchOptions)));
         section.appendChild(heading);
         section.appendChild(grid);
         fragment.appendChild(section);
     });
 
     els.actorCreditList.appendChild(fragment);
+    if (state.loadedCredits.length === 0 && !state.loading) {
+        showActorNotice(`当前筛选没有可显示的${state.mediaType === 'tv' ? '电视剧' : state.mediaType === 'movie' ? '电影' : '作品'}。`);
+    }
+}
+
+async function loadActorPage({ reset = false, mediaType = actorResultState?.mediaType || '' } = {}) {
+    const state = actorResultState;
+    if (!state || !isActiveSearch(state.searchId)) return;
+
+    abortActorPageRequests();
+    const controller = new AbortController();
+    currentActorPageController = controller;
+    const offset = reset ? 0 : state.offset;
+    state.loading = true;
+    state.mediaType = mediaType;
+    hideActorNotice();
+    updateActorFilterControls();
+    updateActorPaginationControls();
+
+    try {
+        const result = await TmdbAPI.searchPerson(state.query, {
+            signal: controller.signal,
+            personId: state.person.id,
+            offset,
+            limit: state.pageSize,
+            mediaType: mediaType || undefined
+        });
+        if (!isActiveSearch(state.searchId) || actorResultState !== state) return;
+
+        const credits = Array.isArray(result?.credits)
+            ? result.credits.filter(credit => credit?.id && credit?.mediaType)
+            : [];
+        state.loadedCredits = reset ? credits : [...state.loadedCredits, ...credits];
+        const responseOffset = Number.isFinite(Number(result?.offset)) ? Number(result.offset) : offset;
+        state.offset = responseOffset + credits.length;
+        state.totalResults = Number.isFinite(Number(result?.totalResults)) ? Number(result.totalResults) : state.totalResults;
+        state.counts = result?.counts || state.counts;
+        state.hasMore = Boolean(result?.hasMore);
+        renderActorCreditList();
+        updateActorFilterControls();
+        updateActorPaginationControls();
+        setText(els.actorMeta, `已显示 ${state.loadedCredits.length} / 共 ${state.totalResults} 部出演作品，点击作品查看完整详情`);
+        setSearchStatus(`已找到演员“${state.person.name || state.query}”，已加载 ${state.loadedCredits.length} / ${state.totalResults} 部作品`);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        if (isActiveSearch(state.searchId) && actorResultState === state) {
+            showActorNotice(`作品加载失败：${getSearchErrorMessage(error)}。点击下方按钮重试。`, 'error');
+        }
+    } finally {
+        if (currentActorPageController === controller) currentActorPageController = null;
+        if (actorResultState === state) {
+            state.loading = false;
+            updateActorPaginationControls();
+        }
+    }
+}
+
+function renderActorResults(personResult, query, searchId, searchOptions, { historyMode = 'push' } = {}) {
+    if (!els.actorResults || !els.actorCreditList) return false;
+
+    const person = personResult?.person;
+    const credits = Array.isArray(personResult?.credits) ? personResult.credits.filter(credit => credit?.id && credit?.mediaType) : [];
+    if (!person) return false;
+
+    actorResultState = {
+        person,
+        query,
+        searchId,
+        searchOptions,
+        pageSize: Number(personResult?.limit) || 36,
+        offset: (Number.isFinite(Number(personResult?.offset)) ? Number(personResult.offset) : 0) + credits.length,
+        totalResults: Number(personResult?.totalResults) || credits.length,
+        hasMore: Boolean(personResult?.hasMore),
+        counts: personResult?.counts || {
+            tv: credits.filter(credit => credit.mediaType === 'tv').length,
+            movie: credits.filter(credit => credit.mediaType === 'movie').length
+        },
+        mediaType: '',
+        loadedCredits: credits,
+        loading: false
+    };
+
+    hideActorCandidatePicker();
+    setText(els.actorTitle, person.name || query);
+    setText(els.actorMeta, `已显示 ${credits.length} / 共 ${actorResultState.totalResults} 部出演作品，点击作品查看完整详情`);
+
+    const profileUrl = toSafeHttpUrl(person.profile);
+    if (els.actorProfile && els.actorProfileWrapper && profileUrl) {
+        els.actorProfile.src = profileUrl;
+        els.actorProfile.alt = `${person.name || query} 头像`;
+        els.actorProfileWrapper.classList.remove('hidden');
+        els.actorProfile.addEventListener('error', () => {
+            els.actorProfileWrapper.classList.add('hidden');
+        }, { once: true });
+    } else {
+        els.actorProfileWrapper?.classList.add('hidden');
+    }
+
+    hideActorNotice();
+    renderActorCreditList();
+    updateActorFilterControls();
+    updateActorPaginationControls();
     els.actorResults.classList.remove('hidden');
+    if (historyMode === 'push') updateActorHistory(query);
     return true;
+}
+
+function renderActorCandidatePicker(candidates, query, searchId, searchOptions) {
+    if (!els.actorCandidatePicker || !els.actorCandidateList) return false;
+    clearNode(els.actorCandidateList);
+    setText(els.actorCandidatePickerQuery, `“${query}”`);
+    setText(els.actorCandidatePickerTitle, candidates.length > 1 ? '搜索到多个同名演员，请选择' : '请确认演员身份');
+
+    const ranked = [...candidates]
+        .filter(candidate => candidate?.id)
+        .sort((left, right) => Number(right.matchScore || 0) - Number(left.matchScore || 0) || Number(right.popularity || 0) - Number(left.popularity || 0))
+        .slice(0, 6);
+    const fragment = document.createDocumentFragment();
+    ranked.forEach(candidate => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.personId = String(candidate.id);
+        button.className = 'group flex min-h-20 items-center gap-4 rounded-2xl border border-cinema-700 bg-cinema-900/60 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        const profile = document.createElement('img');
+        profile.className = 'h-14 w-14 shrink-0 rounded-xl object-cover bg-cinema-800';
+        profile.src = toSafeHttpUrl(candidate.profile) || POSTER_PLACEHOLDER;
+        profile.alt = `${candidate.name || query} 头像`;
+        profile.width = 56;
+        profile.height = 56;
+        profile.loading = 'lazy';
+        profile.addEventListener('error', () => {
+            if (profile.src !== POSTER_PLACEHOLDER) profile.src = POSTER_PLACEHOLDER;
+        }, { once: true });
+        const copy = document.createElement('span');
+        copy.className = 'min-w-0';
+        const name = document.createElement('span');
+        name.className = 'block truncate text-base font-bold text-cinema-100 group-hover:text-white';
+        name.textContent = candidate.name || candidate.originalName || '未命名演员';
+        const originalName = document.createElement('span');
+        originalName.className = 'mt-1 block truncate text-xs text-cinema-400';
+        originalName.textContent = candidate.originalName && candidate.originalName !== candidate.name ? candidate.originalName : `${candidate.knownForDepartment || '演员'} · 匹配度 ${Math.round(Number(candidate.matchScore || 0) * 100)}%`;
+        copy.appendChild(name);
+        copy.appendChild(originalName);
+        button.appendChild(profile);
+        button.appendChild(copy);
+        button.addEventListener('click', () => {
+            void loadActorCandidate(candidate, query, searchId, searchOptions);
+        });
+        fragment.appendChild(button);
+    });
+    els.actorCandidateList.appendChild(fragment);
+    els.actorCandidatePicker.classList.toggle('hidden', ranked.length === 0);
+    return ranked.length > 0;
+}
+
+async function loadActorCandidate(candidate, query, searchId, searchOptions) {
+    if (!isActiveSearch(searchId) || !candidate?.id) return;
+    els.loading.classList.remove('hidden');
+    setSearching(true);
+    setSearchStatus(`正在加载演员“${candidate.name || query}”的作品`);
+    try {
+        const result = await TmdbAPI.searchPerson(query, {
+            ...searchOptions,
+            personId: candidate.id,
+            offset: 0,
+            limit: 36
+        });
+        if (!isActiveSearch(searchId)) return;
+        if (!renderActorResults(result, query, searchId, searchOptions)) {
+            throw new Error('未找到该演员的可靠作品信息');
+        }
+        els.loading.classList.add('hidden');
+        els.results.classList.add('hidden');
+        els.error.classList.add('hidden');
+        hideCandidatePicker();
+        hideDataNotice();
+        setSearching(false);
+        scrollToVisible(els.actorResults);
+        focusActorHeading();
+    } catch (error) {
+        if (error?.name !== 'AbortError') showSearchError(error, query, searchId);
+    } finally {
+        if (isActiveSearch(searchId)) setSearching(false);
+    }
 }
 
 function searchActorByName(name) {
@@ -627,7 +861,7 @@ function createInfoCard(label, value, { wide = false, muted = false, interactive
             const button = document.createElement('button');
             button.type = 'button';
             button.dataset.actorName = name;
-            button.className = 'rounded-full border border-cinema-700 px-3 py-1 text-left text-xs text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.className = 'min-h-11 rounded-full border border-cinema-700 px-3 py-2 text-left text-xs text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.setAttribute('aria-label', `搜索演员 ${name}`);
             button.textContent = name;
             button.addEventListener('click', () => searchActorByName(name));
@@ -1386,7 +1620,7 @@ async function safeTmdbPersonSearch(query, options = {}) {
     } catch (error) {
         if (error?.name === 'AbortError') throw error;
         console.warn('TMDB person search failed:', error);
-        return null;
+        throw error;
     }
 }
 
@@ -1409,7 +1643,40 @@ let currentAbortController = null;
 let currentCandidateAbortController = null;
 let currentCandidateAbortCleanup = null;
 let currentCandidateLoadId = 0;
+let currentActorPageController = null;
+let actorResultState = null;
 let lastSearchQuery = '';
+
+function getAppHistoryUrl(url) {
+    const nextUrl = url instanceof URL ? url : new URL(url, window.location.href);
+    return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+}
+
+function pushActorHistory(query) {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.searchParams.set('actor', query);
+    window.history.pushState({ kind: 'actor', query }, '', getAppHistoryUrl(url));
+}
+
+function updateActorHistory(query) {
+    if (!query) return;
+    pushActorHistory(query);
+}
+
+function pushDetailHistory(candidate) {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.searchParams.set('id', String(candidate.id));
+    if (candidate.mediaType) url.searchParams.set('type', candidate.mediaType);
+    if (candidate.title || candidate.originalTitle) url.searchParams.set('title', candidate.title || candidate.originalTitle);
+    window.history.pushState({
+        kind: 'detail',
+        id: candidate.id,
+        mediaType: candidate.mediaType || '',
+        title: candidate.title || candidate.originalTitle || ''
+    }, '', getAppHistoryUrl(url));
+}
 
 function isActiveSearch(searchId, loadId = null) {
     return searchId === currentSearchId && (loadId === null || loadId === currentCandidateLoadId);
@@ -1442,6 +1709,7 @@ function showEmptySearchError() {
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
     hideCandidatePicker();
+    hideActorCandidatePicker();
     hideActorResults();
     hideDataNotice();
     setSearchStatus('请输入电影、剧集或演员名称');
@@ -1459,6 +1727,7 @@ function showSearchError(error, query, searchId) {
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
     hideCandidatePicker();
+    hideActorCandidatePicker();
     hideActorResults();
     setSearchStatus(`搜索失败：${message}`);
     setSearching(false);
@@ -1753,7 +2022,7 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
         });
 }
 
-async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false } = {}) {
+async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push' } = {}) {
     if (!isActiveSearch(searchId)) return;
 
     cancelResourceLoadSchedule();
@@ -1765,6 +2034,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         ...candidate,
         mediaType: candidate?.mediaType || candidate?.type || null
     };
+    if (!isRetry && historyMode === 'push') pushDetailHistory(selectedCandidate);
     setSearching(true);
     hideCandidatePicker();
     hideActorResults();
@@ -1820,7 +2090,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                     title: 'TMDB 详情暂时不可用',
                     detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
                     actionLabel: '重试详情',
-                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true }),
+                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none' }),
                     tone: 'error'
                 });
             }
@@ -1832,37 +2102,22 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     await detailPromise;
 }
 
-async function handleSearch() {
-    const query = els.input.value.trim();
-    if (!query) {
-        currentSearchId += 1;
-        currentAbortController?.abort();
-        abortCandidateRequests();
-        cancelResourceLoadSchedule();
-        resourceLoadStarted = false;
-        resourceResultState = null;
-        lastSearchQuery = '';
-        showEmptySearchError();
-        return;
-    }
-
+function beginSearchSession(query) {
     lastSearchQuery = query;
-
     cancelResourceLoadSchedule();
     resourceLoadStarted = false;
     resourceResultState = null;
     abortCandidateRequests();
-    if (currentAbortController) {
-        currentAbortController.abort();
-    }
+    abortActorPageRequests();
+    if (currentAbortController) currentAbortController.abort();
     currentAbortController = new AbortController();
     const searchOptions = { signal: currentAbortController.signal };
-
     const searchId = ++currentSearchId;
 
     els.error.classList.add('hidden');
     els.results.classList.add('hidden');
     hideCandidatePicker();
+    hideActorCandidatePicker();
     hideActorResults();
     hideDataNotice();
     els.loading.classList.remove('hidden');
@@ -1870,23 +2125,54 @@ async function handleSearch() {
     setSearching(true);
     setSearchStatus(`正在搜索“${query}”`);
     resetResultAnimation();
+    return { searchId, searchOptions };
+}
+
+async function handleSearch({ historyMode = 'push' } = {}) {
+    const query = els.input.value.trim();
+    if (!query) {
+        currentSearchId += 1;
+        currentAbortController?.abort();
+        abortCandidateRequests();
+        abortActorPageRequests();
+        cancelResourceLoadSchedule();
+        resourceLoadStarted = false;
+        resourceResultState = null;
+        hideActorCandidatePicker();
+        lastSearchQuery = '';
+        showEmptySearchError();
+        return;
+    }
+
+    const { searchId, searchOptions } = beginSearchSession(query);
 
     try {
-        const [tmdbSearchState, personSearchState] = await Promise.allSettled([
-            safeTmdbSearch(query, searchOptions),
-            safeTmdbPersonSearch(query, searchOptions)
-        ]);
+        let tmdbSearch = null;
+        let tmdbSearchError = null;
+        try {
+            tmdbSearch = await safeTmdbSearch(query, searchOptions);
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error;
+            tmdbSearchError = error;
+        }
         if (searchId !== currentSearchId) return;
 
-        if (tmdbSearchState.status === 'rejected' && tmdbSearchState.reason?.name === 'AbortError') {
-            throw tmdbSearchState.reason;
-        }
-        if (personSearchState.status === 'rejected' && personSearchState.reason?.name === 'AbortError') {
-            throw personSearchState.reason;
+        const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
+        const titleMatchScore = toFiniteNumber(tmdbSearch?.searchMeta?.matchScore);
+        const hasReliableTitleMatch = tmdbResults.length > 0
+            && (titleMatchScore === null || titleMatchScore >= 0.72);
+        let personSearch = null;
+        let personSearchError = null;
+
+        if (!hasReliableTitleMatch) {
+            try {
+                personSearch = await safeTmdbPersonSearch(query, searchOptions);
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                personSearchError = error;
+            }
         }
 
-        const tmdbSearch = tmdbSearchState.status === 'fulfilled' ? tmdbSearchState.value : null;
-        const personSearch = personSearchState.status === 'fulfilled' ? personSearchState.value : null;
         const actorMatchScore = toFiniteNumber(personSearch?.person?.matchScore);
         const hasStrongActorMatch = Boolean(
             personSearch?.person
@@ -1896,25 +2182,33 @@ async function handleSearch() {
             && actorMatchScore >= 0.86
         );
 
-        if (hasStrongActorMatch && renderActorResults(personSearch, query, searchId, searchOptions)) {
+        if (hasStrongActorMatch && renderActorResults(personSearch, query, searchId, searchOptions, { historyMode })) {
             els.error.classList.add('hidden');
             els.results.classList.add('hidden');
             els.loading.classList.add('hidden');
             hideCandidatePicker();
+            hideActorCandidatePicker();
             hideDataNotice();
             setSearching(false);
-            setSearchStatus(`已找到演员“${personSearch.person.name || query}”，共 ${personSearch.credits.length} 部作品`);
+            setSearchStatus(`已找到演员“${personSearch.person.name || query}”，共 ${personSearch.totalResults || personSearch.credits.length} 部作品`);
             scrollToVisible(els.actorResults);
             focusActorHeading();
             return;
         }
 
-        if (tmdbSearchState.status === 'rejected') throw tmdbSearchState.reason;
-
-        const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
+        if (personSearch?.searchMeta?.ambiguous && Array.isArray(personSearch.personCandidates)
+            && renderActorCandidatePicker(personSearch.personCandidates, query, searchId, searchOptions)) {
+            els.loading.classList.add('hidden');
+            els.results.classList.add('hidden');
+            hideCandidatePicker();
+            setSearching(false);
+            setSearchStatus(`找到 ${personSearch.personCandidates.length} 位可能的同名演员，请确认身份`);
+            scrollToVisible(els.actorCandidatePicker);
+            return;
+        }
 
         if (tmdbResults.length === 0) {
-            throw new Error(`未找到“${query}”的可靠影视或演员匹配，请补充年份、季数或更完整的名称`);
+            throw personSearchError || tmdbSearchError || new Error(`未找到“${query}”的可靠影视或演员匹配，请补充年份、季数或更完整的名称`);
         }
 
         const rankedCandidates = rankTmdbCandidates(tmdbResults);
@@ -1960,3 +2254,80 @@ if (els.retrySearchButton) {
         void handleSearch();
     });
 }
+
+if (els.actorFilters) {
+    els.actorFilters.querySelectorAll('[data-actor-filter]').forEach(button => {
+        button.addEventListener('click', () => {
+            if (!actorResultState || actorResultState.loading) return;
+            void loadActorPage({
+                reset: true,
+                mediaType: button.dataset.actorFilter || ''
+            });
+        });
+    });
+}
+
+if (els.actorLoadMore) {
+    els.actorLoadMore.addEventListener('click', () => {
+        if (!actorResultState || actorResultState.loading) return;
+        void loadActorPage({ reset: false, mediaType: actorResultState.mediaType });
+    });
+}
+
+function resetInitialView() {
+    currentSearchId += 1;
+    currentAbortController?.abort();
+    abortCandidateRequests();
+    abortActorPageRequests();
+    cancelResourceLoadSchedule();
+    resourceLoadStarted = false;
+    resourceResultState = null;
+    lastSearchQuery = '';
+    els.loading.classList.add('hidden');
+    els.error.classList.add('hidden');
+    els.results.classList.add('hidden');
+    hideCandidatePicker();
+    hideActorCandidatePicker();
+    hideActorResults();
+    hideDataNotice();
+    setSearching(false);
+    setSearchStatus('输入电影、剧集或演员名称开始搜索');
+}
+
+async function restoreUrlState() {
+    const params = new URL(window.location.href).searchParams;
+    const actor = params.get('actor')?.trim();
+    if (actor) {
+        els.input.value = actor;
+        await handleSearch({ historyMode: 'none' });
+        return;
+    }
+
+    const idText = params.get('id')?.trim() || '';
+    if (/^\d+$/.test(idText) && Number(idText) > 0) {
+        const mediaType = ['movie', 'tv'].includes(params.get('type')) ? params.get('type') : null;
+        const title = params.get('title')?.trim() || `TMDB ${idText}`;
+        els.input.value = title;
+        const { searchId, searchOptions } = beginSearchSession(title);
+        try {
+            await loadCandidateDetails({
+                id: Number(idText),
+                mediaType,
+                title,
+                originalTitle: title
+            }, title, searchId, searchOptions, { historyMode: 'none' });
+        } catch (error) {
+            if (error?.name !== 'AbortError') showSearchError(error, title, searchId);
+        }
+        return;
+    }
+
+    resetInitialView();
+    window.history.replaceState({ kind: 'home' }, '', window.location.href);
+}
+
+window.addEventListener('popstate', () => {
+    void restoreUrlState();
+});
+
+void restoreUrlState();

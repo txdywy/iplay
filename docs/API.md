@@ -137,6 +137,16 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
 GET /api/tmdb/person?q={actorName}
 ```
 
+**Query Parameters：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `q` | string | 首次按姓名搜索时必填 | 演员姓名；选择人物后仍可保留原查询用于展示匹配信息 |
+| `id` | number | 否 | 已确认的 TMDB 人物 ID；传入后跳过人物姓名搜索，适合加载候选人物或下一页 |
+| `offset` | number | 否 | 从第几条作品开始，默认 `0` |
+| `limit` | number | 否 | 本次返回数量，默认 `36`，最大 `60` |
+| `mediaType` | `movie` / `tv` | 否 | 只返回电影或电视剧；不传则返回两类作品 |
+
 **Example Response：**
 
 ```json
@@ -162,11 +172,17 @@ GET /api/tmdb/person?q={actorName}
       "character": "Forrest Gump"
     }
   ],
-  "totalResults": 1
+  "totalResults": 1,
+  "offset": 0,
+  "limit": 36,
+  "hasMore": false,
+  "counts": { "tv": 0, "movie": 1 }
 }
 ```
 
-无可靠人物匹配时返回 `person: null` 与空的 `credits`；前端会继续按影视标题搜索。
+`totalResults` 是当前筛选条件下的总作品数，`counts` 是未筛选时的电视剧 / 电影总数。作品按年份、热度和标题排序，并通过 `offset` / `limit` 分页，避免一次渲染过多卡片。
+
+同名人物无法安全区分时返回 `person: null`、`personCandidates[]` 和 `searchMeta.ambiguous: true`；前端会要求用户选择人物，再使用 `id` 参数加载对应作品。无可靠人物匹配时返回 `person: null` 与空的 `credits`；前端会继续按影视标题搜索。
 
 ---
 
@@ -593,7 +609,7 @@ const detail = await TmdbAPI.getDetail(550988, 'movie');
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `search` | `(query, options = {})` | `{ page, totalResults, results[], searchMeta }` |
-| `searchPerson` | `(query, options = {})` | `{ person, credits[], totalResults }` |
+| `searchPerson` | `(query, options = {})` | `{ person, credits[], totalResults, offset, limit, hasMore, counts }` |
 | `getDetail` | `(id, type, options = {})` | 详情对象 |
 
 ### `DoubanAPI`

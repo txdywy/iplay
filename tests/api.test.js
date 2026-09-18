@@ -54,6 +54,27 @@ test('TMDB person API encodes actor names', async t => {
     assert.match(requestedUrl, /\/api\/tmdb\/person\?q=A%20B$/);
 });
 
+test('TMDB person API encodes pagination, type filters, and person selection', async t => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = '';
+    globalThis.fetch = async (url, options = {}) => {
+        requestedUrl = String(url);
+        assert.ok(options.signal instanceof AbortSignal);
+        return Response.json({ person: { id: 900 }, credits: [] });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { TmdbAPI } = await import('../js/api.js');
+    await TmdbAPI.searchPerson('A B', {
+        personId: 900,
+        offset: 36,
+        limit: 60,
+        mediaType: 'movie'
+    });
+
+    assert.equal(requestedUrl, 'http://localhost:8787/api/tmdb/person?q=A%20B&id=900&offset=36&limit=60&mediaType=movie');
+});
+
 test('resource and poster retries request fresh Worker data', async t => {
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];

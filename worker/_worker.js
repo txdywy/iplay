@@ -97,7 +97,17 @@ export default {
             }
 
             if (path === "/api/tmdb/person") {
-                return withCors(await handleTmdbPersonSearch(url.searchParams.get("q"), env, ctx), request, env);
+                return withCors(await handleTmdbPersonSearch(
+                    url.searchParams.get("q"),
+                    env,
+                    ctx,
+                    {
+                        personId: url.searchParams.get("id"),
+                        offset: url.searchParams.get("offset"),
+                        limit: url.searchParams.get("limit"),
+                        mediaType: url.searchParams.get("mediaType")
+                    }
+                ), request, env);
             }
 
             if (path === "/api/tmdb/detail") {
@@ -243,7 +253,8 @@ const MAX_SCHEDULED_REFRESH_TITLES = 20;
 const SEARCH_MAX_ATTEMPTS = 6;
 const SEARCH_MAX_RESULTS = 20;
 const SEARCH_MAX_ALIAS_QUERIES = 2;
-const PERSON_MAX_RESULTS = 200;
+const PERSON_DEFAULT_PAGE_SIZE = 36;
+const PERSON_MAX_PAGE_SIZE = 60;
 const SEARCH_ACCEPT_SCORE = 0.72;
 const SEARCH_AUTO_MATCH_SCORE = 0.56;
 
@@ -1250,6 +1261,8 @@ function normalizeTmdbPerson(person, query, match = null) {
         profile: tmdbImage(person.profile_path, "w185"),
         knownForDepartment: typeof person.known_for_department === "string" ? person.known_for_department : null
     };
+    const popularity = toFiniteMetric(person.popularity);
+    if (popularity !== null) normalized.popularity = Math.max(0, popularity);
 
     if (match) {
         normalized.matchScore = Number(match.score.toFixed(3));
@@ -1285,7 +1298,6 @@ function normalizeTmdbPersonCredits(data) {
             character: pickTmdbText(item.character) || null,
             creditId: typeof item.credit_id === "string" ? item.credit_id : null
         });
-        if (credits.length >= PERSON_MAX_RESULTS) break;
     }
 
     return credits.sort((left, right) => (
@@ -1295,75 +1307,190 @@ function normalizeTmdbPersonCredits(data) {
     ));
 }
 
-async function handleTmdbPersonSearch(query, env, ctx) {
-    const queryCheck = validateRequiredText(query, "query");
-    if (queryCheck.error) return queryCheck.error;
-    query = queryCheck.value;
+function parsePersonPagination(value, label, defaultValue, maxValue) {
+    const text = value === null || value === undefined || value === ""
+        ? String(defaultValue)
+        : String(value).trim();
+    if (!/^\d{1,7}$/.test(text)) return { error: jsonResponse({ error: `Invalid ${label}` }, 400) };
+    const parsed = Number(text);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maxValue) {
+        return { error: jsonResponse({ error: `Invalid ${label}` }, 400) };
+    }
+    return { value: parsed };
+}
+
+function validatePersonMediaType(value) {
+    const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!text) return { value: null };
+    if (text !== "movie" && text !== "tv") {
+        return { error: jsonResponse({ error: "Invalid media type" }, 400) };
+    }
+    return { value: text };
+}
+
+function isAmbiguousTmdbPersonMatch(query, rankedPeople) {
+    const accepted = rankedPeople.filter(candidate => candidate.score >= SEARCH_ACCEPT_SCORE);
+    if (accepted.length < 2) return false;
+
+    const normalizedQuery = compactSearchText(query);
+    const exactMatches = accepted.filter(candidate => [candidate.person?.name, candidate.person?.original_name]
+        .some(name => compactSearchText(name) === normalizedQuery));
+    if (exactMatches.length > 1) return true;
+
+    return accepted[1].score >= 0.86 && accepted[0].score - accepted[1].score < 0.06;
+}
+
+function normalizePersonCandidates(rankedPeople, query) {
+    return rankedPeople
+        .filter(candidate => candidate.score >= SEARCH_ACCEPT_SCORE)
+        .slice(0, 6)
+        .map(candidate => normalizeTmdbPerson(candidate.person, query, candidate))
+        .filter(Boolean);
+}
+
+async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
+    const personId = options.personId ? validatePositiveInteger(options.personId, "id") : null;
+    if (personId?.error) return personId.error;
+
+    if (personId) query = typeof query === "string" ? query.trim() : "";
+    else {
+        const queryCheck = validateRequiredText(query, "query");
+        if (queryCheck.error) return queryCheck.error;
+        query = queryCheck.value;
+    }
+
+    const offsetCheck = parsePersonPagination(options.offset, "offset", 0, 100000);
+    if (offsetCheck.error) return offsetCheck.error;
+    const limitCheck = parsePersonPagination(options.limit, "limit", PERSON_DEFAULT_PAGE_SIZE, PERSON_MAX_PAGE_SIZE);
+    if (limitCheck.error || limitCheck.value < 1) return limitCheck.error || jsonResponse({ error: "Invalid limit" }, 400);
+    const mediaTypeCheck = validatePersonMediaType(options.mediaType);
+    if (mediaTypeCheck.error) return mediaTypeCheck.error;
+
+    const offset = offsetCheck.value;
+    const limit = limitCheck.value;
+    const requestedMediaType = mediaTypeCheck.value;
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const people = [];
-        const languages = ["zh-CN", "en-US"];
+        let best = null;
         let attempts = 0;
-        let lastError = null;
 
-        for (const language of languages) {
-            if (isDeadlineExpired(deadline)) break;
-            attempts += 1;
-            try {
-                const data = await fetchTmdbPersonSearch(query, language, env, ctx, { deadline });
-                if (Array.isArray(data?.results)) {
-                    people.push(...data.results);
-                    if (data.results.some(person => scoreTmdbPerson(query, person) >= SEARCH_ACCEPT_SCORE)) break;
+        if (personId) {
+            best = {
+                person: { id: Number(personId.value) },
+                score: query ? scoreTmdbPerson(query, { id: Number(personId.value), name: query }) : 1,
+                method: query ? "name-exact" : "person-id",
+                sourceIndex: 0
+            };
+        } else {
+            const people = [];
+            const languages = ["zh-CN", "en-US"];
+            let lastError = null;
+
+            for (const language of languages) {
+                if (isDeadlineExpired(deadline)) break;
+                attempts += 1;
+                try {
+                    const data = await fetchTmdbPersonSearch(query, language, env, ctx, { deadline });
+                    if (Array.isArray(data?.results)) {
+                        people.push(...data.results);
+                        if (data.results.some(person => scoreTmdbPerson(query, person) >= SEARCH_ACCEPT_SCORE)) break;
+                    }
+                } catch (error) {
+                    lastError = error;
+                    if (shouldStopSearchFallback(error)) break;
                 }
-            } catch (error) {
-                lastError = error;
-                if (shouldStopSearchFallback(error)) break;
+            }
+
+            if (people.length === 0 && lastError) throw lastError;
+
+            const rankedPeople = people
+                .filter(person => isObject(person) && toSafeTmdbId(person.id) !== null)
+                .map((person, sourceIndex) => {
+                    const score = scoreTmdbPerson(query, person);
+                    return {
+                        person,
+                        score,
+                        method: score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy",
+                        sourceIndex
+                    };
+                })
+                .sort((left, right) => (
+                    right.score - left.score
+                    || (right.person.known_for_department === "Acting" ? 1 : 0) - (left.person.known_for_department === "Acting" ? 1 : 0)
+                    || (toFiniteMetric(right.person.popularity, 0) - toFiniteMetric(left.person.popularity, 0))
+                    || left.sourceIndex - right.sourceIndex
+                ));
+
+            const distinctPeople = [];
+            const seenPeople = new Set();
+            for (const candidate of rankedPeople) {
+                const id = toSafeTmdbId(candidate.person.id);
+                if (seenPeople.has(id)) continue;
+                seenPeople.add(id);
+                distinctPeople.push(candidate);
+            }
+
+            if (isAmbiguousTmdbPersonMatch(query, distinctPeople)) {
+                const candidates = normalizePersonCandidates(distinctPeople, query);
+                return jsonResponse({
+                    person: null,
+                    personCandidates: candidates,
+                    credits: [],
+                    totalResults: 0,
+                    offset: 0,
+                    limit,
+                    hasMore: false,
+                    counts: { tv: 0, movie: 0 },
+                    searchMeta: {
+                        query,
+                        attempts,
+                        confidence: "ambiguous",
+                        ambiguous: true,
+                        matchScore: Number((distinctPeople[0]?.score || 0).toFixed(3))
+                    }
+                });
+            }
+
+            best = distinctPeople[0];
+            if (!best || best.score < SEARCH_ACCEPT_SCORE) {
+                return jsonResponse({
+                    person: null,
+                    credits: [],
+                    totalResults: 0,
+                    offset: 0,
+                    limit,
+                    hasMore: false,
+                    counts: { tv: 0, movie: 0 },
+                    searchMeta: { query, attempts, confidence: "none", matchScore: 0 }
+                });
             }
         }
 
-        if (people.length === 0 && lastError) throw lastError;
-
-        const rankedPeople = people
-            .filter(person => isObject(person) && toSafeTmdbId(person.id) !== null)
-            .map((person, sourceIndex) => {
-                const score = scoreTmdbPerson(query, person);
-                return {
-                    person,
-                    score,
-                    method: score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy",
-                    sourceIndex
-                };
-            })
-            .sort((left, right) => (
-                right.score - left.score
-                || (right.person.known_for_department === "Acting" ? 1 : 0) - (left.person.known_for_department === "Acting" ? 1 : 0)
-                || (toFiniteMetric(right.person.popularity, 0) - toFiniteMetric(left.person.popularity, 0))
-                || left.sourceIndex - right.sourceIndex
-            ));
-
-        const best = rankedPeople[0];
-        if (!best || best.score < SEARCH_ACCEPT_SCORE) {
-            return jsonResponse({
-                person: null,
-                credits: [],
-                totalResults: 0,
-                searchMeta: { query, attempts, confidence: "none", matchScore: 0 }
-            });
-        }
-
-        const personId = toSafeTmdbId(best.person.id);
-        const personData = await fetchTmdbJson(`/person/${personId}`, {
+        const selectedPersonId = toSafeTmdbId(best.person.id);
+        const personData = await fetchTmdbJson(`/person/${selectedPersonId}`, {
             language: "zh-CN",
             append_to_response: "combined_credits"
         }, env, ctx, { deadline });
-        const person = normalizeTmdbPerson(personData, query, best);
-        const credits = normalizeTmdbPersonCredits(personData);
+        const person = normalizeTmdbPerson(personData, query, personId ? null : best);
+        const allCredits = normalizeTmdbPersonCredits(personData);
+        const filteredCredits = requestedMediaType
+            ? allCredits.filter(credit => credit.mediaType === requestedMediaType)
+            : allCredits;
+        const credits = filteredCredits.slice(offset, offset + limit);
+        const counts = {
+            tv: allCredits.filter(credit => credit.mediaType === "tv").length,
+            movie: allCredits.filter(credit => credit.mediaType === "movie").length
+        };
 
         return jsonResponse({
             person,
             credits,
-            totalResults: credits.length,
+            totalResults: filteredCredits.length,
+            offset,
+            limit,
+            hasMore: offset + credits.length < filteredCredits.length,
+            counts,
             searchMeta: {
                 query,
                 attempts,
