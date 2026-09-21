@@ -540,7 +540,8 @@ async function checkRateLimit(ip, path, env) {
 async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
     const apiKey = getOmdbApiKey(env);
     if (!apiKey || !title) return null;
-    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`;
+    const encodedApiKey = encodeURIComponent(apiKey);
+    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${encodedApiKey}`;
     if (year) url += `&y=${year}`;
 
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
@@ -559,7 +560,7 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
     if (year) {
         if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
         const fallbackRes = await fetchUpstream(
-            `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${apiKey}`,
+            `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${encodedApiKey}`,
             {},
             remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
         );
@@ -714,6 +715,9 @@ function isValidTmdbPayload(path, data) {
     if (/^\/search\/(?:multi|movie|tv|person)$/.test(path)) return Array.isArray(data.results);
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
     if (/^\/(?:movie|tv)\/\d+$/.test(path)) return toSafeTmdbId(data.id) !== null;
+    if (/^\/person\/\d+$/.test(path)) {
+        return toSafeTmdbId(data.id) !== null && Boolean(getTmdbPersonName(data));
+    }
     return true;
 }
 
@@ -1352,7 +1356,12 @@ async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
     const personId = options.personId ? validatePositiveInteger(options.personId, "id") : null;
     if (personId?.error) return personId.error;
 
-    if (personId) query = typeof query === "string" ? query.trim() : "";
+    if (personId) {
+        query = typeof query === "string" ? query.trim() : "";
+        if ([...query].length > MAX_QUERY_LENGTH) {
+            return jsonResponse({ error: "query is too long" }, 400);
+        }
+    }
     else {
         const queryCheck = validateRequiredText(query, "query");
         if (queryCheck.error) return queryCheck.error;
@@ -1689,6 +1698,9 @@ async function handleDoubanSearch(query, ctx) {
         }
 
         const data = JSON.parse(await readTextWithLimit(res));
+        if (!Array.isArray(data)) {
+            throw createHttpError("Douban returned an invalid response", 502);
+        }
         return cacheJson(ctx, cacheKey, data, 86400);
     } catch (e) {
         console.error("Douban search error:", e.message);
@@ -1875,8 +1887,8 @@ function parseQuarkUrl(rawUrl) {
     }
 }
 
-function collectQuarkUrls(text) {
-    return collectQuarkEntries(text).map(item => item.url);
+function collectQuarkUrls(text, maxEntries = RESOURCE_MAX_QUARK_URLS_TOTAL) {
+    return collectQuarkEntries(text, maxEntries).map(item => item.url);
 }
 
 function normalizeResourcePageText(text) {
@@ -2012,7 +2024,11 @@ async function fetchAllowedResource(resourceUrl, options = {}, deadline = null) 
 }
 
 function isQuarkResourceText(text) {
-    return Boolean(text && (text.includes("夸克") || text.toLowerCase().includes("quark") || collectQuarkUrls(text).length > 0));
+    return Boolean(text && (
+        text.includes("夸克")
+        || text.toLowerCase().includes("quark")
+        || collectQuarkUrls(text, 1).length > 0
+    ));
 }
 
 async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`, deadline = null) {
@@ -2063,10 +2079,14 @@ async function fetchBy669Resources(query, deadline = null) {
 
     for (const item of data.data.slice(0, RESOURCE_MAX_PROVIDER_RESULTS)) {
         if (!isObject(item) || !isObject(item.attributes) || typeof item.attributes.title !== "string" || !item.attributes.title.trim()) continue;
+        const resourceId = typeof item.id === "string" || typeof item.id === "number"
+            ? String(item.id).trim()
+            : "";
+        if (!resourceId || resourceId.length > 200) continue;
 
         resources.push({
-            title: item.attributes.title,
-            url: `${BY669_BASE}/d/${item.id}`,
+            title: item.attributes.title.trim().slice(0, 300),
+            url: `${BY669_BASE}/d/${encodeURIComponent(resourceId)}`,
             isQuark: isQuarkResourceText(item.attributes.title),
             source: "by669"
         });
@@ -2091,7 +2111,7 @@ function parseWpzysResources(html, query) {
         const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
         const titlePattern = new RegExp(`<a[^>]+href=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
         const titleMatch = block.match(titlePattern) || block.match(/<a[^>]+href=["'][^"']*thread-\d+\.htm[^"']*["'][^>]*>([\s\S]*?)<\/a>/i);
-        const title = titleMatch ? stripHtml(titleMatch[1]) : stripHtml(block);
+        const title = (titleMatch ? stripHtml(titleMatch[1]) : stripHtml(block)).slice(0, 300).trim();
         const normalizedTitle = normalizeMatchText(title);
 
         if (!title || (normalizedQuery && !normalizedTitle.includes(normalizedQuery))) continue;
@@ -2303,7 +2323,7 @@ async function handleOmdbById(imdbId, env, ctx) {
     if (cached) return cached;
 
     try {
-        const res = await fetchUpstream(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${keyCheck.key}`);
+        const res = await fetchUpstream(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(keyCheck.key)}`);
 
         if (!res.ok) {
             await releaseUpstreamResponse(res);
@@ -2622,10 +2642,16 @@ async function handleWikiZh(query, ctx) {
 
         const summaryData = await readJsonWithLimit(summaryRes);
 
+        if (!isObject(summaryData)
+            || typeof summaryData.title !== "string"
+            || typeof summaryData.extract !== "string") {
+            throw createHttpError("Wiki returned an invalid response", 502);
+        }
+
         const result = {
             title: summaryData.title,
             extract: summaryData.extract,
-            thumbnail: summaryData.thumbnail || null
+            thumbnail: isObject(summaryData.thumbnail) ? summaryData.thumbnail : null
         };
 
         return cacheJson(ctx, cacheKey, result, 86400);

@@ -110,6 +110,26 @@ test('API client timeout aborts a request after the documented default', async t
     await assert.rejects(requestPromise, error => error.message === 'Request timed out. Please try again.');
 });
 
+test('API client keeps a timeout classified as a timeout during a simultaneous caller abort', async t => {
+    const originalFetch = globalThis.fetch;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    globalThis.fetch = async (_url, { signal }) => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+            reject(new globalThis.DOMException('The operation was aborted', 'AbortError'));
+        }, { once: true });
+    });
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { TmdbAPI } = await import('../js/api.js');
+    const controller = new globalThis.AbortController();
+    const requestPromise = TmdbAPI.search('timeout-race', { signal: controller.signal });
+    await new Promise(resolve => globalThis.setImmediate(resolve));
+    t.mock.timers.tick(12000);
+    controller.abort();
+
+    await assert.rejects(requestPromise, error => error.message === 'Request timed out. Please try again.');
+});
+
 test('Wiki API keeps caller cancellation distinct from a network failure', async t => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (_url, { signal }) => new Promise((resolve, reject) => {

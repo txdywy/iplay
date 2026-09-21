@@ -1317,6 +1317,109 @@ test('resource search rejects overlong queries before fan-out', async () => {
     assert.deepEqual(await response.json(), { error: 'query is too long' });
 });
 
+test('selected person lookup still bounds the optional display query', async () => {
+    const query = 'x'.repeat(101);
+    const response = await worker.fetch(
+        new Request(`https://worker.test/api/tmdb/person?id=42&q=${query}`, {
+            headers: { 'cf-connecting-ip': 'test-person-selected-query-length' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'query is too long' });
+});
+
+test('Douban search rejects and does not cache a malformed successful payload', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const cachePuts = [];
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async (...args) => { cachePuts.push(args); }
+        }
+    };
+    globalThis.fetch = async () => Response.json({ error: 'challenge page' });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/douban/search?q=malformed', {
+            headers: { 'cf-connecting-ip': 'test-douban-malformed-success' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: 'Douban returned an invalid response' });
+    assert.equal(cachePuts.length, 0);
+});
+
+test('selected person lookup rejects an invalid TMDB person payload before caching', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const cachePuts = [];
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async (...args) => { cachePuts.push(args); }
+        }
+    };
+    globalThis.fetch = async () => Response.json({ id: 42, combined_credits: { cast: [] } });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/tmdb/person?id=42&q=Actor', {
+            headers: { 'cf-connecting-ip': 'test-person-invalid-payload' }
+        }),
+        { TMDB_API_KEY: 'test-key' },
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: 'TMDB returned an invalid response' });
+    assert.equal(cachePuts.length, 0);
+});
+
+test('Wiki rejects malformed summary data before it reaches the browser cache', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const cachePuts = [];
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async (...args) => { cachePuts.push(args); }
+        }
+    };
+    globalThis.fetch = async url => String(url).includes('/w/api.php')
+        ? Response.json({ query: { search: [{ title: 'Malformed' }] } })
+        : Response.json({ title: 'Malformed', extract: { unexpected: true } });
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+    });
+
+    const response = await worker.fetch(
+        new Request('https://worker.test/api/wiki/zh?q=malformed', {
+            headers: { 'cf-connecting-ip': 'test-wiki-malformed-summary' }
+        }),
+        {},
+        { waitUntil() {} }
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: 'Wiki returned an invalid response' });
+    assert.equal(cachePuts.length, 0);
+});
+
 test('text and numeric API parameters are normalized and validated consistently', async () => {
     const cases = [
         ['/api/douban/search?q=%20%20', {}, 'test-invalid-douban-query'],

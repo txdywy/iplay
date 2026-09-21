@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.4.1] - 2026-09-21
+
+### Changed
+
+- Upstream TMDB, Douban, Wikipedia, OMDb, and resource payloads now receive stricter validation, normalization, and input bounds before use or caching.
+- Poster rendering now accepts only safe HTTP(S) or bounded raster data URLs.
+
+### Fixed
+
+- Actor candidate selection no longer allows a slower stale response to replace the latest choice.
+- Failed actor filters can be retried without retaining stale credits or pagination state.
+- Request timeouts remain distinguishable from simultaneous caller cancellation.
+- Returning to the initial history entry now clears the previous search input.
+
 ## [1.0.4.0] - 2026-09-18
 
 ### Added
