@@ -220,7 +220,7 @@ function createActorCreditCard(credit, query, searchId, searchOptions) {
     image.loading = 'lazy';
     image.decoding = 'async';
     image.alt = credit.title ? `${credit.title} 海报` : '影视海报';
-    image.src = toSafeHttpUrl(credit.poster) || POSTER_PLACEHOLDER;
+    image.src = toSafeImageUrl(credit.poster) || POSTER_PLACEHOLDER;
     image.addEventListener('error', () => {
         if (image.src !== POSTER_PLACEHOLDER) image.src = POSTER_PLACEHOLDER;
     }, { once: true });
@@ -290,9 +290,14 @@ function updateActorFilterControls() {
 function updateActorPaginationControls() {
     const state = actorResultState;
     if (!state || !els.actorLoadMore) return;
-    els.actorLoadMore.classList.toggle('hidden', !state.hasMore);
+    const canRetry = Boolean(state.retryRequest);
+    els.actorLoadMore.classList.toggle('hidden', !state.hasMore && !canRetry);
     els.actorLoadMore.disabled = Boolean(state.loading);
-    els.actorLoadMore.textContent = state.loading ? '正在加载作品…' : '加载更多作品';
+    els.actorLoadMore.textContent = state.loading
+        ? '正在加载作品…'
+        : canRetry
+            ? '重试加载作品'
+            : '加载更多作品';
 }
 
 function renderActorCreditList() {
@@ -342,8 +347,17 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
     const controller = new AbortController();
     currentActorPageController = controller;
     const offset = reset ? 0 : state.offset;
+    const retryRequest = { reset, mediaType };
     state.loading = true;
     state.mediaType = mediaType;
+    state.retryRequest = null;
+    if (reset) {
+        state.loadedCredits = [];
+        state.offset = 0;
+        state.hasMore = false;
+        renderActorCreditList();
+        setText(els.actorMeta, `正在加载${mediaType === 'tv' ? '电视剧' : mediaType === 'movie' ? '电影' : '全部作品'}…`);
+    }
     hideActorNotice();
     updateActorFilterControls();
     updateActorPaginationControls();
@@ -367,6 +381,7 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
         state.totalResults = Number.isFinite(Number(result?.totalResults)) ? Number(result.totalResults) : state.totalResults;
         state.counts = result?.counts || state.counts;
         state.hasMore = Boolean(result?.hasMore);
+        state.loading = false;
         renderActorCreditList();
         updateActorFilterControls();
         updateActorPaginationControls();
@@ -375,6 +390,7 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
     } catch (error) {
         if (error?.name === 'AbortError') return;
         if (isActiveSearch(state.searchId) && actorResultState === state) {
+            state.retryRequest = retryRequest;
             showActorNotice(`作品加载失败：${getSearchErrorMessage(error)}。点击下方按钮重试。`, 'error');
         }
     } finally {
@@ -408,22 +424,24 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
         },
         mediaType: '',
         loadedCredits: credits,
-        loading: false
+        loading: false,
+        retryRequest: null
     };
 
     hideActorCandidatePicker();
     setText(els.actorTitle, person.name || query);
     setText(els.actorMeta, `已显示 ${credits.length} / 共 ${actorResultState.totalResults} 部出演作品，点击作品查看完整详情`);
 
-    const profileUrl = toSafeHttpUrl(person.profile);
+    const profileUrl = toSafeImageUrl(person.profile);
     if (els.actorProfile && els.actorProfileWrapper && profileUrl) {
         els.actorProfile.src = profileUrl;
         els.actorProfile.alt = `${person.name || query} 头像`;
         els.actorProfileWrapper.classList.remove('hidden');
-        els.actorProfile.addEventListener('error', () => {
+        els.actorProfile.onerror = () => {
             els.actorProfileWrapper.classList.add('hidden');
-        }, { once: true });
+        };
     } else {
+        if (els.actorProfile) els.actorProfile.onerror = null;
         els.actorProfileWrapper?.classList.add('hidden');
     }
 
@@ -454,7 +472,7 @@ function renderActorCandidatePicker(candidates, query, searchId, searchOptions) 
         button.className = 'group flex min-h-20 items-center gap-4 rounded-2xl border border-cinema-700 bg-cinema-900/60 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
         const profile = document.createElement('img');
         profile.className = 'h-14 w-14 shrink-0 rounded-xl object-cover bg-cinema-800';
-        profile.src = toSafeHttpUrl(candidate.profile) || POSTER_PLACEHOLDER;
+        profile.src = toSafeImageUrl(candidate.profile) || POSTER_PLACEHOLDER;
         profile.alt = `${candidate.name || query} 头像`;
         profile.width = 56;
         profile.height = 56;
@@ -486,17 +504,19 @@ function renderActorCandidatePicker(candidates, query, searchId, searchOptions) 
 
 async function loadActorCandidate(candidate, query, searchId, searchOptions) {
     if (!isActiveSearch(searchId) || !candidate?.id) return;
+    const loadId = ++currentCandidateLoadId;
+    const candidateOptions = createCandidateRequestOptions(searchOptions);
     els.loading.classList.remove('hidden');
     setSearching(true);
     setSearchStatus(`正在加载演员“${candidate.name || query}”的作品`);
     try {
         const result = await TmdbAPI.searchPerson(query, {
-            ...searchOptions,
+            ...candidateOptions,
             personId: candidate.id,
             offset: 0,
             limit: 36
         });
-        if (!isActiveSearch(searchId)) return;
+        if (!isActiveSearch(searchId, loadId)) return;
         if (!renderActorResults(result, query, searchId, searchOptions)) {
             throw new Error('未找到该演员的可靠作品信息');
         }
@@ -509,9 +529,11 @@ async function loadActorCandidate(candidate, query, searchId, searchOptions) {
         scrollToVisible(els.actorResults);
         focusActorHeading();
     } catch (error) {
-        if (error?.name !== 'AbortError') showSearchError(error, query, searchId);
+        if (error?.name !== 'AbortError' && isActiveSearch(searchId, loadId)) {
+            showSearchError(error, query, searchId);
+        }
     } finally {
-        if (isActiveSearch(searchId)) setSearching(false);
+        if (isActiveSearch(searchId, loadId)) setSearching(false);
     }
 }
 
@@ -652,7 +674,7 @@ function pickPosterFallback(posterResult, failedSource) {
         posterResult?.poster
     ];
     return candidates
-        .map(value => toSafeHttpUrl(value))
+        .map(value => toSafeImageUrl(value))
         .find(value => value && value !== failedSource) || null;
 }
 
@@ -706,7 +728,8 @@ if (els.cover) {
 
 function loadPoster(posterUrl, title = '', context = {}) {
     if (!els.cover) return;
-    const nextSource = posterUrl || POSTER_PLACEHOLDER;
+    const safePosterUrl = toSafeImageUrl(posterUrl);
+    const nextSource = safePosterUrl || POSTER_PLACEHOLDER;
     const previous = activePosterContext;
     const loadKey = context.loadKey || '';
     const fallbackAttempted = context.fallbackAttempted ?? (
@@ -719,16 +742,16 @@ function loadPoster(posterUrl, title = '', context = {}) {
         ...context,
         title,
         source: nextSource,
-        posterUrl: posterUrl || null,
+        posterUrl: safePosterUrl,
         fallbackAttempted,
         token
     };
 
     els.cover.dataset.posterToken = String(token);
     els.cover.alt = title ? `${title} 海报` : '影视海报';
-    els.cover.setAttribute('srcset', getTmdbPosterSourceSet(posterUrl));
-    els.cover.setAttribute('sizes', posterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '');
-    els.cover.setAttribute('aria-busy', String(Boolean(posterUrl)));
+    els.cover.setAttribute('srcset', getTmdbPosterSourceSet(safePosterUrl));
+    els.cover.setAttribute('sizes', safePosterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '');
+    els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
     if (els.cover.getAttribute('src') === nextSource) return;
     els.cover.setAttribute('src', nextSource);
 }
@@ -834,7 +857,11 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         genres: Array.isArray(source.genres) && source.genres.length > 0 ? source.genres : [],
         rating: source.tmdbRating ?? candidate?.tmdbRating ?? 0,
         votes: source.tmdbVotes ?? candidate?.tmdbVotes ?? candidate?.votes ?? 0,
-        posterUrl: source.poster || candidate?.poster || (posterResult && !posterResult.tmdb ? posterResult.poster : null),
+        posterUrl: pickSafeImageUrl(
+            source.poster,
+            candidate?.poster,
+            posterResult && !posterResult.tmdb ? posterResult.poster : null
+        ),
         omdbProfile,
         overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : source.summary ? 'TMDB' : 'NO DATA'
     };
@@ -1117,6 +1144,23 @@ function toSafeHttpUrl(rawUrl) {
     } catch {
         return null;
     }
+}
+
+function toSafeImageUrl(rawUrl) {
+    const httpUrl = toSafeHttpUrl(rawUrl);
+    if (httpUrl) return httpUrl;
+    if (typeof rawUrl !== 'string' || rawUrl.length > 1_000_000) return null;
+    return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(rawUrl)
+        ? rawUrl
+        : null;
+}
+
+function pickSafeImageUrl(...values) {
+    for (const value of values) {
+        const safeUrl = toSafeImageUrl(value);
+        if (safeUrl) return safeUrl;
+    }
+    return null;
 }
 
 function renderLinkCards(container, items, {
@@ -1887,14 +1931,15 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
         if (posterResult.omdb) {
             viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
         }
-        if (!viewModel.posterUrl && posterResult.poster) {
-            viewModel.posterUrl = posterResult.poster;
-            loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
+        const safePoster = toSafeImageUrl(posterResult.poster);
+        if (!viewModel.posterUrl && safePoster) {
+            viewModel.posterUrl = safePoster;
+            loadPoster(safePoster, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
         setEnrichmentStatus(
             els.omdbStatus,
-            viewModel.omdbProfile ? '已补充 OMDb 数据' : posterResult.poster ? '已找到备用海报' : '暂无备用海报'
+            viewModel.omdbProfile ? '已补充 OMDb 数据' : safePoster ? '已找到备用海报' : '暂无备用海报'
         );
     }).catch(error => {
         if (error?.name === 'AbortError') return;
@@ -1918,9 +1963,10 @@ async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searc
     if (!isActiveSearch(searchId, loadId)) return;
     if (omdbProfile) {
         viewModel.omdbProfile = omdbProfile;
-        if (!viewModel.posterUrl && omdbProfile.poster) {
-            viewModel.posterUrl = omdbProfile.poster;
-            loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
+        const safePoster = toSafeImageUrl(omdbProfile.poster);
+        if (!viewModel.posterUrl && safePoster) {
+            viewModel.posterUrl = safePoster;
+            loadPoster(safePoster, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
     }
@@ -1945,9 +1991,10 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
         if (!isActiveSearch(searchId, loadId)) return;
         if (omdbProfile) {
             viewModel.omdbProfile = omdbProfile;
-            if (!viewModel.posterUrl && omdbProfile.poster) {
-                viewModel.posterUrl = omdbProfile.poster;
-                loadPoster(viewModel.posterUrl, viewModel.title, createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId));
+            const safePoster = toSafeImageUrl(omdbProfile.poster);
+            if (!viewModel.posterUrl && safePoster) {
+                viewModel.posterUrl = safePoster;
+                loadPoster(safePoster, viewModel.title, createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId));
             }
             renderTmdbProfile(viewModel);
         }
@@ -2270,7 +2317,10 @@ if (els.actorFilters) {
 if (els.actorLoadMore) {
     els.actorLoadMore.addEventListener('click', () => {
         if (!actorResultState || actorResultState.loading) return;
-        void loadActorPage({ reset: false, mediaType: actorResultState.mediaType });
+        void loadActorPage(actorResultState.retryRequest || {
+            reset: false,
+            mediaType: actorResultState.mediaType
+        });
     });
 }
 
@@ -2283,6 +2333,7 @@ function resetInitialView() {
     resourceLoadStarted = false;
     resourceResultState = null;
     lastSearchQuery = '';
+    if (els.input) els.input.value = '';
     els.loading.classList.add('hidden');
     els.error.classList.add('hidden');
     els.results.classList.add('hidden');

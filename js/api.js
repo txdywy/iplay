@@ -12,7 +12,11 @@ const OMDB_TIMEOUT_MS = 12000;
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const id = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeoutMs);
     let abortListener = null;
 
     if (options.signal) {
@@ -49,7 +53,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
         return data;
     } catch (error) {
         if (error.name === 'AbortError') {
-            if (options.signal && options.signal.aborted) {
+            if (!timedOut && options.signal && options.signal.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
             }
             throw new Error('Request timed out. Please try again.', { cause: error });

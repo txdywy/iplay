@@ -80,7 +80,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             matchScore: 1,
             matchConfidence: 'high'
         });
-        window.__smoke = { calls: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {} };
+        window.__smoke = { calls: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {}, actorFilterFailures: 0 };
         window.requestIdleCallback = undefined;
         window.cancelIdleCallback = undefined;
         if (new URL(location.href).searchParams.has('fallback')) window.IntersectionObserver = undefined;
@@ -107,16 +107,51 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'No IMDb Movie': 104,
                     'Broken Poster Movie': 105,
                     'Progressive Movie': 106,
-                    'Retry Detail Movie': 107
+                    'Retry Detail Movie': 107,
+                    'Unsafe Poster Movie': 108
                 };
-                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor'].includes(query)) {
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
-                const candidatePoster = query === 'Broken Poster Movie' ? 'https://images.example/broken-poster.jpg' : poster;
+                const candidatePoster = query === 'Broken Poster Movie'
+                    ? 'https://images.example/broken-poster.jpg'
+                    : query === 'Unsafe Poster Movie'
+                        ? 'javascript:alert(1)'
+                        : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
             if (url.pathname === '/api/tmdb/person') {
                 const query = url.searchParams.get('q') || '';
+                const selectedId = url.searchParams.get('id');
+                if (selectedId === '911') {
+                    await new Promise((resolve, reject) => {
+                        const timer = setTimeout(resolve, 250);
+                        options.signal?.addEventListener('abort', () => {
+                            clearTimeout(timer);
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        }, { once: true });
+                    });
+                    return json({
+                        person: { id: 911, name: 'Slow Choice', originalName: 'Slow Choice', profile: poster },
+                        credits: [{ ...candidate('Slow Film', 311), mediaType: 'movie' }],
+                        totalResults: 1,
+                        offset: 0,
+                        limit: 36,
+                        hasMore: false,
+                        counts: { tv: 0, movie: 1 }
+                    });
+                }
+                if (selectedId === '912') {
+                    return json({
+                        person: { id: 912, name: 'Fast Choice', originalName: 'Fast Choice', profile: poster },
+                        credits: [{ ...candidate('Fast Film', 312), mediaType: 'movie' }],
+                        totalResults: 1,
+                        offset: 0,
+                        limit: 36,
+                        hasMore: false,
+                        counts: { tv: 0, movie: 1 }
+                    });
+                }
                 if (url.searchParams.get('id') === '901') {
                     return json({
                         person: { id: 901, name: 'Ambiguous Actor', originalName: 'Ambiguous Actor', profile: poster, matchScore: 1, matchConfidence: 'high' },
@@ -139,6 +174,17 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         searchMeta: { ambiguous: true, matchScore: 1 }
                     });
                 }
+                if (query === 'Racing Actor') {
+                    return json({
+                        person: null,
+                        credits: [],
+                        personCandidates: [
+                            { id: 911, name: 'Slow Choice', originalName: 'Slow Choice', matchScore: 1, profile: poster },
+                            { id: 912, name: 'Fast Choice', originalName: 'Fast Choice', matchScore: 1, profile: poster }
+                        ],
+                        searchMeta: { ambiguous: true, matchScore: 1 }
+                    });
+                }
                 if (query === 'Paged Actor') {
                     const pagedCredits = [
                         { ...candidate('Paged Film 1', 301), mediaType: 'movie', title: 'Paged Film 1', originalTitle: 'Paged Film 1' },
@@ -146,15 +192,22 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         { ...candidate('Paged Series', 303), mediaType: 'tv', title: 'Paged Series', originalTitle: 'Paged Series' }
                     ];
                     const offset = Number(url.searchParams.get('offset') || 0);
+                    const requestedType = url.searchParams.get('mediaType');
+                    if (requestedType === 'movie' && window.__smoke.actorFilterFailures++ === 0) {
+                        return json({ error: 'temporary actor filter outage' }, 503);
+                    }
+                    const filteredCredits = requestedType
+                        ? pagedCredits.filter(credit => credit.mediaType === requestedType)
+                        : pagedCredits;
                     const limit = 2;
-                    const page = pagedCredits.slice(offset, offset + limit);
+                    const page = filteredCredits.slice(offset, offset + limit);
                     return json({
                         person: { id: 903, name: query, originalName: query, profile: poster, matchScore: 1, matchConfidence: 'high' },
                         credits: page,
-                        totalResults: pagedCredits.length,
+                        totalResults: filteredCredits.length,
                         offset,
                         limit,
-                        hasMore: offset + page.length < pagedCredits.length,
+                        hasMore: offset + page.length < filteredCredits.length,
                         counts: { tv: 1, movie: 2 }
                     });
                 }
@@ -196,6 +249,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     105: 'Broken Poster Movie',
                     106: 'Progressive Movie',
                     107: 'Retry Detail Movie',
+                    108: 'Unsafe Poster Movie',
                     200: 'Actor Movie',
                     201: 'Smoke Series'
                 };
@@ -207,6 +261,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     window.__smoke.detailAttempts[id] = (window.__smoke.detailAttempts[id] || 0) + 1;
                     if (window.__smoke.detailAttempts[id] === 1) return json({ error: 'temporary detail outage' }, 503);
                 }
+                if (id === 108) await new Promise(resolve => setTimeout(resolve, 200));
                 const response = json({
                     ...candidate(title, id),
                     genres: ['Drama'],
@@ -346,6 +401,18 @@ async function runBrokenPosterFlow() {
     assert.ok(calls.some(call => call.includes('/api/poster?title=Broken%20Poster%20Movie&year=2024&refresh=1')));
 }
 
+async function runUnsafePosterFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Unsafe Poster Movie');
+    await assertSearchReady('Unsafe Poster Movie');
+    assert.equal(
+        await evaluate("document.querySelector('#showCover')?.getAttribute('src')?.startsWith('javascript:')"),
+        false,
+        'unsafe poster URLs must never reach the image element'
+    );
+}
+
 async function runTimerFallbackFlow() {
     await command('Page.navigate', { url: `${baseUrl}?fallback=1` });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -387,6 +454,8 @@ async function runActorFlow() {
     await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
     await evaluate('history.back()');
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Smoke Actor'");
+    await evaluate('history.back()');
+    await waitFor("document.querySelector('#actorResultsArea')?.classList.contains('hidden') && document.querySelector('#searchInput')?.value === ''");
 }
 
 async function runActorCandidateFlow() {
@@ -400,6 +469,21 @@ async function runActorCandidateFlow() {
     assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length"), 1);
 }
 
+async function runActorCandidateRaceFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Racing Actor');
+    await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)')");
+    await evaluate(`(() => {
+        document.querySelector('#actorCandidateList button[data-person-id="911"]')?.click();
+        document.querySelector('#actorCandidateList button[data-person-id="912"]')?.click();
+    })()`);
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Fast Choice'");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await evaluate("document.querySelector('#actorResultsTitle')?.textContent"), 'Fast Choice');
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\"312\"]').length"), 1);
+}
+
 async function runActorPaginationFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -410,6 +494,13 @@ async function runActorPaginationFlow() {
     await evaluate("document.querySelector('#actorLoadMore')?.click()");
     await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 3");
     assert.equal(await evaluate("document.querySelector('#actorLoadMore.hidden') !== null"), true);
+
+    await evaluate("document.querySelector('#actorFilterMovie')?.click()");
+    await waitFor("document.querySelector('#actorLoadMore')?.textContent.includes('重试')");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 0);
+    await evaluate("document.querySelector('#actorLoadMore')?.click()");
+    await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 2");
+    assert.equal(await evaluate("document.querySelector('#actorLoadMore.hidden') !== null"), true);
 }
 
 try {
@@ -419,11 +510,13 @@ try {
     await runDetailRetryFlow();
     await runTitleOmdbFlow();
     await runBrokenPosterFlow();
+    await runUnsafePosterFlow();
     await runTimerFallbackFlow();
     await runActorFlow();
     await runActorCandidateFlow();
+    await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-pagination-and-filter'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-candidate-race', 'actor-pagination-and-filter-retry'] }));
 } finally {
     socket.close();
 }
