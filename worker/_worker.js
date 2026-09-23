@@ -1787,14 +1787,13 @@ async function handleDoubanDetail(id, ctx) {
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
 
-        let result = {
+        const result = {
             rating: 0,
             votes: 0,
             genres: [],
             summary: "",
             imdbId: ""
         };
-        let isParsingSummary = false;
 
         const rewriter = new HTMLRewriter()
             .on('strong[property="v:average"]', {
@@ -1807,9 +1806,7 @@ async function handleDoubanDetail(id, ctx) {
                 text(text) { if (text.text.trim()) result.genres.push(text.text.trim()); }
             })
             .on('span[property="v:summary"]', {
-                element() { isParsingSummary = true; },
-                text(text) { if (isParsingSummary) result.summary += text.text; },
-                elementEnd() { isParsingSummary = false; }
+                text(text) { result.summary += text.text; }
             })
             .on('a[href*="imdb.com"]', {
                 element(el) {
@@ -1822,8 +1819,14 @@ async function handleDoubanDetail(id, ctx) {
             });
 
         const html = await readTextWithLimit(res);
+        if (isChallengePage(html)) {
+            throw createHttpError("Douban returned a challenge page", 502);
+        }
         await rewriter.transform(new Response(html)).text();
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
+        if (!result.rating && !result.votes && result.genres.length === 0 && !result.summary && !result.imdbId) {
+            throw createHttpError("Douban returned an invalid detail page", 502);
+        }
 
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
@@ -2130,7 +2133,7 @@ function parseWpzysResources(html, query) {
     return resources;
 }
 
-function isWpzysChallengePage(html) {
+function isChallengePage(html) {
     return /(?:id=["']challenge-platform["']|\bcf-chl-|<title>\s*just a moment(?:\.\.\.)?\s*<\/title>|enable javascript and cookies to continue)/i.test(html);
 }
 
@@ -2153,7 +2156,7 @@ async function fetchWpzysResources(query, deadline = null) {
     if (!html.trim()) {
         throw createHttpError("WPZYS returned an empty response", 502);
     }
-    if (isWpzysChallengePage(html)) {
+    if (isChallengePage(html)) {
         throw createHttpError("WPZYS returned a challenge page", 502);
     }
 

@@ -2219,12 +2219,12 @@ async function handleSearch({ historyMode = 'push' } = {}) {
                 personSearchError = error;
             }
         }
+        if (!isActiveSearch(searchId)) return;
 
         const actorMatchScore = toFiniteNumber(personSearch?.person?.matchScore);
         const hasStrongActorMatch = Boolean(
             personSearch?.person
             && Array.isArray(personSearch.credits)
-            && personSearch.credits.length > 0
             && actorMatchScore !== null
             && actorMatchScore >= 0.86
         );

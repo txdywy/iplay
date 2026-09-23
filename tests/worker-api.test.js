@@ -1360,6 +1360,46 @@ test('Douban search rejects and does not cache a malformed successful payload', 
     assert.equal(cachePuts.length, 0);
 });
 
+test('Douban detail rejects challenge and empty successful pages without caching them', async t => {
+    const originalCaches = globalThis.caches;
+    const originalFetch = globalThis.fetch;
+    const originalRewriter = globalThis.HTMLRewriter;
+    const cachePuts = [];
+    globalThis.caches = {
+        default: {
+            match: async () => null,
+            put: async (...args) => { cachePuts.push(args); }
+        }
+    };
+    globalThis.HTMLRewriter = class {
+        on() { return this; }
+        transform(response) { return response; }
+    };
+    t.after(() => {
+        globalThis.caches = originalCaches;
+        globalThis.fetch = originalFetch;
+        globalThis.HTMLRewriter = originalRewriter;
+    });
+
+    for (const [name, html] of [
+        ['challenge', '<html><title>Just a moment...</title><div id="challenge-platform"></div></html>'],
+        ['empty', '<html><body><p>Unexpected provider page</p></body></html>']
+    ]) {
+        globalThis.fetch = async () => new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/douban/detail?id=12345', {
+                headers: { 'cf-connecting-ip': `test-douban-detail-${name}` }
+            }),
+            {},
+            { waitUntil() {} }
+        );
+
+        assert.equal(response.status, 502);
+        assert.match((await response.json()).error, /Douban returned/);
+    }
+    assert.equal(cachePuts.length, 0);
+});
+
 test('selected person lookup rejects an invalid TMDB person payload before caching', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
