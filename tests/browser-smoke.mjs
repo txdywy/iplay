@@ -333,6 +333,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
 });
 
 async function search(query) {
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
     await evaluate(`(() => {
         const input = document.querySelector('#searchInput');
         input.value = ${JSON.stringify(query)};
