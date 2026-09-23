@@ -110,7 +110,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Retry Detail Movie': 107,
                     'Unsafe Poster Movie': 108
                 };
-                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor'].includes(query)) {
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
                 const candidatePoster = query === 'Broken Poster Movie'
@@ -123,6 +123,30 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/tmdb/person') {
                 const query = url.searchParams.get('q') || '';
                 const selectedId = url.searchParams.get('id');
+                if (query === 'Slow Actor') {
+                    // Deliberately ignore cancellation to verify the UI rejects late responses.
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                    return json({
+                        person: { id: 913, name: 'Slow Actor', matchScore: 1, profile: poster },
+                        credits: [{ ...candidate('Stale Film', 313), mediaType: 'movie' }],
+                        totalResults: 1,
+                        offset: 0,
+                        limit: 36,
+                        hasMore: false,
+                        counts: { tv: 0, movie: 1 }
+                    });
+                }
+                if (query === 'Empty Actor') {
+                    return json({
+                        person: { id: 914, name: 'Empty Actor', matchScore: 1, profile: poster },
+                        credits: [],
+                        totalResults: 0,
+                        offset: 0,
+                        limit: 36,
+                        hasMore: false,
+                        counts: { tv: 0, movie: 0 }
+                    });
+                }
                 if (selectedId === '911') {
                     await new Promise((resolve, reject) => {
                         const timer = setTimeout(resolve, 250);
@@ -356,6 +380,27 @@ async function runStaleSearchFlow() {
     assert.equal(await evaluate('document.querySelector("#showTitle")?.textContent'), 'Fresh Movie');
 }
 
+async function runStaleActorSearchFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Slow Actor');
+    await new Promise(resolve => setTimeout(resolve, 25));
+    await search('Fresh Movie');
+    await assertSearchReady('Fresh Movie');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await evaluate("document.querySelector('#showTitle')?.textContent"), 'Fresh Movie');
+    assert.equal(await evaluate("document.querySelector('#actorResultsArea')?.classList.contains('hidden')"), true);
+}
+
+async function runEmptyActorFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await search('Empty Actor');
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Empty Actor'");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 0);
+    assert.equal(await evaluate("document.querySelector('#actorNotice')?.textContent.includes('没有可显示')"), true);
+}
+
 async function runProgressiveFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -506,6 +551,8 @@ async function runActorPaginationFlow() {
 try {
     await runObserverFlow();
     await runStaleSearchFlow();
+    await runStaleActorSearchFlow();
+    await runEmptyActorFlow();
     await runProgressiveFlow();
     await runDetailRetryFlow();
     await runTitleOmdbFlow();
@@ -516,7 +563,7 @@ try {
     await runActorCandidateFlow();
     await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-candidate-race', 'actor-pagination-and-filter-retry'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-candidate-race', 'actor-pagination-and-filter-retry'] }));
 } finally {
     socket.close();
 }

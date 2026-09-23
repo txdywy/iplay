@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.4.2] - 2026-09-23
+
+### Fixed
+
+- Late actor search responses can no longer replace a newer search result.
+- Exact actor matches with no credits now show an empty filmography instead of a misleading not-found error.
+- Douban challenge and empty detail pages are rejected instead of cached as valid data.
+
+### Changed
+
+- Douban summary extraction now uses the HTMLRewriter selector's scoped text callback directly.
+
 ## [1.0.4.1] - 2026-09-21
 
 ### Changed
