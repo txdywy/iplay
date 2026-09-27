@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.5] - 2026-09-27
+
+### Fixed
+
+- Rating cards now remain truly hidden when their source has no usable rating, including in Tailwind's layered CSS.
+- Explicit TMDB media types never fall back to unrelated same-number IDs, and malformed/mismatched detail identities are rejected before caching.
+- Deep links resolve canonical title/year/type before supplementary searches; selected same-name actor identities survive reloads and history navigation.
+- Unrelated poster/Douban matches and OMDb year fallback to different remakes are rejected.
+- Year suffix normalization no longer consumes the preceding title character (e.g. 三体2023).
+- TV runtimes use episode data; assistant directors no longer appear as directors.
+- Resource detail challenge/empty pages report partial failures rather than falsely complete scans.
+- Douban rating, vote and genre extraction preserves streaming text chunks; duplicate and prototype-like genres cannot corrupt recommendation scores.
+- TMDB overview retains its own source text instead of being replaced by Wikipedia after detail refresh.
+
+### Added
+
+- Copy-share controls for media and actor views, keyboard skip navigation, and a JavaScript-disabled notice.
+- Production smoke validation (`npm run test:live`) checks deployed frontend bytes, real API identities, CORS and recoverable optional-provider failures.
+
+### Changed
+
+- Recommendation UI explicitly describes its rule-based score instead of claiming an AI prediction.
+- Production fail-closed rate limiting is declared in Wrangler configuration; cache namespaces changed where old data could violate the new contracts.
+- Browser regression coverage includes actual computed visibility, canonical deep links, sharing, actor reloads, desktop layout and reduced motion.
+
 ## [1.0.4.2] - 2026-09-23
 
 ### Fixed

@@ -13,9 +13,6 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 - **样式构建**：本地使用 Tailwind CSS CLI 生成 `css/output.css`
 - **运行时密钥**：由 Cloudflare Worker Secrets 提供
 
-<!-- VERIFY: GitHub Pages 是否是当前线上前端托管方式，需要结合实际仓库发布流程确认。 -->
-<!-- VERIFY: Cloudflare Worker 是否仍使用免费层部署策略，需要结合实际账户与配额确认。 -->
-
 ---
 
 ## 后端部署：Cloudflare Worker
@@ -50,6 +47,8 @@ npm run deploy:worker -- --message "本次变更说明"
 TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `ENVIRONMENT=production`，并保留 `API_RATE_LIMITER` / `RESOURCE_RATE_LIMITER` 两个 binding；自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
 
 当前生产 Worker 使用本机 Wrangler OAuth 配置部署，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
+
+`wrangler.toml` 已声明 `ENVIRONMENT=production`，缺少分布式限流 binding 时拒绝请求；部署时保留两个 Rate Limiting bindings，不能依赖仅本地生效的隔离实例计数器。CI 的 Node 22 作业也会检查生产 Worker 打包。
 
 ### GitHub Actions（暂不自动部署 Worker）
 
@@ -179,5 +178,7 @@ OMDB_API_KEY=your_omdb_key
 ## 发布建议
 
 - 前端或 Worker 变更先跑 `npm test`（Node.js 测试 + lint + 生产构建）
+- 合并前跑 `npm run test:browser:ci`，覆盖手机、桌面、实际评分显隐、分享恢复和降级重试。
 - Worker 变更先跑 `npm run wrangler -- dev`
 - 生产环境更新后，先验证一个中文片名，再验证一个英文片名
+- GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 JS/CSS/VERSION 与本地发布版本逐字相同且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。

@@ -450,7 +450,7 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
     updateActorFilterControls();
     updateActorPaginationControls();
     els.actorResults.classList.remove('hidden');
-    if (historyMode === 'push') updateActorHistory(query);
+    if (historyMode === 'push') updateActorHistory(query, person.id);
     return true;
 }
 
@@ -502,7 +502,7 @@ function renderActorCandidatePicker(candidates, query, searchId, searchOptions) 
     return ranked.length > 0;
 }
 
-async function loadActorCandidate(candidate, query, searchId, searchOptions) {
+async function loadActorCandidate(candidate, query, searchId, searchOptions, { historyMode = 'push' } = {}) {
     if (!isActiveSearch(searchId) || !candidate?.id) return;
     const loadId = ++currentCandidateLoadId;
     const candidateOptions = createCandidateRequestOptions(searchOptions);
@@ -517,7 +517,7 @@ async function loadActorCandidate(candidate, query, searchId, searchOptions) {
             limit: 36
         });
         if (!isActiveSearch(searchId, loadId)) return;
-        if (!renderActorResults(result, query, searchId, searchOptions)) {
+        if (!renderActorResults(result, query, searchId, searchOptions, { historyMode })) {
             throw new Error('未找到该演员的可靠作品信息');
         }
         els.loading.classList.add('hidden');
@@ -622,8 +622,9 @@ function scrollToVisible(element) {
     });
 }
 
-function pickBestDoubanMatch(results, query) {
-    return findBestMatch(results, query, item => item.title);
+function pickBestDoubanMatch(results, query, year) {
+    const sameYear = year ? results.filter(item => !item.year || String(item.year) === String(year)) : results;
+    return findBestMatch(sameYear, query, item => item.title);
 }
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -752,7 +753,10 @@ function loadPoster(posterUrl, title = '', context = {}) {
     els.cover.setAttribute('srcset', getTmdbPosterSourceSet(safePosterUrl));
     els.cover.setAttribute('sizes', safePosterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '');
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
-    if (els.cover.getAttribute('src') === nextSource) return;
+    if (els.cover.getAttribute('src') === nextSource) {
+        if (els.cover.complete) els.cover.setAttribute('aria-busy', 'false');
+        return;
+    }
     els.cover.setAttribute('src', nextSource);
 }
 
@@ -935,9 +939,10 @@ function renderTmdbFacts(viewModel) {
     ].filter(Boolean));
 
     if (els.tmdbOverview) {
-        els.tmdbOverview.textContent = viewModel?.summary && viewModel.summary.trim() ? viewModel.summary : '暂无 TMDB 概述';
-        els.tmdbOverview.classList.toggle('italic', !viewModel?.summary || !viewModel.summary.trim());
-        els.tmdbOverview.classList.toggle('text-cinema-400', !viewModel?.summary || !viewModel.summary.trim());
+        const summary = detail.summary || candidate.summary || '';
+        els.tmdbOverview.textContent = summary.trim() ? summary : '暂无 TMDB 概述';
+        els.tmdbOverview.classList.toggle('italic', !summary.trim());
+        els.tmdbOverview.classList.toggle('text-cinema-400', !summary.trim());
     }
 }
 
@@ -1696,25 +1701,26 @@ function getAppHistoryUrl(url) {
     return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
 }
 
-function pushActorHistory(query) {
+function pushActorHistory(query, personId) {
     const url = new URL(window.location.href);
     url.search = '';
     url.searchParams.set('actor', query);
-    window.history.pushState({ kind: 'actor', query }, '', getAppHistoryUrl(url));
+    if (personId) url.searchParams.set('person', String(personId));
+    window.history.pushState({ kind: 'actor', query, personId }, '', getAppHistoryUrl(url));
 }
 
-function updateActorHistory(query) {
+function updateActorHistory(query, personId) {
     if (!query) return;
-    pushActorHistory(query);
+    pushActorHistory(query, personId);
 }
 
-function pushDetailHistory(candidate) {
+function pushDetailHistory(candidate, { replace = false } = {}) {
     const url = new URL(window.location.href);
     url.search = '';
     url.searchParams.set('id', String(candidate.id));
     if (candidate.mediaType) url.searchParams.set('type', candidate.mediaType);
     if (candidate.title || candidate.originalTitle) url.searchParams.set('title', candidate.title || candidate.originalTitle);
-    window.history.pushState({
+    window.history[replace ? 'replaceState' : 'pushState']({
         kind: 'detail',
         id: candidate.id,
         mediaType: candidate.mediaType || '',
@@ -2021,7 +2027,7 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
     DoubanAPI.search(enrichmentQuery, searchOptions).then(async doubanSearchResult => {
         if (!isActiveSearch(searchId, loadId)) return;
         const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
-        const doubanMatch = pickBestDoubanMatch(doubanCandidates, enrichmentQuery);
+        const doubanMatch = pickBestDoubanMatch(doubanCandidates, enrichmentQuery, candidate.year);
         if (doubanMatch && doubanMatch.id) {
             const doubanResult = await DoubanAPI.getDetail(doubanMatch.id, searchOptions).catch(error => {
                 if (error?.name === 'AbortError') throw error;
@@ -2069,7 +2075,7 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
         });
 }
 
-async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push' } = {}) {
+async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push', deferEnrichments = false } = {}) {
     if (!isActiveSearch(searchId)) return;
 
     cancelResourceLoadSchedule();
@@ -2083,6 +2089,9 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     };
     if (!isRetry && historyMode === 'push') pushDetailHistory(selectedCandidate);
     setSearching(true);
+    resetRatingBoxes();
+    setEnrichmentStatus(els.wikiStatus, '等待详情确认后补充简介');
+    setEnrichmentStatus(els.omdbStatus, '等待详情确认后补充数据');
     hideCandidatePicker();
     hideActorResults();
     els.error.classList.add('hidden');
@@ -2101,6 +2110,13 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
     renderViewModel(viewModel, posterContext);
+    if (deferEnrichments) {
+        setResourceStatus('等待详情确认后扫描资源');
+        renderResourceList([]);
+        renderWpzysResourceList([]);
+        renderQuarkUrls([]);
+        hideResourceNotice();
+    }
 
     els.results.classList.remove('hidden');
     els.loading.classList.add('hidden');
@@ -2124,7 +2140,19 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             }
             if (existingPoster) viewModel.posterUrl = existingPoster;
             if (existingOmdbProfile) viewModel.omdbProfile = existingOmdbProfile;
+            Object.assign(selectedCandidate, {
+                title: tmdbDetail.title,
+                originalTitle: tmdbDetail.originalTitle,
+                mediaType: tmdbDetail.mediaType,
+                year: tmdbDetail.year
+            });
+            posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
+            posterContext.year = tmdbDetail.year || '';
+            if (deferEnrichments) pushDetailHistory(selectedCandidate, { replace: true });
             renderViewModel(viewModel, posterContext, { isUpdate: true });
+            if (deferEnrichments) {
+                startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId);
+            }
             setSearchStatus(`已找到“${viewModel.title}”，详情已加载`);
             hideDataNotice();
             return tmdbDetail;
@@ -2137,7 +2165,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                     title: 'TMDB 详情暂时不可用',
                     detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
                     actionLabel: '重试详情',
-                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none' }),
+                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments }),
                     tone: 'error'
                 });
             }
@@ -2145,7 +2173,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             return null;
         });
 
-    startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId, detailPromise);
+    if (!deferEnrichments) startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId, detailPromise);
     await detailPromise;
 }
 
@@ -2345,17 +2373,34 @@ function resetInitialView() {
     setSearchStatus('输入电影、剧集或演员名称开始搜索');
 }
 
+document.querySelectorAll('[data-share-current]').forEach(button => {
+    button.addEventListener('click', async () => {
+        try {
+            await globalThis.navigator.clipboard.writeText(window.location.href);
+            showToast('分享链接已复制');
+        } catch {
+            showToast('复制失败，可直接复制浏览器地址栏分享');
+        }
+    });
+});
+
 async function restoreUrlState() {
     const params = new URL(window.location.href).searchParams;
     const actor = params.get('actor')?.trim();
     if (actor) {
         els.input.value = actor;
+        const personId = params.get('person')?.trim() || '';
+        if (/^[1-9]\d{0,11}$/.test(personId)) {
+            const { searchId, searchOptions } = beginSearchSession(actor);
+            await loadActorCandidate({ id: personId }, actor, searchId, searchOptions, { historyMode: 'none' });
+            return;
+        }
         await handleSearch({ historyMode: 'none' });
         return;
     }
 
     const idText = params.get('id')?.trim() || '';
-    if (/^\d+$/.test(idText) && Number(idText) > 0) {
+    if (/^[1-9]\d{0,11}$/.test(idText)) {
         const mediaType = ['movie', 'tv'].includes(params.get('type')) ? params.get('type') : null;
         const title = params.get('title')?.trim() || `TMDB ${idText}`;
         els.input.value = title;
@@ -2366,7 +2411,7 @@ async function restoreUrlState() {
                 mediaType,
                 title,
                 originalTitle: title
-            }, title, searchId, searchOptions, { historyMode: 'none' });
+            }, title, searchId, searchOptions, { historyMode: 'none', deferEnrichments: true });
         } catch (error) {
             if (error?.name !== 'AbortError') showSearchError(error, title, searchId);
         }

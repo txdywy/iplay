@@ -39,6 +39,9 @@ async function evaluate(expression, { awaitPromise = false } = {}) {
         awaitPromise,
         returnByValue: true
     });
+    if (result.exceptionDetails) {
+        throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+    }
     return result.result?.value;
 }
 
@@ -81,6 +84,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             matchConfidence: 'high'
         });
         window.__smoke = { calls: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {}, actorFilterFailures: 0 };
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+            writeText: async text => { window.__smoke.copied = text; }
+        } });
         window.requestIdleCallback = undefined;
         window.cancelIdleCallback = undefined;
         if (new URL(location.href).searchParams.has('fallback')) window.IntersectionObserver = undefined;
@@ -274,11 +280,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     106: 'Progressive Movie',
                     107: 'Retry Detail Movie',
                     108: 'Unsafe Poster Movie',
+                    109: 'Canonical Movie',
                     200: 'Actor Movie',
                     201: 'Smoke Series'
                 };
                 const title = titles[id] || 'Smoke Movie';
-                if (id === 106) {
+                if (id === 106 || id === 109) {
                     await new Promise(resolve => setTimeout(resolve, 450));
                 }
                 if (id === 107) {
@@ -353,6 +360,9 @@ async function runObserverFlow() {
     await search('Test Movie');
     await assertSearchReady('Test Movie');
     await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#doubanBackupBox')).display"), 'none');
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#rottenRatingBox')).display"), 'none');
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#imdbRatingBox')).display"), 'flex');
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'resources should stay deferred before entering the viewport');
 
     await evaluate("document.querySelector('#resourcesSection')?.scrollIntoView({ block: 'start' })");
@@ -513,6 +523,42 @@ async function runActorCandidateFlow() {
     await evaluate("document.querySelector('#actorCandidateList button[data-person-id=\\\"901\\\"]')?.click()");
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Ambiguous Actor'");
     assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length"), 1);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('person')"), '901');
+    const shareUrl = await evaluate('location.href');
+    await command('Page.navigate', { url: shareUrl });
+    await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length === 1");
+    assert.equal(await evaluate("document.querySelector('#actorCandidatePicker').classList.contains('hidden')"), true);
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/search'))"), false);
+}
+
+async function runDeepLinkFlow() {
+    await command('Page.navigate', { url: `${baseUrl}?id=109&type=movie&title=Wrong%20Title` });
+    await waitFor("window.__smoke?.detailCalls === 1");
+    assert.equal(await evaluate("window.__smoke.calls.some(call => /wiki|douban|omdb|resource/.test(call))"), false,
+        'unverified URL titles must not initiate supplementary searches');
+    await assertSearchReady('Canonical Movie');
+    await waitFor("document.querySelector('#omdbStatus').textContent.includes('已补充')");
+    assert.equal(await evaluate("document.querySelector('#tmdbOverview').textContent"), 'A browser smoke test detail.');
+    assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), true);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Movie');
+    await evaluate("document.querySelector('#resultsArea [data-share-current]').click()");
+    assert.equal(await evaluate('window.__smoke.copied'), await evaluate('location.href'));
+    await evaluate("document.querySelector('#resourcesSection button')?.click()");
+    await waitFor('window.__smoke.resourceCalls === 1');
+    const calls = await evaluate('window.__smoke.calls');
+    assert.ok(calls.some(call => call.includes('/api/wiki/zh?q=Canonical%20Movie')));
+    assert.ok(calls.some(call => call.includes('/api/resource?q=Canonical%20Movie')));
+    assert.equal(calls.some(call => call.includes('Wrong%20Title')), false);
+}
+
+async function runDesktopReducedMotionFlow() {
+    await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await command('Page.navigate', { url: baseUrl });
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#resultsArea .fade-up')).animationName"), 'none');
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#rottenRatingBox')).display"), 'none');
 }
 
 async function runActorCandidateRaceFlow() {
@@ -564,7 +610,9 @@ try {
     await runActorCandidateFlow();
     await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewport: '390x844', flows: ['observer', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker', 'actor-candidate-race', 'actor-pagination-and-filter-retry'] }));
+    await runDeepLinkFlow();
+    await runDesktopReducedMotionFlow();
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

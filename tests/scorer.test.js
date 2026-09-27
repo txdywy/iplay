@@ -36,3 +36,11 @@ test('fatal preference matches cap the recommendation below 60', () => {
 
     assert.ok(result.score <= 59);
 });
+
+test('duplicate and prototype-like genre names cannot inflate or corrupt the score', () => {
+    const data = { rating: 8, votes: 1000, genres: ['喜剧'], summary: 'A sufficiently detailed summary.' };
+    assert.deepEqual(
+        calculateRecommendationScore({ ...data, genres: ['喜剧', ' 喜剧 ', 'constructor', '__proto__', null] }),
+        calculateRecommendationScore(data)
+    );
+});

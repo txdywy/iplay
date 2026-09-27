@@ -199,7 +199,7 @@ GET /api/tmdb/detail?id={id}&type={type}
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `id` | number | 是 | TMDB 媒体 ID |
-| `type` | string | 否 | 指定类型：`movie` 或 `tv`；未指定时会自动尝试两种类型 |
+| `type` | string | 否 | 指定类型：`movie` 或 `tv`；指定后不会跨类型回退（两种 ID 属于不同命名空间）；未指定时才尝试两种类型 |
 
 **Example Request：**
 
