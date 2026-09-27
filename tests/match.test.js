@@ -62,3 +62,9 @@ test('selects an exact or loose title when TMDB match scores are unavailable', (
     ], 'Dune: Part', item => item.title);
     assert.equal(loose.id, 1);
 });
+
+test('supplementary title matching rejects unrelated and empty titles', () => {
+    assert.equal(findBestMatch([{ title: 'Unrelated' }], 'Dune', item => item.title), null);
+    assert.equal(findBestMatch([{ title: '' }], 'Dune', item => item.title), null);
+    assert.equal(findBestMatch([{ title: 'Dune' }], '', item => item.title), null);
+});

@@ -570,7 +570,10 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
         }
 
         const fallbackData = await readJsonWithLimit(fallbackRes);
-        if (fallbackData.Response === "True") return fallbackData;
+        if (fallbackData.Response === "True") {
+            // Dropping the year may find a different remake with the same title.
+            return String(fallbackData.Year || "").slice(0, 4) === year ? fallbackData : null;
+        }
 
         const fallbackApplicationError = getOmdbApplicationError(fallbackData);
         if (fallbackApplicationError) throw fallbackApplicationError;
@@ -674,7 +677,7 @@ function normalizeTmdbDetail(data, type) {
     const writer = new Set();
 
     for (const person of crew) {
-        if (person.job === "Director" || person.department === "Directing") director.add(person.name);
+        if (person.job === "Director") director.add(person.name);
         if (["Writer", "Screenplay", "Story"].includes(person.job)) writer.add(person.name);
     }
 
@@ -691,7 +694,11 @@ function normalizeTmdbDetail(data, type) {
         backdrop: tmdbImage(data.backdrop_path, "w780"),
         summary: typeof data.overview === "string" ? data.overview : "",
         genres: Array.isArray(data.genres) ? data.genres.filter(isObject).map(g => g.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
-        runtime: toFiniteMetric(data.runtime),
+        runtime: type === "tv"
+            ? (Array.isArray(data.episode_run_time)
+                ? data.episode_run_time.map(value => toFiniteMetric(value)).find(value => value > 0) || null
+                : null) || toFiniteMetric(data.last_episode_to_air?.runtime)
+            : toFiniteMetric(data.runtime),
         status: typeof data.status === "string" ? data.status : null,
         originalLanguage: typeof data.original_language === "string" ? data.original_language : null,
         productionCompanies: Array.isArray(data.production_companies) ? data.production_companies.filter(isObject).map(c => c.name).filter(name => typeof name === "string" && name.trim()).map(name => name.trim()) : [],
@@ -714,9 +721,11 @@ function isValidTmdbPayload(path, data) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return false;
     if (/^\/search\/(?:multi|movie|tv|person)$/.test(path)) return Array.isArray(data.results);
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
-    if (/^\/(?:movie|tv)\/\d+$/.test(path)) return toSafeTmdbId(data.id) !== null;
+    if (/^\/(?:movie|tv)\/\d+$/.test(path)) {
+        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbTitle(data));
+    }
     if (/^\/person\/\d+$/.test(path)) {
-        return toSafeTmdbId(data.id) !== null && Boolean(getTmdbPersonName(data));
+        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbPersonName(data));
     }
     return true;
 }
@@ -979,7 +988,7 @@ function extractSearchYear(text) {
     const matches = [...text.matchAll(/(?:^|[^\d])((?:19|20)\d{2})(?=$|[^\d])/gu)];
     const match = matches.at(-1);
     if (!match || text.trim() === match[1]) return { value: null, match: "" };
-    return { value: match[1], match: match[0] };
+    return { value: match[1], match: match[1] };
 }
 
 const SEARCH_NOISE_PATTERN = /(?:\b(?:2160p|1080p|720p|480p|4k|8k|web[- .]?(?:dl|rip)|blu?ray|brrip|dvdrip|hdtv|x26[45]|hevc|hdr10?|dolby(?:vision|atmos)?|proper|repack|movie|film|tv|series|show)\b|中字|双语|字幕|全集|完结|无删减|高清|高码|电影|电视剧|剧集|连续剧)/giu;
@@ -1224,6 +1233,7 @@ function pickBestTmdbPosterCandidate(items, title, year) {
     const normalizedTitle = normalizeMatchText(title);
     const scored = items
         .filter(item => isValidTmdbSearchItem(item) && typeof item.poster_path === "string" && item.poster_path)
+        .filter(item => Math.max(scoreSearchText(title, getTmdbTitle(item)), scoreSearchText(title, getTmdbOriginalTitle(item))) >= SEARCH_ACCEPT_SCORE)
         .map(item => {
             const itemTitle = normalizeMatchText(item.title || item.name);
             const originalTitle = normalizeMatchText(item.original_title || item.original_name);
@@ -1632,6 +1642,7 @@ async function handleTmdbSearch(query, env, ctx) {
 }
 
 async function handleTmdbDetail(id, type, env, ctx) {
+    const hasExplicitType = typeof type === "string" && Boolean(type.trim());
     const idCheck = validatePositiveInteger(id);
     if (idCheck.error) return idCheck.error;
     id = idCheck.value;
@@ -1641,7 +1652,11 @@ async function handleTmdbDetail(id, type, env, ctx) {
     type = typeCheck.value;
 
     const apiType = type;
-    const attemptOrder = apiType === "tv" ? ["tv", "movie"] : ["movie", "tv"];
+    // A movie id and a TV id belong to different namespaces. Only legacy
+    // untyped links may probe both; an explicit type must preserve identity.
+    const attemptOrder = hasExplicitType
+        ? [apiType]
+        : ["movie", "tv"];
     const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
     let lastError = null;
 
@@ -1794,16 +1809,20 @@ async function handleDoubanDetail(id, ctx) {
             summary: "",
             imdbId: ""
         };
+        let ratingText = "";
+        let votesText = "";
+        let genreIndex = -1;
 
         const rewriter = new HTMLRewriter()
             .on('strong[property="v:average"]', {
-                text(text) { result.rating = parseFloat(text.text) || result.rating; }
+                text(text) { ratingText += text.text; }
             })
             .on('span[property="v:votes"]', {
-                text(text) { result.votes = parseInt(text.text) || result.votes; }
+                text(text) { votesText += text.text; }
             })
             .on('span[property="v:genre"]', {
-                text(text) { if (text.text.trim()) result.genres.push(text.text.trim()); }
+                element() { genreIndex = result.genres.push("") - 1; },
+                text(text) { if (genreIndex >= 0) result.genres[genreIndex] += text.text; }
             })
             .on('span[property="v:summary"]', {
                 text(text) { result.summary += text.text; }
@@ -1823,6 +1842,9 @@ async function handleDoubanDetail(id, ctx) {
             throw createHttpError("Douban returned a challenge page", 502);
         }
         await rewriter.transform(new Response(html)).text();
+        result.rating = parseFloat(ratingText.trim()) || 0;
+        result.votes = parseInt(votesText.trim(), 10) || 0;
+        result.genres = [...new Set(result.genres.map(genre => genre.trim()).filter(Boolean))];
         result.summary = result.summary.replace(/\s+/g, ' ').trim();
         if (!result.rating && !result.votes && result.genres.length === 0 && !result.summary && !result.imdbId) {
             throw createHttpError("Douban returned an invalid detail page", 502);
@@ -2053,6 +2075,9 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
     }
 
     const text = await readTextWithLimit(res);
+    if (!text.trim() || isChallengePage(text)) {
+        throw createHttpError("Resource detail returned an empty or challenge page", 502);
+    }
     const quarkEntries = collectQuarkEntries(text, RESOURCE_MAX_QUARK_URLS_PER_PAGE);
 
     return quarkEntries.map(({ url, password }) => ({
@@ -2246,7 +2271,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } =
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v5-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v6-cache.local/?q=${encodeURIComponent(query)}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2358,7 +2383,7 @@ async function handleOmdbSearch(title, year, env, ctx) {
     const keyCheck = requireOmdbApiKey(env);
     if (keyCheck.error) return keyCheck.error;
 
-    const cacheKey = new Request(`https://omdb-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
+    const cacheKey = new Request(`https://omdb-v2-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2463,7 +2488,7 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     }
 
     const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
-    const cacheKey = new Request(`https://poster-v1-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
+    const cacheKey = new Request(`https://poster-v2-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 

@@ -1,6 +1,6 @@
 {
   "name": "iplay",
-  "version": "1.0.4.2",
+  "version": "1.0.5",
   "private": true,
   "description": "一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
@@ -9,6 +9,7 @@
     "test:coverage": "node --test --experimental-test-coverage",
     "test:browser": "node tests/browser-smoke.mjs",
     "test:browser:ci": "node tests/browser-smoke-runner.mjs",
+    "test:live": "node tests/live-smoke.mjs",
     "build": "tailwindcss -i css/input.css -o css/output.css --minify",
     "deploy:worker:dry-run": "npm run wrangler -- deploy --dry-run --strict",
     "deploy:worker": "npm run wrangler -- deploy --strict --keep-vars",

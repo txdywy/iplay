@@ -38,16 +38,18 @@ export function findBestMatch(results, query, titleFn) {
     if (!Array.isArray(results) || results.length === 0) return null;
 
     const normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) return null;
     const exact = results.find(item => normalizeSearchText(titleFn(item)) === normalizedQuery);
     if (exact) return exact;
 
     const loose = results.find(item => {
         const normalizedTitle = normalizeSearchText(titleFn(item));
-        return normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle);
+        return normalizedTitle.length >= 2 && normalizedQuery.length >= 2
+            && (normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle));
     });
     if (loose) return loose;
 
-    return results[0];
+    return null;
 }
 
 export function pickBestTmdbMatch(results, query) {

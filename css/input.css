@@ -143,16 +143,18 @@ body { background-color: #0a0a0c; color: #e0e0e0; overflow-x: hidden; }
   }
 }
 
-.rating-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 0.5rem;
-  border-radius: 0.5rem;
-  background: rgba(30, 30, 36, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  min-width: 80px;
+@layer components {
+  .rating-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    background: rgba(30, 30, 36, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    min-width: 80px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -46,5 +46,8 @@ jobs:
       - name: Validate Worker upload
         run: npm run wrangler -- deploy --dry-run --strict
 
+      - name: Test, lint, and build before deployment
+        run: npm test && git diff --exit-code -- css/output.css
+
       - name: Deploy Worker
         run: npm run wrangler -- deploy --strict --keep-vars --message "GitHub Actions ${GITHUB_SHA}"

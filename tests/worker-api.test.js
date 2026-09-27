@@ -1114,7 +1114,7 @@ test('TMDB detail does not retry another media type after upstream rate limiting
     assert.equal(fetchCalls, 1);
 });
 
-test('TMDB detail retries the alternate media type only after a not-found response', async t => {
+test('untyped TMDB detail retries the alternate media type only after a not-found response', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];
@@ -1139,7 +1139,7 @@ test('TMDB detail retries the alternate media type only after a not-found respon
     });
 
     const response = await worker.fetch(
-        new Request('https://worker.test/api/tmdb/detail?id=42&type=movie', {
+        new Request('https://worker.test/api/tmdb/detail?id=42', {
             headers: { 'cf-connecting-ip': 'test-tmdb-not-found-fallback' }
         }),
         { TMDB_API_KEY: 'test-key' },
@@ -2153,7 +2153,7 @@ test('poster aggregation short-caches a usable result when a configured source f
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v1-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v2-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.tmdb, true);
@@ -2206,7 +2206,7 @@ test('poster aggregation short-caches OMDb fallback when configured TMDB fails',
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v1-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v2-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.omdb, true);
@@ -2549,7 +2549,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
     assert.deepEqual(body.resourceMeta.providers, { by669: 'ok', wpzys: 'failed' });
     assert.equal(body.resourceMeta.selectedPages, 1);
     assert.equal(body.resourceMeta.attemptedPages, 1);
-    assert.equal(body.resourceMeta.failedPages, 0);
+    assert.equal(body.resourceMeta.failedPages, 1);
 });
 
 test('concurrent identical TMDB requests share one upstream fetch', async t => {

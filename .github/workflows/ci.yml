@@ -40,6 +40,10 @@ jobs:
       - name: Verify generated CSS is committed
         run: git diff --exit-code -- css/output.css
 
+      - name: Validate Worker production bundle
+        if: matrix.node-version == 22
+        run: npm run deploy:worker:dry-run
+
   browser-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10

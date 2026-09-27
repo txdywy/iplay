@@ -2,7 +2,7 @@
  * 个性化推荐算法
  */
 
-let PREFERENCE_WEIGHTS = {
+const PREFERENCE_WEIGHTS = {
     '喜剧': { score: 2.5, reason: '符合喜剧偏好' },
     '轻松': { score: 2.0, reason: '基调轻松减压' },
     '爱情': { score: 1.5, reason: '包含浪漫/Melo元素' },
@@ -47,7 +47,7 @@ function getRatingLabel(source) {
     return '评分';
 }
 
-export function calculateRecommendationScore(data) {
+export function calculateRecommendationScore(data = {}) {
     const { rating, votes, genres, hasWiki, source } = data;
     const report = { pros: [], cons: [] };
     const ratingLabel = getRatingLabel(source);
@@ -57,7 +57,9 @@ export function calculateRecommendationScore(data) {
         : 0;
     const numericVotes = Number(votes);
     const safeVotes = Number.isFinite(numericVotes) && numericVotes > 0 ? numericVotes : 0;
-    const safeGenres = Array.isArray(genres) ? genres : [];
+    const safeGenres = Array.isArray(genres)
+        ? [...new Set(genres.filter(genre => typeof genre === 'string').map(genre => genre.trim()).filter(Boolean))]
+        : [];
 
     let baseScore;
     if (safeRating >= 9.0) {
@@ -94,7 +96,7 @@ export function calculateRecommendationScore(data) {
 
     if (safeGenres.length > 0) {
         safeGenres.forEach(genre => {
-            const pref = PREFERENCE_WEIGHTS[genre];
+            const pref = Object.hasOwn(PREFERENCE_WEIGHTS, genre) ? PREFERENCE_WEIGHTS[genre] : null;
             if (pref) {
                 preferenceScore += pref.score * 2.5;
                 if (pref.score > 0) {
