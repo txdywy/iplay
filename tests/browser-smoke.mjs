@@ -541,6 +541,7 @@ async function runDeepLinkFlow() {
     assert.equal(await evaluate("document.querySelector('#tmdbOverview').textContent"), 'A browser smoke test detail.');
     assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Movie');
+    assert.equal(await evaluate("document.querySelector('#searchInput').value"), 'Canonical Movie');
     await evaluate("document.querySelector('#resultsArea [data-share-current]').click()");
     assert.equal(await evaluate('window.__smoke.copied'), await evaluate('location.href'));
     await evaluate("document.querySelector('#resourcesSection button')?.click()");

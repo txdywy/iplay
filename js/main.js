@@ -2120,7 +2120,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
 
     els.results.classList.remove('hidden');
     els.loading.classList.add('hidden');
-    setSearchStatus(`已找到“${viewModel.title}”，正在补充详情`);
+    setSearchStatus(deferEnrichments ? '正在确认链接对应的 TMDB 条目' : `已找到“${viewModel.title}”，正在补充详情`);
     setSearching(false);
     scrollToVisible(els.results);
     focusResultHeading();
@@ -2148,7 +2148,10 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             });
             posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
             posterContext.year = tmdbDetail.year || '';
-            if (deferEnrichments) pushDetailHistory(selectedCandidate, { replace: true });
+            if (deferEnrichments) {
+                pushDetailHistory(selectedCandidate, { replace: true });
+                if (els.input.value === query) els.input.value = viewModel.title;
+            }
             renderViewModel(viewModel, posterContext, { isUpdate: true });
             if (deferEnrichments) {
                 startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId);
@@ -2160,10 +2163,12 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         .catch(error => {
             if (error?.name === 'AbortError') throw error;
             if (isActiveSearch(searchId, loadId)) {
-                setSearchStatus(`已找到“${viewModel.title}”，基础信息已加载`);
+                setSearchStatus(deferEnrichments ? '该链接的详情尚未确认，请重试或重新搜索' : `已找到“${viewModel.title}”，基础信息已加载`);
                 showDataNotice({
                     title: 'TMDB 详情暂时不可用',
-                    detail: '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
+                    detail: deferEnrichments
+                        ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
+                        : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
                     actionLabel: '重试详情',
                     onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments }),
                     tone: 'error'
