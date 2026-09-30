@@ -522,6 +522,8 @@ async function runActorFlow() {
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('q=Clickable%20Actor&id=900'))"), true);
     assert.equal(await evaluate("document.querySelector('#actorResultsArea:not(.hidden)') !== null"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('actor') === 'Clickable Actor'"), true);
+    assert.match(await evaluate("document.querySelector('#searchStatus').textContent"), /已找到演员.*Clickable Actor.*已加载 2 \/ 2 部作品/u,
+        'direct cast navigation must finish its live loading status');
 
     await evaluate('history.back()');
     await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
@@ -541,6 +543,8 @@ async function runActorCandidateFlow() {
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Ambiguous Actor'");
     assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length"), 1);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('person')"), '901');
+    assert.match(await evaluate("document.querySelector('#searchStatus').textContent"), /已找到演员.*Ambiguous Actor/u,
+        'confirming an actor candidate must finish its live loading status');
     const shareUrl = await evaluate('location.href');
     await command('Page.navigate', { url: shareUrl });
     await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"304\\\"]').length === 1");
@@ -621,6 +625,7 @@ async function runMediumActorFlow() {
     await evaluate("document.querySelector('#actorCandidateList button[data-person-id=\"915\"]').click()");
     await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
     assert.equal(await evaluate("document.querySelector('#actorResultsTitle').textContent"), 'Medium Actor Match');
+    assert.match(await evaluate("document.querySelector('#searchStatus').textContent"), /已找到演员.*Medium Actor Match.*已加载 1 \/ 1 部作品/u);
 }
 
 async function runActorFilterRaceFlow() {

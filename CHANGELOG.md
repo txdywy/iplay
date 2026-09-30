@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.7] - 2026-10-01
+
+### Fixed
+
+- Actor results now complete their live loading announcement consistently after cast-ID navigation, candidate confirmation, name search and history restoration. Successful views report loaded/total counts instead of retaining a stale "loading" message.
+
+### Changed
+
+- Added browser regression assertions for cast navigation and ambiguous/medium-confidence actor confirmation; synchronized release metadata and cache-busted module imports for the patch publication.
+
 ## [1.0.6] - 2026-09-30
 
 ### Fixed
