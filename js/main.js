@@ -1,14 +1,17 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js';
-import { formatRating, toFiniteNumber } from './format.js';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.6';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.6';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.6';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.6';
+import { RELEASE_VERSION } from './release.js?v=1.0.6';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js';
+} from './match.js?v=1.0.6';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.6';
+
+document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -290,6 +293,7 @@ function updateActorFilterControls() {
 function updateActorPaginationControls() {
     const state = actorResultState;
     if (!state || !els.actorLoadMore) return;
+    els.actorCreditList?.setAttribute('aria-busy', String(Boolean(state.loading)));
     const canRetry = Boolean(state.retryRequest);
     els.actorLoadMore.classList.toggle('hidden', !state.hasMore && !canRetry);
     els.actorLoadMore.disabled = Boolean(state.loading);
@@ -348,6 +352,10 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
     currentActorPageController = controller;
     const offset = reset ? 0 : state.offset;
     const retryRequest = { reset, mediaType };
+    const isCurrentPage = () => isActiveSearch(state.searchId)
+        && actorResultState === state
+        && currentActorPageController === controller
+        && !controller.signal.aborted;
     state.loading = true;
     state.mediaType = mediaType;
     state.retryRequest = null;
@@ -370,7 +378,7 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
             limit: state.pageSize,
             mediaType: mediaType || undefined
         });
-        if (!isActiveSearch(state.searchId) || actorResultState !== state) return;
+        if (!isCurrentPage()) return;
 
         const credits = Array.isArray(result?.credits)
             ? result.credits.filter(credit => credit?.id && credit?.mediaType)
@@ -389,13 +397,13 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
         setSearchStatus(`已找到演员“${state.person.name || state.query}”，已加载 ${state.loadedCredits.length} / ${state.totalResults} 部作品`);
     } catch (error) {
         if (error?.name === 'AbortError') return;
-        if (isActiveSearch(state.searchId) && actorResultState === state) {
+        if (isCurrentPage()) {
             state.retryRequest = retryRequest;
             showActorNotice(`作品加载失败：${getSearchErrorMessage(error)}。点击下方按钮重试。`, 'error');
         }
     } finally {
-        if (currentActorPageController === controller) currentActorPageController = null;
-        if (actorResultState === state) {
+        if (currentActorPageController === controller && actorResultState === state) {
+            currentActorPageController = null;
             state.loading = false;
             updateActorPaginationControls();
         }
@@ -537,11 +545,16 @@ async function loadActorCandidate(candidate, query, searchId, searchOptions, { h
     }
 }
 
-function searchActorByName(name) {
+function searchActorByName(name, personId = null) {
     const query = typeof name === 'string' ? name.trim() : '';
     if (!query || !els.input) return;
     els.input.value = query;
-    void handleSearch();
+    if (personId && /^[1-9]\d{0,11}$/.test(String(personId))) {
+        const { searchId, searchOptions } = beginSearchSession(query);
+        void loadActorCandidate({ id: personId, name: query }, query, searchId, searchOptions);
+    } else {
+        void handleSearch();
+    }
 }
 
 function candidateTypeLabel(candidate) {
@@ -623,7 +636,7 @@ function scrollToVisible(element) {
 }
 
 function pickBestDoubanMatch(results, query, year) {
-    const sameYear = year ? results.filter(item => !item.year || String(item.year) === String(year)) : results;
+    const sameYear = year ? results.filter(item => String(item?.year || '') === String(year)) : results;
     return findBestMatch(sameYear, query, item => item.title);
 }
 
@@ -881,21 +894,26 @@ function createInfoCard(label, value, { wide = false, muted = false, interactive
 
     const body = document.createElement('div');
     body.className = `mt-2 text-sm leading-relaxed ${muted ? 'text-cinema-400 italic' : 'text-cinema-100'} break-words`;
-    const names = Array.isArray(interactiveValues)
-        ? [...new Set(interactiveValues.map(item => typeof item === 'string' ? item : item?.name).filter(name => typeof name === 'string' && name.trim()).map(name => name.trim()))]
-        : [];
+    const people = new Map();
+    for (const item of Array.isArray(interactiveValues) ? interactiveValues : []) {
+        const name = typeof item === 'string' ? item : item?.name;
+        if (typeof name !== 'string' || !name.trim()) continue;
+        const id = typeof item === 'object' && /^[1-9]\d{0,11}$/.test(String(item?.id)) ? item.id : null;
+        people.set(id ? `id:${id}` : `name:${name.trim()}`, { name: name.trim(), id });
+    }
 
-    if (names.length > 0) {
+    if (people.size > 0) {
         const nameList = document.createElement('div');
         nameList.className = 'flex flex-wrap gap-2';
-        names.forEach(name => {
+        people.forEach(({ name, id }) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.dataset.actorName = name;
+            if (id) button.dataset.personId = String(id);
             button.className = 'min-h-11 rounded-full border border-cinema-700 px-3 py-2 text-left text-xs text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.setAttribute('aria-label', `搜索演员 ${name}`);
             button.textContent = name;
-            button.addEventListener('click', () => searchActorByName(name));
+            button.addEventListener('click', () => searchActorByName(name, id));
             nameList.appendChild(button);
         });
         body.appendChild(nameList);
@@ -2033,13 +2051,15 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
                 if (error?.name === 'AbortError') throw error;
                 return null;
             });
+            await detailPromise;
             if (!isActiveSearch(searchId, loadId) || !doubanResult) return;
+            if (doubanResult.imdbId && viewModel.detail?.imdbId && doubanResult.imdbId !== viewModel.detail.imdbId) return;
             viewModel.doubanRating = doubanResult.rating;
             renderBackupDoubanRating(viewModel.doubanRating);
         }
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
 
-    WikiAPI.getSummary(enrichmentQuery, searchOptions).then(wikiResult => {
+    WikiAPI.getSummary(enrichmentQuery, { ...searchOptions, mediaType: candidate.mediaType, year: candidate.year }).then(wikiResult => {
         if (!isActiveSearch(searchId, loadId)) return;
         const hasWiki = Boolean(wikiResult?.extract);
         if (hasWiki) {
@@ -2276,13 +2296,17 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             return;
         }
 
-        if (personSearch?.searchMeta?.ambiguous && Array.isArray(personSearch.personCandidates)
-            && renderActorCandidatePicker(personSearch.personCandidates, query, searchId, searchOptions)) {
+        const actorCandidates = personSearch?.searchMeta?.ambiguous && Array.isArray(personSearch.personCandidates)
+            ? personSearch.personCandidates
+            : personSearch?.person && actorMatchScore >= 0.72 && actorMatchScore < 0.86
+                ? [personSearch.person]
+                : [];
+        if (actorCandidates.length > 0 && renderActorCandidatePicker(actorCandidates, query, searchId, searchOptions)) {
             els.loading.classList.add('hidden');
             els.results.classList.add('hidden');
             hideCandidatePicker();
             setSearching(false);
-            setSearchStatus(`找到 ${personSearch.personCandidates.length} 位可能的同名演员，请确认身份`);
+            setSearchStatus(`找到 ${actorCandidates.length} 位可能的演员，请确认身份`);
             scrollToVisible(els.actorCandidatePicker);
             return;
         }
@@ -2338,7 +2362,7 @@ if (els.retrySearchButton) {
 if (els.actorFilters) {
     els.actorFilters.querySelectorAll('[data-actor-filter]').forEach(button => {
         button.addEventListener('click', () => {
-            if (!actorResultState || actorResultState.loading) return;
+            if (!actorResultState || (actorResultState.loading && actorResultState.mediaType === (button.dataset.actorFilter || ''))) return;
             void loadActorPage({
                 reset: true,
                 mediaType: button.dataset.actorFilter || ''

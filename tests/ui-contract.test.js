@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { RELEASE_VERSION } from '../js/release.js';
 
 const indexHtml = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const mainJs = await readFile(new URL('../js/main.js', import.meta.url), 'utf8');
+const versionFile = (await readFile(new URL('../VERSION', import.meta.url), 'utf8')).trim();
+const packageInfo = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const lockInfo = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
 
 test('static shell keeps project-site assets relative and exposes recovery regions', () => {
     assert.match(indexHtml, /href="\.\/favicon\.ico"/);
-    assert.match(indexHtml, /href="\.\/css\/output\.css"/);
+    assert.match(indexHtml, /href="\.\/css\/output\.css\?v=/);
     assert.match(indexHtml, /id="candidatePicker"/);
     assert.match(indexHtml, /id="retrySearchButton"/);
     assert.match(indexHtml, /id="errorHint"/);
@@ -21,6 +25,18 @@ test('static shell keeps project-site assets relative and exposes recovery regio
     assert.match(indexHtml, /id="actorLoadMore"/);
     assert.match(indexHtml, /id="showCover"[^>]*width="400"[^>]*height="600"[^>]*loading="eager"[^>]*decoding="async"[^>]*fetchpriority="high"/);
     assert.match(indexHtml, /id="searchButton"[^>]*>[\s\S]*?<svg/);
+});
+
+test('release versions and cache-busted static imports stay consistent', () => {
+    assert.equal(RELEASE_VERSION, versionFile);
+    assert.equal(packageInfo.version, versionFile);
+    assert.equal(lockInfo.version, versionFile);
+    assert.equal(lockInfo.packages[''].version, versionFile);
+    assert.ok(indexHtml.includes(`./css/output.css?v=${versionFile}`));
+    assert.ok(indexHtml.includes(`./js/main.js?v=${versionFile}`));
+    const moduleImports = [...mainJs.matchAll(/from '\.\/[^']+'/g)].map(match => match[0]);
+    assert.equal(moduleImports.length, 7);
+    assert.ok(moduleImports.every(value => value.endsWith(`?v=${versionFile}'`)));
 });
 
 test('inline decorative icons are hidden from screen readers and external icon fonts are absent', () => {

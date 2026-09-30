@@ -116,7 +116,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Retry Detail Movie': 107,
                     'Unsafe Poster Movie': 108
                 };
-                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor'].includes(query)) {
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
                 const candidatePoster = query === 'Broken Poster Movie'
@@ -129,6 +129,20 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/tmdb/person') {
                 const query = url.searchParams.get('q') || '';
                 const selectedId = url.searchParams.get('id');
+                if (query === 'Medium Actor') return json({
+                    person: { id: 915, name: 'Medium Actor Match', matchScore: selectedId ? 1 : 0.78, profile: poster },
+                    credits: [{ ...candidate('Medium Actor Film', 315), mediaType: 'movie' }],
+                    totalResults: 1, offset: 0, limit: 36, hasMore: false, counts: { tv: 0, movie: 1 }
+                });
+                if (query === 'Filter Race Actor') {
+                    const mediaType = url.searchParams.get('mediaType');
+                    if (mediaType) await new Promise(resolve => setTimeout(resolve, mediaType === 'tv' ? 300 : 600));
+                    return json({
+                        person: { id: 916, name: query, matchScore: 1, profile: poster },
+                        credits: [{ ...candidate(mediaType === 'tv' ? 'Stale Series' : 'Current Film', mediaType === 'tv' ? 316 : 317), mediaType: mediaType || 'movie' }],
+                        totalResults: 1, offset: 0, limit: 36, hasMore: false, counts: { tv: 1, movie: 1 }
+                    });
+                }
                 if (query === 'Slow Actor') {
                     // Deliberately ignore cancellation to verify the UI rejects late responses.
                     await new Promise(resolve => setTimeout(resolve, 250));
@@ -503,6 +517,9 @@ async function runActorFlow() {
 
     await evaluate("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Clickable Actor'");
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/search?q=Clickable%20Actor'))"), false,
+        'cast controls should use their known person ID instead of repeating a name search');
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('q=Clickable%20Actor&id=900'))"), true);
     assert.equal(await evaluate("document.querySelector('#actorResultsArea:not(.hidden)') !== null"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('actor') === 'Clickable Actor'"), true);
 
@@ -596,6 +613,30 @@ async function runActorPaginationFlow() {
     assert.equal(await evaluate("document.querySelector('#actorLoadMore.hidden') !== null"), true);
 }
 
+async function runMediumActorFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Medium Actor');
+    await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelector('#errorState.hidden') !== null"), true);
+    await evaluate("document.querySelector('#actorCandidateList button[data-person-id=\"915\"]').click()");
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelector('#actorResultsTitle').textContent"), 'Medium Actor Match');
+}
+
+async function runActorFilterRaceFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Filter Race Actor');
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    await evaluate("document.querySelector('#actorFilterTv').click(); document.querySelector('#actorFilterMovie').click()");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    assert.equal(await evaluate("document.querySelector('#actorFilterMovie').getAttribute('aria-pressed')"), 'true');
+    assert.equal(await evaluate("document.querySelector('#actorCreditList').getAttribute('aria-busy')"), 'true',
+        'the cancelled TV response must not finish the newer movie load');
+    await waitFor("document.querySelector('#actorCreditList button[data-media-id=\"317\"]')");
+    assert.equal(await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"316\"]') === null"), true);
+    assert.equal(await evaluate("document.querySelector('#actorCreditList').getAttribute('aria-busy')"), 'false');
+}
+
 try {
     await runObserverFlow();
     await runStaleSearchFlow();
@@ -611,9 +652,11 @@ try {
     await runActorCandidateFlow();
     await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
+    await runMediumActorFlow();
+    await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

@@ -59,14 +59,14 @@ iplay/
 ## 🚀 部署属于你自己的 iPlay
 
 ### 1. 部署后端 (Cloudflare Worker)
-1. 登录 Cloudflare Dashboard，进入 **Workers & Pages** -> 创建 Worker。
-2. 将本项目中 `worker/_worker.js` 文件的内容复制粘贴到 Worker 的代码编辑器中并保存部署。
+1. 使用 Node.js >= 22.13.0，克隆仓库并运行 `npm ci`。
+2. 运行 `npm run wrangler -- login`，使用 Wrangler 部署完整 ES Module 项目；不要只复制 `worker/_worker.js` 到 Dashboard，因为它还引用共享版本模块。
 3. 在 Worker 的 **Settings** -> **Variables** 中配置：
    - `TMDB_ACCESS_TOKEN`：TMDB v4 Read Access Token（推荐）
    - 或 `TMDB_API_KEY`：TMDB v3 API Key（二选一）
    - `OMDB_API_KEY`：可选；配置后启用 IMDb / Rotten Tomatoes 等 OMDb 补充数据，项目不内置 Key
    - `CORS_ALLOWED_ORIGINS`：可选，额外允许的前端 Origin，多个值用英文逗号分隔
-4. 如果使用 Dashboard 手工部署并希望启用定时预热，请在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；Wrangler 部署会读取仓库中的 `wrangler.toml` 自动配置它。
+4. Wrangler 会读取 `wrangler.toml`，自动配置生产限流 bindings、`ENVIRONMENT=production` 和 `0 */6 * * *` 定时预热。
 5. 记录下部署成功后的 Worker 域名（例如：`https://iplay-api.yourname.workers.dev`）。
 6. 如果使用 Cloudflare CLI，也可以执行：
    ```bash
@@ -95,7 +95,7 @@ iplay/
 5. 在 GitHub 仓库的 **Settings** -> **Pages** 中，选择 `main` 分支作为 Source 进行部署即可。
 
 ### 3. 本地预览与验证
-1. 使用 Node.js >= 20.19.0（推荐 22 LTS），安装依赖并生成样式：
+1. 使用 Node.js >= 22.13.0（推荐 24 LTS），安装依赖并生成样式：
    ```bash
    npm install
    npm run build
@@ -134,7 +134,10 @@ const PREFERENCE_WEIGHTS = {
 | `npm run lint` | 使用 ESLint 检查项目 JavaScript 代码规范 |
 | `npm run test:coverage` | 使用 Node.js 内置测试运行器生成覆盖率报告 |
 | `npm test` | 依次运行 Node.js 测试、lint 和生产构建 |
-| `npm run wrangler -- <command>` | 使用仓库固定的 Wrangler 4.106.0 运行本地 Worker 或部署命令 |
+| `npm run test:runtime` | 在真实 workerd 中验证生产 bindings、缓存、并发响应流、HTMLRewriter 和限流；上游使用本地 mock |
+| `npm run test:browser:ci` | 自动启动隔离 Chrome，验证移动端和桌面交互 |
+| `npm run test:live` | 核对生产 HTML、全部 JS 模块、CSS、版本和真实 API；单独报告可选来源可用性 |
+| `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.144.0 运行本地 Worker 或部署命令 |
 
 ## 📜 协议
 

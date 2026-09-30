@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.6] - 2026-09-30
+
+### Fixed
+
+- Wrong-year exact TMDB titles now require confirmation; unrelated or wrong-year Douban suggestions cannot become trusted search aliases.
+- OMDb validates primary and fallback title/year matches and exact IMDb identities before use or caching. Supplemental Douban ratings cannot override a different known IMDb identity.
+- Wikipedia summaries reject unrelated titles, non-media pages, disambiguation and incompatible adaptations; type/year-aware misses preserve TMDB text.
+- Request coalescing is isolated to each Workers execution context, avoiding cross-request Response-stream and credential reuse.
+- Already-aborted API calls do not fetch; late responses cannot bypass cancellation or timeouts.
+- Cast clicks reuse the selected person ID; ambiguous actor matches remain selectable, and rapid credit filters cannot be overwritten by stale requests.
+- Missing cinema palette tokens now generate working filter colors. Release-versioned entry points and module imports prevent new/old frontend code mixing.
+
+### Added
+
+- Shared release metadata, visible frontend version and `X-iPlay-Version` Worker response headers.
+- Native workerd regression checks for real rate-limit bindings, cache/concurrent streams, HTMLRewriter and production fail-closed behavior.
+- Browser coverage for actor identity, medium-confidence confirmation and filter races; live validation now compares HTML and every frontend module.
+- Sampled Workers logs/traces with URL query-string redaction and credential-safe structured application logs.
+
+### Changed
+
+- Publishing tools are lockfile-pinned to Wrangler 4.144.0 and its matching Miniflare runtime; development now requires Node.js 22+, with CI on 22 and 24.
+- Updated official GitHub Actions to immutable release SHAs and patched vulnerable `brace-expansion`; dependency audit reports no known vulnerabilities at release verification.
+- OMDb, poster and Wikipedia cache namespaces exclude pre-validation entries; deployment documentation uses complete-module Wrangler publishing.
+
 ## [1.0.5] - 2026-09-27
 
 ### Fixed

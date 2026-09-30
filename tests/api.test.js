@@ -147,6 +147,43 @@ test('Wiki API keeps caller cancellation distinct from a network failure', async
     await assert.rejects(requestPromise, error => error.name === 'AbortError');
 });
 
+test('already cancelled API calls never reach the network', async t => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return Response.json({ results: [] }); };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const { TmdbAPI } = await import('../js/api.js');
+    const controller = new globalThis.AbortController();
+    controller.abort();
+    await assert.rejects(TmdbAPI.search('cancelled', { signal: controller.signal }), error => error.name === 'AbortError');
+    assert.equal(calls, 0);
+});
+
+test('caller cancellation wins over a transport that returns stale data after abort', async t => {
+    const originalFetch = globalThis.fetch;
+    const controller = new globalThis.AbortController();
+    globalThis.fetch = async () => {
+        controller.abort();
+        return Response.json({ results: [{ id: 42 }] });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const { TmdbAPI } = await import('../js/api.js');
+    await assert.rejects(TmdbAPI.search('stale', { signal: controller.signal }), error => error.name === 'AbortError');
+});
+
+test('Wiki requests carry the selected media type and year without passing them as fetch options', async t => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => {
+        assert.match(String(url), /q=Test%20Series&type=tv&year=2023$/);
+        assert.equal(options.mediaType, undefined);
+        assert.equal(options.year, undefined);
+        return Response.json({ extract: 'A series synopsis.' });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const { WikiAPI } = await import('../js/api.js');
+    assert.ok(await WikiAPI.getSummary('Test Series', { mediaType: 'tv', year: '2023' }));
+});
+
 test('OMDb client fetches a known IMDb profile by id', async t => {
     const originalFetch = globalThis.fetch;
     let requestedUrl = '';
@@ -201,5 +238,5 @@ test('OMDb client keeps provider failures recoverable and preserves caller abort
         OmdbAPI.getById('tt1234567', { signal: controller.signal }),
         error => error.name === 'AbortError'
     );
-    assert.equal(fetchCalls, 2);
+    assert.equal(fetchCalls, 1);
 });

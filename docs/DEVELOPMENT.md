@@ -10,7 +10,7 @@
 
 ### 依赖要求
 
-- Node.js >= 20.19.0（推荐 22 LTS）
+- Node.js >= 22.13.0（推荐 24 LTS）
 - npm 9+
 - Cloudflare 账号（调试 Worker 时需要）
 - Wrangler CLI（建议通过 `npm run wrangler -- <command>` 使用仓库固定版本）
@@ -111,6 +111,9 @@ npm run wrangler -- dev
 | `npm run lint` | 运行 ESLint |
 | `npm run test:coverage` | 运行 Node.js 测试并生成覆盖率报告 |
 | `npm test` | 依次运行 Node.js 测试、lint 和 build |
+| `npm run test:runtime` | 用真实 workerd 验证生产限流、缓存、HTMLRewriter 和并发响应；不访问外部上游 |
+| `npm run test:browser:ci` | 自动启动隔离 Chrome 验证交互 |
+| `npm run test:live` | 核对线上前后端版本、静态文件与真实 API |
 
 ### 推荐顺序
 

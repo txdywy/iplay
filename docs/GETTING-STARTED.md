@@ -12,7 +12,7 @@
 
 | 项目 | 版本要求 | 说明 |
 |------|----------|------|
-| Node.js | >= 20.19.0（推荐 22 LTS） | 用于运行测试、构建 Tailwind CSS 和运行 ESLint |
+| Node.js | >= 22.13.0（推荐 24 LTS） | 用于运行测试、构建 Tailwind CSS、ESLint 和 Wrangler |
 | npm | >= 9.0.0 | 随 Node.js 一同安装 |
 | Cloudflare 账号 | — | 部署 Worker 代理服务所需 |
 | TMDB 账号 + API Token | — | 在 [TMDB 设置页](https://www.themoviedb.org/settings/api) 申请 v4 Read Access Token |
@@ -164,7 +164,7 @@ python3 -m http.server 8080
 
 ### `npm run build` 失败
 
-- **Node.js 版本过低**：确保 Node.js >= 20.19.0（推荐 22 LTS），运行 `node --version` 检查
+- **Node.js 版本过低**：确保 Node.js >= 22.13.0（推荐 24 LTS），运行 `node --version` 检查
 - **依赖未安装**：先运行 `npm install`
 - **Tailwind CSS 未找到**：检查 `node_modules/.bin/tailwindcss` 是否存在，如不存在请重新安装依赖
 
