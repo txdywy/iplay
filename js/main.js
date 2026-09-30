@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.6';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.6';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.6';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.6';
-import { RELEASE_VERSION } from './release.js?v=1.0.6';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.7';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.7';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.7';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.7';
+import { RELEASE_VERSION } from './release.js?v=1.0.7';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.6';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.6';
+} from './match.js?v=1.0.7';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.7';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -458,6 +458,7 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
     updateActorFilterControls();
     updateActorPaginationControls();
     els.actorResults.classList.remove('hidden');
+    setSearchStatus(`已找到演员“${person.name || query}”，已加载 ${credits.length} / ${actorResultState.totalResults} 部作品`);
     if (historyMode === 'push') updateActorHistory(query, person.id);
     return true;
 }
@@ -2290,7 +2291,6 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             hideActorCandidatePicker();
             hideDataNotice();
             setSearching(false);
-            setSearchStatus(`已找到演员“${personSearch.person.name || query}”，共 ${personSearch.totalResults || personSearch.credits.length} 部作品`);
             scrollToVisible(els.actorResults);
             focusActorHeading();
             return;
