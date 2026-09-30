@@ -13,9 +13,11 @@ iPlay 目前采用轻量级测试策略：
 - **CI 测试命令**: `npm test` = `node --test && npm run lint && npm run build`
 - **单元测试框架**: Node.js 内置测试运行器（无需 Jest / Vitest）
 - **浏览器烟测**: `tests/browser-smoke.mjs`，通过 Chrome DevTools Protocol 覆盖关键页面行为
+- **原生 Workers 验证**: `npm run test:runtime`，实际运行 workerd、Cache API、HTMLRewriter 和限流 bindings；上游请求全部拦截，无需真实密钥。
+- **CI 版本矩阵**: Node.js 22 / 24，生产打包和原生运行时检查在 Node.js 22 执行。
 - **代码检查**: ESLint（flat config，`eslint.config.mjs`）
 - **覆盖率命令**: `npm run test:coverage`
-- **上线验证**: `npm run test:live`，显式请求生产站点，校验 JS/CSS/VERSION 与当前本地版本逐字一致、中英文搜索、电影/剧集 ID、人物分页、输入校验与 CORS。可用 `LIVE_BASE_URL` / `LIVE_API_BASE` 指向其他部署。
+- **上线验证**: `npm run test:live`，显式请求生产站点，校验 HTML、全部 JS 模块、CSS、VERSION 与本地逐字一致，以及 Worker 发布响应头、中英文搜索、电影/剧集 ID、人物分页、输入校验与 CORS。可用 `LIVE_BASE_URL` / `LIVE_API_BASE` 指向其他部署。
 - **可选数据源**: 上线验证会单独报告 OMDb、Wikipedia、资源服务的可用/部分失败状态；不能把这些上游的暂时失败当作核心服务成功，也不会将其混同为代码部署失败。
 
 > 现有 `tests/` 覆盖 API 客户端、推荐算法、夸克链接处理和 Worker 路由。下文提供手动回归清单以及继续扩展自动化测试的参考。
@@ -300,8 +302,9 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 - 首次请求：从上游 API 获取，响应时间较长
 - 重复请求：从缓存读取，响应时间显著缩短
 - 缓存 TTL：TMDB / 豆瓣 / OMDb / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
-- 资源搜索使用 `resource-search-v5-cache.local` 命名空间；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
-- 海报聚合使用 `poster-v1-cache.local` 命名空间；已配置来源部分失败时的可用结果只缓存 900 秒
+- 资源搜索使用 `resource-search-v6-cache.local` 命名空间；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
+- 海报聚合使用 `poster-v3-cache.local` 命名空间；已配置来源部分失败时的可用结果只缓存 900 秒
+- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v2-cache.local`，并将媒体类型和年份纳入缓存键。
 
 ---
 
@@ -354,14 +357,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
       - run: git diff --exit-code -- css/output.css
+      - run: npm run deploy:worker:dry-run
+      - run: npm run test:runtime
       - uses: browser-actions/setup-chrome@v1
       - run: npm run test:browser:ci
 ```

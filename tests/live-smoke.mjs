@@ -15,11 +15,12 @@ async function getApi(path, expectedStatus = 200) {
     const response = await fetchLive(new URL(path, api), { headers: { Origin: new URL(site).origin } });
     assert.equal(response.status, expectedStatus, `${path}: unexpected HTTP status`);
     assert.equal(response.headers.get('access-control-allow-origin'), new URL(site).origin, `${path}: CORS`);
+    assert.equal(response.headers.get('x-iplay-version'), release, `${path}: deployed Worker version differs`);
     const data = await response.json();
     return { response, data };
 }
 
-for (const path of ['js/main.js', 'css/output.css', 'VERSION']) {
+for (const path of ['index.html', 'js/main.js', 'js/api.js', 'js/match.js', 'js/scorer.js', 'js/format.js', 'js/quark.js', 'js/seasons.js', 'js/release.js', 'css/output.css', 'VERSION']) {
     const url = new URL(path, site);
     url.searchParams.set('release', release);
     const response = await fetchLive(url);
@@ -60,7 +61,7 @@ results.push({ check: 'invalid-input-and-cors-denial', status: 'passed' });
 
 // These services are optional. Report their real availability without confusing
 // an upstream outage with a failed release of the main TMDB functionality.
-for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球', '/api/resource?q=流浪地球']) {
+for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&type=movie&year=2019', '/api/resource?q=流浪地球']) {
     const response = await fetchLive(new URL(path, api));
     const data = await response.json();
     assert.ok(data && typeof data === 'object');

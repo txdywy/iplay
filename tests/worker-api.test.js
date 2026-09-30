@@ -1052,7 +1052,7 @@ test('TMDB search uses a bounded Douban alias fallback for Chinese queries', asy
     globalThis.fetch = async url => {
         const parsed = new globalThis.URL(String(url));
         requestedHosts.push(parsed.hostname);
-        if (parsed.hostname === 'movie.douban.com') return Response.json([{ title: '别名电影' }]);
+        if (parsed.hostname === 'movie.douban.com') return Response.json([{ title: '原始片名', sub_title: '别名电影' }]);
         if (parsed.searchParams.get('query') === '别名电影') {
             return Response.json({
                 page: 1,
@@ -2153,7 +2153,7 @@ test('poster aggregation short-caches a usable result when a configured source f
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v2-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v3-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.tmdb, true);
@@ -2206,7 +2206,7 @@ test('poster aggregation short-caches OMDb fallback when configured TMDB fails',
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v2-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v3-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.omdb, true);
@@ -2552,7 +2552,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
     assert.equal(body.resourceMeta.failedPages, 1);
 });
 
-test('concurrent identical TMDB requests share one upstream fetch', async t => {
+test('identical TMDB work within one execution context shares its upstream fetch', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
@@ -2586,9 +2586,10 @@ test('concurrent identical TMDB requests share one upstream fetch', async t => {
     const request = clientIp => new Request('https://worker.test/api/tmdb/search?q=Concurrent%20Movie', {
         headers: { 'cf-connecting-ip': clientIp }
     });
+    const ctx = { waitUntil() {} };
     const [first, second] = await Promise.all([
-        worker.fetch(request('test-tmdb-coalesce-1'), { TMDB_API_KEY: 'test-key' }, { waitUntil() {} }),
-        worker.fetch(request('test-tmdb-coalesce-2'), { TMDB_API_KEY: 'test-key' }, { waitUntil() {} })
+        worker.fetch(request('test-tmdb-coalesce-1'), { TMDB_API_KEY: 'test-key' }, ctx),
+        worker.fetch(request('test-tmdb-coalesce-2'), { TMDB_API_KEY: 'test-key' }, ctx)
     ]);
 
     assert.equal(first.status, 200);

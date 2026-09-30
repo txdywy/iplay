@@ -34,6 +34,7 @@ https://iplayw.hackx64.eu.org
 
 - **请求方法**：所有端点仅支持 `GET` 和 `OPTIONS`（CORS 预检）。
 - **响应格式**：统一返回 `application/json; charset=UTF-8`。
+- **发布标识**：响应头 `X-iPlay-Version` 标识 Worker 发布版本，与前端版本一起用于部署验证。
 - **CORS**：默认允许 `https://iplay.hackx64.eu.org`、本地 Wrangler 地址和 `http://localhost:8080` / `http://127.0.0.1:8080`；其他 Origin 通过 `CORS_ALLOWED_ORIGINS` 配置。
 - **超时**：前端普通请求默认超时为 **12000ms**，资源搜索和海报聚合为 **18000ms**，支持通过 `AbortController` 取消；Worker 对可回退的多上游接口设置约 **11000ms** 总预算，对资源和海报聚合设置约 **15000ms** 总预算。
 - **参数限制**：搜索词与标题去除首尾空白后最长 100 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
@@ -516,10 +517,10 @@ curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
 
 ### 9. 中文 Wikipedia 摘要
 
-获取中文 Wikipedia 页面摘要。
+获取与片名相符的中文 Wikipedia 摘要。提供媒体类型和年份可避免误用同名小说、旧版改编或消歧义页；没有可靠匹配时返回 `404`，前端保留 TMDB 简介。
 
 ```
-GET /api/wiki/zh?q={query}
+GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 ```
 
 **Query Parameters：**
@@ -528,10 +529,12 @@ GET /api/wiki/zh?q={query}
 |------|------|------|------|
 | `q` | string | 是 | 搜索关键词 |
 
+可选参数 `type` 为 `movie` 或 `tv`，`year` 为四位年份。
+
 **Example Request：**
 
 ```bash
-curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球"
+curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球&type=movie&year=2019"
 ```
 
 **Example Response：**
@@ -552,7 +555,7 @@ curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球"
 
 ## Rate Limits / Caching
 
-Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：普通接口每 60 秒最多 60 个请求，资源搜索每 60 秒最多 10 个请求；未配置 binding 时仅在开发/测试环境回退到进程内计数器，已配置的 production binding 发生故障时会 fail closed 返回 `503`，避免退化为可被分布式绕过的单实例计数。预检请求不计入限流。被限流或限流服务不可用的响应带有 `Retry-After: 60`。
+Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：普通接口每 60 秒 60 个请求，资源搜索每 60 秒 10 个请求。计数在各 Cloudflare 节点本地执行，不是全球严格总额或计费配额。未配置 binding 时仅在开发/测试环境回退到进程内计数器；production 缺少 binding 或 binding 故障时会 fail closed 返回 `503`。预检请求不计入限流。限流或限流服务不可用响应带有 `Retry-After: 60`。
 
 | 接口 | 缓存时长 | 缓存键 |
 |------|----------|--------|
@@ -561,10 +564,10 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v5-cache.local/?q={query}` |
-| `/api/omdb` | 24h | `omdb-cache.local/id/{imdbId}` 或 `omdb-cache.local/search/?t={title}&y={year}` |
-| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v1-cache.local/?title={title}&year={year}&sources={sources}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-cache.local/?q={query}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v6-cache.local/?q={query}` |
+| `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
+| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v3-cache.local/?title={title}&year={year}&sources={sources}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v2-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
 

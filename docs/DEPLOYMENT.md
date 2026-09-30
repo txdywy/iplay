@@ -17,11 +17,11 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 
 ## 后端部署：Cloudflare Worker
 
-### 方式一：Cloudflare Dashboard
+### Cloudflare Dashboard：管理运行时配置
 
 1. 登录 Cloudflare Dashboard。
 2. 进入 **Workers & Pages**，创建一个 Worker。
-3. 将 `worker/_worker.js` 的内容粘贴到编辑器中并保存。
+3. 使用下方 Wrangler CLI 部署完整模块项目。`worker/_worker.js` 引用 `js/release.js`，不能只粘贴一个文件。
 4. 到 **Settings → Variables** 配置 Secrets：
    - `TMDB_ACCESS_TOKEN`
    - `TMDB_API_KEY`（可选，作为备用）
@@ -29,13 +29,14 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
    - `CORS_ALLOWED_ORIGINS`（可选；额外允许的前端 Origin，以英文逗号分隔）
    - `ENVIRONMENT=production`（必填；缺少生产限流 binding 时让 Worker fail closed）
 5. 到 **Settings → Bindings** 配置两个 Rate Limiting bindings，名称必须分别为 `API_RATE_LIMITER` 和 `RESOURCE_RATE_LIMITER`，并与 `wrangler.toml` 中的 namespace ID 保持一致。
-6. 保存并部署。
+6. 保存运行时配置。
 7. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
 
 ### 方式二：Wrangler CLI（当前推荐）
 
 ```bash
 cd iplay
+npm ci
 npm run wrangler -- login
 npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 npm run wrangler -- secret put TMDB_API_KEY
@@ -47,6 +48,8 @@ npm run deploy:worker -- --message "本次变更说明"
 TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `ENVIRONMENT=production`，并保留 `API_RATE_LIMITER` / `RESOURCE_RATE_LIMITER` 两个 binding；自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
 
 当前生产 Worker 使用本机 Wrangler OAuth 配置部署，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
+
+仓库锁定 Wrangler 4.144.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
 
 `wrangler.toml` 已声明 `ENVIRONMENT=production`，缺少分布式限流 binding 时拒绝请求；部署时保留两个 Rate Limiting bindings，不能依赖仅本地生效的隔离实例计数器。CI 的 Node 22 作业也会检查生产 Worker 打包。
 
@@ -178,7 +181,9 @@ OMDB_API_KEY=your_omdb_key
 ## 发布建议
 
 - 前端或 Worker 变更先跑 `npm test`（Node.js 测试 + lint + 生产构建）
+- Worker 变更还要跑 `npm run test:runtime`，验证真实 workerd 的生产 bindings、并发响应流、缓存、HTMLRewriter 和限流。
 - 合并前跑 `npm run test:browser:ci`，覆盖手机、桌面、实际评分显隐、分享恢复和降级重试。
 - Worker 变更先跑 `npm run wrangler -- dev`
 - 生产环境更新后，先验证一个中文片名，再验证一个英文片名
-- GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 JS/CSS/VERSION 与本地发布版本逐字相同且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。
+- 发布时同步更新 `VERSION`、`package.json` / lockfile、`js/release.js`、`index.html` 和 `js/main.js` 中的 `?v=`；版本契约测试会检查这些入口，避免新旧模块混用。
+- GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 HTML、全部 JS 模块、CSS、VERSION 与本地发布逐字相同，Worker 的 `X-iPlay-Version` 一致且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。

@@ -11,6 +11,7 @@ const POSTER_TIMEOUT_MS = 18000;
 const OMDB_TIMEOUT_MS = 12000;
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const controller = new AbortController();
     let timedOut = false;
     const id = setTimeout(() => {
@@ -32,11 +33,13 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
             ...options,
             signal: controller.signal
         });
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         let data;
         try {
             data = await response.json();
         } catch (error) {
+            if (controller.signal.aborted || error.name === 'AbortError') throw new DOMException('Aborted', 'AbortError');
             if (!response.ok) {
                 const httpError = new Error(`HTTP error! status: ${response.status}`);
                 httpError.status = response.status;
@@ -44,6 +47,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
             }
             throw error;
         }
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         if (!response.ok) {
             const error = new Error(data && data.error ? data.error : `HTTP error! status: ${response.status}`);
@@ -107,8 +111,11 @@ export const DoubanAPI = {
  */
 export const WikiAPI = {
     async getSummary(query, options = {}) {
+        const { mediaType, year, ...requestOptions } = options;
+        const typeParam = mediaType ? `&type=${encodeURIComponent(mediaType)}` : '';
+        const yearParam = year ? `&year=${encodeURIComponent(year)}` : '';
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}`, options);
+            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}${typeParam}${yearParam}`, requestOptions);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Wiki zh fetch failed:", e);

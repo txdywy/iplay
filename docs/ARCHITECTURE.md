@@ -217,7 +217,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | `GET` | `/api/resource` | `q` (string) | Search By669 and WPZYS, then extract and deduplicate Quark netdisk URLs. |
 | `GET` | `/api/omdb` | `title` (string), `year` (string) OR `imdb` (string) | OMDb proxy for IMDb/Rotten Tomatoes ratings and metadata. |
 | `GET` | `/api/poster` | `title` (string), `year` (string) | Poster fetch with TMDB first, OMDb fallback, Wikipedia title fallback. |
-| `GET` | `/api/wiki/zh` | `q` (string) | Chinese Wikipedia summary via REST API. |
+| `GET` | `/api/wiki/zh` | `q` (string), optional `type` / `year` | Related Chinese Wikipedia summary with media/year validation. |
 
 ### Response Formats
 
@@ -374,7 +374,7 @@ Worker deploy (manual or via Wrangler CLI):
   - TMDB/Douban/OMDb/Wiki: 24 hours (`max-age=86400`)
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
-- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v5-cache.local/`, and `https://poster-v1-cache.local/`) to avoid polluting external cache namespaces.
+- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v6-cache.local/`, and `https://poster-v3-cache.local/`) to avoid polluting external cache namespaces. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v2-cache.local` to exclude old inaccurate entries.
 - The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
 
 ### Data Privacy

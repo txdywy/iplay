@@ -2,6 +2,8 @@
  * Cloudflare Worker - iPlay API proxy
  */
 
+import { RELEASE_VERSION } from '../js/release.js';
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 const TMDB_POSTER_SIZE = "w500";
@@ -49,6 +51,7 @@ function withCors(response, request, env) {
         headers.set(key, value);
     }
     headers.append("Vary", "Origin");
+    headers.set("X-iPlay-Version", RELEASE_VERSION);
     return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -66,6 +69,7 @@ export default {
                     "Access-Control-Allow-Methods": "GET, OPTIONS",
                     "Access-Control-Allow-Headers": "Content-Type",
                     "Access-Control-Max-Age": "86400",
+                    "X-iPlay-Version": RELEASE_VERSION,
                 }
             });
         }
@@ -154,18 +158,21 @@ export default {
             }
 
             if (path === "/api/wiki/zh") {
-                return withCors(await handleWikiZh(url.searchParams.get("q"), ctx), request, env);
+                return withCors(await handleWikiZh(url.searchParams.get("q"), ctx, {
+                    mediaType: url.searchParams.get("type"),
+                    year: url.searchParams.get("year")
+                }), request, env);
             }
 
             return withCors(jsonResponse({ error: "Not Found" }, 404), request, env);
         } catch (error) {
-            console.error("Unhandled Worker request error:", error.message);
+            logEvent("error", "request_failed", { path, error: logErrorMessage(error), status: getErrorStatus(error) });
             return withCors(jsonResponse({ error: error.message || "Internal Server Error" }, getErrorStatus(error)), request, env);
         }
     },
 
     async scheduled(event, env, ctx) {
-        console.log(`Scheduled refresh started at ${new Date(event.scheduledTime).toISOString()}`);
+        logEvent("log", "scheduled_refresh_started", { scheduledTime: new Date(event.scheduledTime).toISOString() });
         ctx.waitUntil(refreshScheduledData(env, ctx));
     }
 };
@@ -181,6 +188,16 @@ function jsonResponse(data, status = 200, extraHeaders = {}) {
         status,
         headers
     });
+}
+
+function logErrorMessage(error) {
+    return String(error?.message || error || "Unknown error")
+        .replace(/([?&](?:api_key|apikey|access_token|token)=)[^&\s]+/giu, "$1[REDACTED]")
+        .slice(0, 500);
+}
+
+function logEvent(level, event, details = {}) {
+    console[level](JSON.stringify({ event, version: RELEASE_VERSION, ...details }));
 }
 
 const MAX_QUERY_LENGTH = 100;
@@ -259,9 +276,17 @@ const SEARCH_ACCEPT_SCORE = 0.72;
 const SEARCH_AUTO_MATCH_SCORE = 0.56;
 
 const upstreamResponseMeta = new WeakMap();
-const inFlightRequests = new Map();
+// Execution contexts own their I/O. Never share a Response, timer, deadline or
+// cache-write lifetime between separate Worker invocations.
+const inFlightByContext = new WeakMap();
 
-function withInFlight(key, task) {
+function withInFlight(ctx, key, task) {
+    if (!ctx || typeof ctx !== "object") return Promise.resolve().then(task);
+    let inFlightRequests = inFlightByContext.get(ctx);
+    if (!inFlightRequests) {
+        inFlightRequests = new Map();
+        inFlightByContext.set(ctx, inFlightRequests);
+    }
     const existing = inFlightRequests.get(key);
     if (existing) return existing;
 
@@ -389,7 +414,7 @@ async function serveCachedJson(cacheKey) {
     try {
         return await caches.default.match(cacheKey);
     } catch (error) {
-        console.warn("Cache read failed:", error.message);
+        logEvent("warn", "cache_read_failed", { error: logErrorMessage(error) });
         return null;
     }
 }
@@ -398,7 +423,7 @@ async function deleteCachedResponse(cacheKey) {
     try {
         if (typeof caches.default.delete === "function") await caches.default.delete(cacheKey);
     } catch (error) {
-        console.warn("Cache delete failed:", error.message);
+        logEvent("warn", "cache_delete_failed", { error: logErrorMessage(error) });
     }
 }
 
@@ -407,12 +432,12 @@ function scheduleCachePut(ctx, cacheKey, response) {
 
     const write = Promise.resolve()
         .then(() => caches.default.put(cacheKey, response))
-        .catch(error => console.warn("Cache write failed:", error.message));
+        .catch(error => logEvent("warn", "cache_write_failed", { error: logErrorMessage(error) }));
 
     try {
         ctx.waitUntil(write);
     } catch (error) {
-        console.warn("Cache waitUntil failed:", error.message);
+        logEvent("warn", "cache_wait_until_failed", { error: logErrorMessage(error) });
     }
 }
 
@@ -511,18 +536,18 @@ async function checkRateLimit(ip, path, env) {
 
     if (binding) {
         if (typeof binding.limit !== "function") {
-            console.error("Cloudflare rate limiter binding is invalid");
+            logEvent("error", "rate_limiter_binding_invalid");
             return null;
         }
         try {
             const result = await binding.limit({ key: `${ip}:${routeKey}` });
             if (!result || typeof result.success !== "boolean") {
-                console.error("Cloudflare rate limiter returned an invalid result");
+                logEvent("error", "rate_limiter_result_invalid");
                 return null;
             }
             return result.success;
         } catch (error) {
-            console.error("Cloudflare rate limiter failed:", error?.message || error);
+            logEvent("error", "rate_limiter_failed", { error: logErrorMessage(error) });
             return null;
         }
     }
@@ -530,7 +555,7 @@ async function checkRateLimit(ip, path, env) {
     const requiresDistributedLimiter = String(env?.ENVIRONMENT || "").toLowerCase() === "production"
         || String(env?.REQUIRE_DISTRIBUTED_RATE_LIMIT || "").toLowerCase() === "true";
     if (requiresDistributedLimiter) {
-        console.error("Cloudflare rate limiter binding is required in production");
+        logEvent("error", "rate_limiter_binding_missing");
         return null;
     }
 
@@ -552,7 +577,7 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
     }
 
     const data = await readJsonWithLimit(res);
-    if (data.Response === "True") return data;
+    if (data.Response === "True") return validateOmdbTitleMatch(data, title, year);
 
     const applicationError = getOmdbApplicationError(data);
     if (applicationError) throw applicationError;
@@ -572,7 +597,7 @@ async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
         const fallbackData = await readJsonWithLimit(fallbackRes);
         if (fallbackData.Response === "True") {
             // Dropping the year may find a different remake with the same title.
-            return String(fallbackData.Year || "").slice(0, 4) === year ? fallbackData : null;
+            return validateOmdbTitleMatch(fallbackData, title, year);
         }
 
         const fallbackApplicationError = getOmdbApplicationError(fallbackData);
@@ -743,7 +768,7 @@ async function fetchTmdbJson(path, params, env, ctx, options = {}) {
         }
     });
     const inFlightKey = `tmdb:${keyUrl.toString()}:${options.refreshCache ? "refresh" : "cached"}`;
-    return withInFlight(inFlightKey, () => fetchTmdbJsonUncoalesced(path, params, env, ctx, options));
+    return withInFlight(ctx, inFlightKey, () => fetchTmdbJsonUncoalesced(path, params, env, ctx, options));
 }
 
 async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
@@ -871,7 +896,7 @@ async function forEachWithConcurrency(items, concurrency, task) {
             try {
                 await task(items[index], index);
             } catch (error) {
-                console.warn("Scheduled refresh failed:", error.message);
+                logEvent("warn", "scheduled_refresh_failed", { error: logErrorMessage(error) });
             }
         }
     }
@@ -1114,7 +1139,9 @@ function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct") 
     if (intent.mediaType && mediaType && mediaType !== intent.mediaType) return null;
     if (intent.mediaType && mediaType === intent.mediaType) bestScore += 0.08;
 
-    const score = Math.max(0, Math.min(1, bestScore));
+    // A strong title match does not establish the requested remake's identity.
+    // Keep it selectable, but ask the user to confirm conflicting/missing years.
+    const score = Math.max(0, Math.min(intent.year && candidateYear !== intent.year ? 0.71 : 1, bestScore));
     return {
         score,
         confidence: getSearchConfidence(score),
@@ -1519,7 +1546,7 @@ async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
             }
         });
     } catch (error) {
-        console.error("TMDB person search error:", error.message);
+        logEvent("error", "tmdb_person_failed", { error: logErrorMessage(error) });
         return jsonResponse({ error: error.message }, error.status || 502);
     }
 }
@@ -1575,7 +1602,7 @@ async function handleTmdbSearch(query, env, ctx) {
                 ranked = rankTmdbCandidates(getTmdbFindEntries(data), intent);
                 return buildTmdbSearchResponse(ranked, intent, 1);
             } catch (error) {
-                console.error("TMDB external id search error:", error.message);
+                logEvent("error", "tmdb_external_id_failed", { error: logErrorMessage(error) });
                 return jsonResponse({ error: error.message }, error.status || 502);
             }
         }
@@ -1620,13 +1647,13 @@ async function handleTmdbSearch(query, env, ctx) {
         if (isLowConfidence(ranked) && !stopFallback && intent.hasCjk && attempts < SEARCH_MAX_ATTEMPTS) {
             try {
                 const aliasData = await fetchDoubanAliasCandidates(intent.normalizedQuery, ctx, deadline);
-                const aliases = extractDoubanAliasQueries(aliasData, intent.originalQuery);
+                const aliases = extractDoubanAliasQueries(aliasData, intent.normalizedQuery, intent.year);
                 for (const alias of aliases.slice(0, SEARCH_MAX_ALIAS_QUERIES)) {
                     ranked = await runSearch("/search/multi", alias, "zh-CN", {}, null, "douban-alias");
                     if (isAccepted(ranked)) break;
                 }
             } catch (error) {
-                console.warn("Douban alias fallback skipped:", error.message);
+                logEvent("warn", "douban_alias_failed", { error: logErrorMessage(error) });
             }
         }
 
@@ -1636,7 +1663,7 @@ async function handleTmdbSearch(query, env, ctx) {
 
         return buildTmdbSearchResponse(ranked, intent, attempts);
     } catch (e) {
-        console.error("TMDB search error:", e.message);
+        logEvent("error", "tmdb_search_failed", { error: logErrorMessage(e) });
         return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
@@ -1718,7 +1745,7 @@ async function handleDoubanSearch(query, ctx) {
         }
         return cacheJson(ctx, cacheKey, data, 86400);
     } catch (e) {
-        console.error("Douban search error:", e.message);
+        logEvent("error", "douban_search_failed", { error: logErrorMessage(e) });
         return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
@@ -1761,7 +1788,7 @@ async function fetchDoubanAliasCandidates(query, ctx, deadline = null) {
     return data;
 }
 
-function extractDoubanAliasQueries(data, originalQuery) {
+function extractDoubanAliasQueries(data, originalQuery, year) {
     if (!Array.isArray(data)) return [];
     const original = compactSearchText(originalQuery);
     const aliases = [];
@@ -1769,6 +1796,10 @@ function extractDoubanAliasQueries(data, originalQuery) {
 
     for (const item of data.slice(0, 10)) {
         if (!isObject(item)) continue;
+        // Suggestions are not exact matches. Only use aliases belonging to a
+        // title that already matches the query and its requested year.
+        if (scoreSearchText(originalQuery, item.title) < 0.86) continue;
+        if (year && String(item.year || "") !== year) continue;
         for (const field of fields) {
             const value = item[field];
             if (typeof value !== "string" || !value.trim()) continue;
@@ -1797,7 +1828,7 @@ async function handleDoubanDetail(id, ctx) {
         });
 
         if (!res.ok) {
-            console.warn(`Douban detail ${id} returned ${res.status}`);
+            logEvent("warn", "douban_detail_rejected", { id, status: res.status });
             await releaseUpstreamResponse(res);
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
@@ -1852,7 +1883,7 @@ async function handleDoubanDetail(id, ctx) {
 
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
-        console.error("Douban detail error:", e.message);
+        logEvent("error", "douban_detail_failed", { error: logErrorMessage(e) });
         return jsonResponse({ error: e.message }, e.status || 502);
     }
 }
@@ -2260,6 +2291,7 @@ async function handleResourceSearch(query, ctx, { refresh = false } = {}) {
     query = queryCheck.value;
 
     const response = await withInFlight(
+        ctx,
         `resource:${refresh ? "refresh:" : ""}${query}`,
         () => handleResourceSearchUncoalesced(query, ctx, { refresh })
     );
@@ -2283,9 +2315,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } =
         ]);
 
         if (by669Result.status === "rejected" && wpzysResult.status === "rejected") {
-            console.warn("Resource providers unavailable", {
-                by669: by669Result.reason?.message || "unknown error",
-                wpzys: wpzysResult.reason?.message || "unknown error"
+            logEvent("warn", "resource_providers_failed", {
+                by669: logErrorMessage(by669Result.reason),
+                wpzys: logErrorMessage(wpzysResult.reason)
             });
             return jsonResponse({ error: "Resource providers unavailable" }, 502);
         }
@@ -2346,7 +2378,7 @@ async function handleOmdbById(imdbId, env, ctx) {
     const keyCheck = requireOmdbApiKey(env);
     if (keyCheck.error) return keyCheck.error;
 
-    const cacheKey = new Request(`https://omdb-cache.local/id/${encodeURIComponent(imdbId)}`);
+    const cacheKey = new Request(`https://omdb-v3-cache.local/id/${encodeURIComponent(imdbId)}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2361,6 +2393,8 @@ async function handleOmdbById(imdbId, env, ctx) {
         const data = await readJsonWithLimit(res);
 
         if (data.Response === "True") {
+            validateOmdbSuccess(data);
+            if (data.imdbID !== imdbId) throw createHttpError("OMDb returned a mismatched IMDb identity", 502);
             return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         }
         const applicationError = getOmdbApplicationError(data);
@@ -2383,7 +2417,7 @@ async function handleOmdbSearch(title, year, env, ctx) {
     const keyCheck = requireOmdbApiKey(env);
     if (keyCheck.error) return keyCheck.error;
 
-    const cacheKey = new Request(`https://omdb-v2-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
+    const cacheKey = new Request(`https://omdb-v3-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2395,6 +2429,19 @@ async function handleOmdbSearch(title, year, env, ctx) {
     } catch (e) {
         return jsonResponse({ error: e.message }, e.status || 502);
     }
+}
+
+function validateOmdbSuccess(data) {
+    if (!isObject(data) || typeof data.Title !== "string" || !data.Title.trim() || data.Title === "N/A") {
+        throw createHttpError("OMDb returned an invalid response", 502);
+    }
+}
+
+function validateOmdbTitleMatch(data, title, year) {
+    validateOmdbSuccess(data);
+    if (scoreSearchText(title, data.Title) < SEARCH_ACCEPT_SCORE) return null;
+    if (year && String(data.Year || "").slice(0, 4) !== year) return null;
+    return data;
 }
 
 function cleanOmdbValue(value) {
@@ -2466,6 +2513,7 @@ async function handlePosterSearch(title, year, env, ctx, { refresh = false } = {
 
     const configuredSources = `${getTmdbAuth(env) ? "tmdb" : ""}-${getOmdbApiKey(env) ? "omdb" : ""}`;
     const response = await withInFlight(
+        ctx,
         `poster:${refresh ? "refresh:" : ""}${title}:${year}:${configuredSources}`,
         () => handlePosterSearchUncoalesced(title, year, env, ctx, { refresh })
     );
@@ -2488,7 +2536,7 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     }
 
     const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
-    const cacheKey = new Request(`https://poster-v2-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
+    const cacheKey = new Request(`https://poster-v3-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2608,10 +2656,28 @@ async function getEnglishTitleFromWiki(zhTitle, deadline = null) {
     return langlinks.length > 0 ? langlinks[0]["*"] || null : null;
 }
 
-async function searchZhWikiTitle(query, deadline = null) {
+function getWikiKind(text) {
+    if (/(?:小說|小说|novel|漫畫|漫画|消歧義|消歧义|disambiguation)/iu.test(text)) return "other";
+    if (/(?:電視|电视|劇集|剧集|影集|television|tv series)/iu.test(text)) return "tv";
+    if (/(?:電影|电影|film|movie)/iu.test(text)) return "movie";
+    return null;
+}
+
+function wikiTitleMatches(query, title) {
+    if (typeof title !== "string" || !title.trim()) return false;
+    const baseTitle = title.replace(/\s*[(（][^()（）]*[)）]\s*/gu, " ").trim();
+    return scoreSearchText(query, baseTitle) >= 0.86;
+}
+
+function wikiYearMatches(year, text) {
+    const years = String(text || "").match(/(?:19|20)\d{2}/g) || [];
+    return !year || years.length === 0 || years.includes(year);
+}
+
+async function searchZhWikiTitle(query, deadline = null, { mediaType = null, year = "" } = {}) {
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
     const searchRes = await fetchUpstream(
-        `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
+        `https://zh.wikipedia.org/w/api.php?action=query&list=search&srlimit=10&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
         { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } },
         remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
     );
@@ -2621,39 +2687,33 @@ async function searchZhWikiTitle(query, deadline = null) {
     }
     const searchData = await readJsonWithLimit(searchRes);
 
-    if (!Array.isArray(searchData?.query?.search) || !searchData.query.search.length) return null;
-    return searchData.query.search.find(item => isObject(item) && typeof item.title === "string")?.title || null;
+    if (!Array.isArray(searchData?.query?.search)) throw createHttpError("Wiki returned an invalid search response", 502);
+    const candidates = searchData.query.search
+        .filter(item => isObject(item) && wikiTitleMatches(query, item.title) && wikiYearMatches(year, item.title))
+        .filter(item => !mediaType || !getWikiKind(item.title) || getWikiKind(item.title) === mediaType);
+    if (mediaType) candidates.sort((a, b) => Number(getWikiKind(b.title) === mediaType) - Number(getWikiKind(a.title) === mediaType));
+    return candidates[0]?.title || null;
 }
 
-async function handleWikiZh(query, ctx) {
+async function handleWikiZh(query, ctx, options = {}) {
     const queryCheck = validateRequiredText(query, "query");
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://wiki-zh-cache.local/?q=${encodeURIComponent(query)}`);
+    const mediaTypeCheck = validatePersonMediaType(options.mediaType);
+    if (mediaTypeCheck.error) return mediaTypeCheck.error;
+    const yearCheck = validateOptionalYear(options.year);
+    if (yearCheck.error) return yearCheck.error;
+    const mediaType = mediaTypeCheck.value;
+    const year = yearCheck.value;
+
+    const cacheKey = new Request(`https://wiki-zh-v2-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const searchRes = await fetchUpstream(
-            `https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
-            { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } },
-            remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
-        );
-
-        if (!searchRes.ok) {
-            await releaseUpstreamResponse(searchRes);
-            return jsonResponse({ error: `Wiki search failed: ${searchRes.status}` }, searchRes.status);
-        }
-
-        const searchData = await readJsonWithLimit(searchRes);
-
-        if (!searchData.query || !searchData.query.search || !searchData.query.search.length) {
-            return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
-        }
-
-        const title = searchData.query.search.find(item => isObject(item) && typeof item.title === "string")?.title;
+        const title = await searchZhWikiTitle(query, deadline, { mediaType, year });
         if (!title) return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
         if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
 
@@ -2674,6 +2734,18 @@ async function handleWikiZh(query, ctx) {
             || typeof summaryData.title !== "string"
             || typeof summaryData.extract !== "string") {
             throw createHttpError("Wiki returned an invalid response", 502);
+        }
+
+        const intro = summaryData.extract.split(/[。.!?！？]/u)[0];
+        const summaryKind = getWikiKind(summaryData.title)
+            || getWikiKind(summaryData.description || "")
+            || getWikiKind(intro);
+        if (summaryData.type === "disambiguation"
+            || !summaryData.extract.trim()
+            || !wikiTitleMatches(query, summaryData.title)
+            || !wikiYearMatches(year, `${summaryData.title} ${summaryData.description || ""}`)
+            || (mediaType && summaryKind !== mediaType)) {
+            return jsonResponse({ error: "No matching media summary on zh.wikipedia" }, 404);
         }
 
         const result = {
