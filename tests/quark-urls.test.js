@@ -26,7 +26,7 @@ test('resource search keeps only canonical Quark share URLs from escaped page co
             });
         }
 
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('', { status: 200 });
         }
 

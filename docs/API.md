@@ -374,7 +374,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
   "wpzysResources": [
     {
       "title": "流浪地球 4K 夸克资源",
-      "url": "https://www.wpzys.org/thread-12345-1-1.html",
+      "url": "https://wpzy.org/thread-12345.htm",
       "isQuark": true,
       "source": "wpzys"
     }
@@ -391,7 +391,11 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZYS 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页每批并发 6 个请求，单页最多提取 25 个链接、整次请求最多返回 100 个链接，并受约 15 秒总预算与单次请求超时约束。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`（提供方状态、选中/尝试/失败页数）；两者都失败时返回 `502` 且不缓存。
+**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页每批并发 6 个请求，单页最多提取 25 个链接、整次请求最多返回 100 个链接，并受约 15 秒总预算与单次请求超时约束。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`（提供方状态、选中/尝试/失败页数）；两者都失败时返回 `502` 且不缓存。
+
+WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
+
+`resourceMeta.providerIssues.wpzys` 可为 `login_required` 或 `upstream_unavailable`，用于区分登录维护和一般上游故障。`restrictedPages` 与 `loginRequiredPages` 分别记录回复/VIP 受限、详情页要求重新登录的数量，均计入 `failedPages` 并使结果为部分完成。受限内容不会提取链接，但原帖卡片仍可访问；客户端不应把登录页当作空搜索结果，也不应通过重复重试解锁受限内容。
 
 ---
 
@@ -564,7 +568,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v6-cache.local/?q={query}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v7-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
 | `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v3-cache.local/?title={title}&year={year}&sources={sources}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v2-cache.local/?q={query}&type={type}&year={year}` |

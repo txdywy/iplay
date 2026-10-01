@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.8] - 2026-10-01
+
+### Fixed
+
+- Migrated the unavailable WPZYS upstream to wpzy.org while preserving the `wpzysResources` API collection and source identifiers.
+- Login redirects and HTTP 200 login pages are reported as provider failures instead of successful empty results. Posts requiring replies or membership retain their source cards without extracting gated links.
+- Resource cache and request coalescing are isolated by a SHA-256 fingerprint of the normalized server login state in a new v7 cache namespace.
+
+### Added
+
+- Optional `WPZY_COOKIE` Worker Secret for a dedicated, authorized read-only account; only site login cookies are sent to the exact HTTPS host, never to www aliases, other providers, responses, logs or frontend code.
+- Read-only path validation, cross-provider redirect blocking, canonical forum links, and a maximum of six WPZY detail pages per search.
+- Regression coverage for authenticated search/detail requests, expired logins, restricted posts, cookie validation, redirect isolation and credential-sensitive caches; browser and native workerd checks cover the new access states.
+
+### Changed
+
+- Forum labels now identify WPZY. Partial-scan notices distinguish login maintenance, site access restrictions and temporary outages; reply/VIP-only results do not encourage ineffective retries.
+- Deployment and API documentation explain secret renewal, sharing scope, access limitations and the preserved API contract; version metadata and frontend module URLs are synchronized.
+
 ## [1.0.7] - 2026-10-01
 
 ### Fixed

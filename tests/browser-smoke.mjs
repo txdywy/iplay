@@ -330,6 +330,18 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/omdb') return json({ omdb: true, imdb: 8.4, poster });
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
+                if (window.__smoke.resourceMode) return json({
+                    partial: true,
+                    resourceMeta: {
+                        partial: true, providers: {by669:'ok',wpzys:window.__smoke.resourceMode === 'login' ? 'failed' : 'ok'},
+                        providerIssues: window.__smoke.resourceMode === 'login' ? {wpzys:'login_required'} : {},
+                        selectedPages: 1, attemptedPages: 1, failedPages: window.__smoke.resourceMode === 'restricted' ? 1 : 0,
+                        restrictedPages: window.__smoke.resourceMode === 'restricted' ? 1 : 0, loginRequiredPages: 0
+                    },
+                    resources: [{title:'Smoke resource',url:'https://resource.example/smoke'}],
+                    wpzysResources: window.__smoke.resourceMode === 'restricted' ? [{title:'Restricted WPZY source',url:'https://wpzy.org/thread-301.htm'}] : [],
+                    quarkUrls: []
+                });
                 if (window.__smoke.resourceCalls === 1) return json({ error: 'temporary resource outage' }, 502);
                 if (window.__smoke.resourceCalls === 2) return json({
                     partial: true,
@@ -403,6 +415,26 @@ async function runStaleSearchFlow() {
     await search('Fresh Movie');
     await assertSearchReady('Fresh Movie');
     assert.equal(await evaluate('document.querySelector("#showTitle")?.textContent'), 'Fresh Movie');
+}
+
+async function runWpzyAccessFlow(mode) {
+    await command('Page.navigate', {url:baseUrl});
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate(`window.__smoke.resourceMode = ${JSON.stringify(mode)}`);
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({block:'start'})");
+    await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
+    if (mode === 'restricted') {
+        assert.match(await evaluate("document.querySelector('#resourcesNotice').textContent"), /回复或 VIP/);
+        assert.equal(await evaluate("document.querySelector('#resourcesNotice button') === null"), true, 'Retry cannot unlock reply/VIP restrictions');
+        assert.equal(await evaluate("document.querySelector('#wpzysResourceList a')?.getAttribute('href')"), 'https://wpzy.org/thread-301.htm');
+    } else {
+        assert.match(await evaluate("document.querySelector('#resourcesNotice').textContent"), /维护者更新登录/);
+        assert.match(await evaluate("document.querySelector('#wpzysResourceList').textContent"), /登录需要维护/);
+        assert.equal(await evaluate("document.querySelector('#resourceList a')?.getAttribute('href')"), 'https://resource.example/smoke');
+    }
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 1);
 }
 
 async function runStaleActorSearchFlow() {
@@ -644,6 +676,8 @@ async function runActorFilterRaceFlow() {
 
 try {
     await runObserverFlow();
+    await runWpzyAccessFlow('restricted');
+    await runWpzyAccessFlow('login');
     await runStaleSearchFlow();
     await runStaleActorSearchFlow();
     await runEmptyActorFlow();
@@ -661,7 +695,7 @@ try {
     await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

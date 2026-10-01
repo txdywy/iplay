@@ -10,6 +10,7 @@ coverage/
 *.log
 
 .dev.vars
+.dev.vars.*
 .wrangler/
 .planning/
 .worktrees/

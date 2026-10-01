@@ -65,6 +65,14 @@ for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&typ
     const response = await fetchLive(new URL(path, api));
     const data = await response.json();
     assert.ok(data && typeof data === 'object');
+    if (path.startsWith('/api/resource') && process.env.LIVE_REQUIRE_WPZY === '1') {
+        assert.equal(response.status, 200, 'WPZY resource API unavailable');
+        assert.equal(data.resourceMeta?.providers?.wpzys, 'ok', 'WPZY login/search was not verified');
+        assert.ok(data.wpzysResources?.length > 0, 'WPZY returned no matching resource cards');
+        assert.ok(data.wpzysResources.every(item => new URL(item.url).origin === 'https://wpzy.org'));
+        assert.ok(data.quarkUrls?.some(item => item.sourceUrl?.startsWith('https://wpzy.org/thread-')), 'No directly readable WPZY share links were verified');
+        results.push({check:'authenticated-wpzy-upstream',status:'passed',threads:data.wpzysResources.length,restrictedPages:data.resourceMeta.restrictedPages});
+    }
     if (response.ok) {
         if (path.startsWith('/api/omdb')) assert.equal(data.imdbId, 'tt0133093');
         if (path.startsWith('/api/wiki')) assert.ok(typeof data.extract === 'string');

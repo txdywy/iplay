@@ -134,6 +134,7 @@ export default {
             if (path === "/api/resource") {
                 return withCors(await handleResourceSearch(
                     url.searchParams.get("q"),
+                    env,
                     ctx,
                     { refresh: url.searchParams.get("refresh") === "1" }
                 ), request, env);
@@ -193,6 +194,7 @@ function jsonResponse(data, status = 200, extraHeaders = {}) {
 function logErrorMessage(error) {
     return String(error?.message || error || "Unknown error")
         .replace(/([?&](?:api_key|apikey|access_token|token)=)[^&\s]+/giu, "$1[REDACTED]")
+        .replace(/(\bbbs_(?:token|sid)\s*=\s*)[^;\s"<>]+/giu, "$1[REDACTED]")
         .slice(0, 500);
 }
 
@@ -261,6 +263,7 @@ const FALLBACK_TOTAL_TIMEOUT_MS = 11000;
 const RESOURCE_MAX_REDIRECTS = 1;
 const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024;
 const RESOURCE_MAX_DETAIL_PAGES = 12;
+const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
 const RESOURCE_DETAIL_BATCH_SIZE = 6;
 const RESOURCE_MAX_PROVIDER_RESULTS = 50;
 const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
@@ -1895,8 +1898,61 @@ async function handleDoubanDetail(id, ctx) {
 const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+(?:[?#][^\s"'<>\\),，。；;]*)?/gi;
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})/gi;
 const BY669_BASE = "https://by669.org";
-const WPZYS_BASE = "https://www.wpzys.org";
-const RESOURCE_ALLOWED_ORIGINS = new Set([BY669_BASE, WPZYS_BASE]);
+const WPZYS_BASE = "https://wpzy.org";
+const WPZY_ORIGINS = new Set([WPZYS_BASE, "https://www.wpzy.org"]);
+const RESOURCE_ALLOWED_ORIGINS = new Set([BY669_BASE, ...WPZY_ORIGINS]);
+
+async function getWpzySession(env) {
+    const rawCookie = env?.WPZY_COOKIE;
+    const values = new Map();
+    if (typeof rawCookie === "string" && rawCookie.length <= 4096
+        && !Array.from(rawCookie).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
+        for (const part of rawCookie.split(";")) {
+            const separator = part.indexOf("=");
+            if (separator < 0) continue;
+            const name = part.slice(0, separator).trim();
+            if (name !== "bbs_token" && name !== "bbs_sid") continue;
+            const value = part.slice(separator + 1).trim();
+            if (values.has(name) || !value || /[^\x21-\x7e]|[,;"\\]/.test(value)) {
+                values.clear();
+                break;
+            }
+            values.set(name, value);
+        }
+    }
+    const cookie = values.has("bbs_token")
+        ? ["bbs_token", "bbs_sid"].filter(name => values.has(name)).map(name => `${name}=${values.get(name)}`).join("; ")
+        : "";
+    if (!cookie) return { cookie: "", cacheScope: "anonymous" };
+    // Hash only for internal cache/coalescing keys. Never expose or log credentials.
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", new globalThis.TextEncoder().encode(cookie));
+    return { cookie, cacheScope: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
+}
+
+function createResourceAccessError(issue) {
+    const error = createHttpError(issue === "login_required" ? "WPZY login required" : "WPZY post requires reply or membership", 502);
+    error.resourceIssue = issue;
+    return error;
+}
+
+function isWpzyLoginPage(html) {
+    return /<title\b[^>]*>\s*(?:用户登录|用户登陆)(?:\s*[-|][^<]*)?\s*<\/title>|<form\b[^>]*action=["'][^"']*user-login(?:\.htm|[?"'])/i.test(html);
+}
+
+function isWpzyRestrictedPage(html) {
+    return /【待操作】|回复(?:后|即可)(?:查看|可见)|开通\s*VIP\s*会员无需操作/i.test(stripHtml(html));
+}
+
+function assertWpzyReadOnlyUrl(value) {
+    const url = new URL(value);
+    if (!WPZY_ORIGINS.has(url.origin)) return;
+    if (/^\/user-login(?:\.htm)?\/?$/i.test(url.pathname)) throw createResourceAccessError("login_required");
+    const isSearch = url.pathname === "/search.htm";
+    const isThread = /^\/thread-\d+\.htm$/.test(url.pathname);
+    if ((!isSearch && !isThread) || (isThread && url.search) || (isSearch && [...url.searchParams.keys()].some(key => key !== "keyword"))) {
+        throw createHttpError("Blocked non-resource WPZY request", 502);
+    }
+}
 
 function isValidQuarkPassword(value) {
     return /^[a-z0-9]{2,12}$/i.test(value) && !/^https?$/i.test(value);
@@ -2055,16 +2111,23 @@ function remainingDeadlineMs(deadline, fallbackMs) {
     return Math.max(1, Math.min(fallbackMs, deadline.expiresAt - Date.now()));
 }
 
-async function fetchAllowedResource(resourceUrl, options = {}, deadline = null) {
+async function fetchAllowedResource(resourceUrl, options = {}, deadline = null, wpzySession = null) {
     let currentUrl = resolveResourceUrl(resourceUrl, BY669_BASE);
     if (!currentUrl) throw new Error("Blocked untrusted resource URL");
 
     for (let redirects = 0; redirects <= RESOURCE_MAX_REDIRECTS; redirects++) {
         if (isDeadlineExpired(deadline)) throw createHttpError("Resource search timed out", 504);
 
+        const currentOrigin = new URL(currentUrl).origin;
+        assertWpzyReadOnlyUrl(currentUrl);
+        const headers = new Headers(options.headers);
+        headers.delete("Cookie");
+        // These cookies are host-only: www.wpzy.org and other providers must not receive them.
+        if (currentOrigin === WPZYS_BASE && wpzySession?.cookie) headers.set("Cookie", wpzySession.cookie);
+
         const response = await fetchUpstream(
             currentUrl,
-            { ...options, redirect: "manual" },
+            { ...options, headers, redirect: "manual" },
             remainingDeadlineMs(deadline, RESOURCE_TIMEOUT_MS)
         );
         if (!RESOURCE_REDIRECT_STATUSES.has(response.status)) return response;
@@ -2073,6 +2136,11 @@ async function fetchAllowedResource(resourceUrl, options = {}, deadline = null) 
         const nextUrl = location ? resolveResourceUrl(location, currentUrl) : "";
         await releaseUpstreamResponse(response);
         if (!nextUrl) throw new Error("Blocked untrusted resource redirect");
+        const nextOrigin = new URL(nextUrl).origin;
+        assertWpzyReadOnlyUrl(nextUrl);
+        if (nextOrigin !== currentOrigin && !(WPZY_ORIGINS.has(currentOrigin) && WPZY_ORIGINS.has(nextOrigin))) {
+            throw createHttpError("Blocked cross-provider resource redirect", 502);
+        }
         currentUrl = nextUrl;
     }
 
@@ -2087,7 +2155,7 @@ function isQuarkResourceText(text) {
     ));
 }
 
-async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`, deadline = null) {
+async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`, deadline = null, wpzySession = null) {
     const safeResourceUrl = resolveResourceUrl(resourceUrl, BY669_BASE);
     if (!safeResourceUrl) throw createHttpError("Blocked untrusted resource URL", 502);
 
@@ -2098,16 +2166,21 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer": referer
         }
-    }, deadline);
+    }, deadline, wpzySession);
 
     if (!res.ok) {
         await releaseUpstreamResponse(res);
+        if (new URL(safeResourceUrl).origin === WPZYS_BASE && res.status === 401) throw createResourceAccessError("login_required");
         throw createHttpError(`Resource page rejected with status ${res.status}`, res.status);
     }
 
     const text = await readTextWithLimit(res);
     if (!text.trim() || isChallengePage(text)) {
         throw createHttpError("Resource detail returned an empty or challenge page", 502);
+    }
+    if (WPZY_ORIGINS.has(new URL(safeResourceUrl).origin)) {
+        if (isWpzyLoginPage(text)) throw createResourceAccessError("login_required");
+        if (isWpzyRestrictedPage(text)) throw createResourceAccessError("access_restricted");
     }
     const quarkEntries = collectQuarkEntries(text, RESOURCE_MAX_QUARK_URLS_PER_PAGE);
 
@@ -2164,8 +2237,13 @@ function parseWpzysResources(html, query) {
     while ((match = itemPattern.exec(html)) !== null) {
         const block = match[0];
         const rawUrl = match[1];
-        const url = resolveResourceUrl(rawUrl, WPZYS_BASE);
-        if (!url || seenUrls.has(url)) continue;
+        const resolvedUrl = resolveResourceUrl(rawUrl, WPZYS_BASE);
+        if (!resolvedUrl) continue;
+        const parsedUrl = new URL(resolvedUrl);
+        if (!WPZY_ORIGINS.has(parsedUrl.origin) || !/^\/thread-\d+\.htm$/.test(parsedUrl.pathname)) continue;
+        // Canonicalize aliases and remove query/fragment actions from scraped links.
+        const url = new URL(parsedUrl.pathname, WPZYS_BASE).href;
+        if (seenUrls.has(url)) continue;
 
         const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
         const titlePattern = new RegExp(`<a[^>]+href=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
@@ -2193,7 +2271,7 @@ function isChallengePage(html) {
     return /(?:id=["']challenge-platform["']|\bcf-chl-|<title>\s*just a moment(?:\.\.\.)?\s*<\/title>|enable javascript and cookies to continue)/i.test(html);
 }
 
-async function fetchWpzysResources(query, deadline = null) {
+async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
     const res = await fetchAllowedResource(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
         headers: {
             "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
@@ -2201,30 +2279,34 @@ async function fetchWpzysResources(query, deadline = null) {
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer": `${WPZYS_BASE}/search.htm`
         }
-    }, deadline);
+    }, deadline, wpzySession);
 
     if (!res.ok) {
         await releaseUpstreamResponse(res);
-        throw new Error(`WPZYS rejected with status ${res.status}`);
+        if (res.status === 401) throw createResourceAccessError("login_required");
+        throw new Error(`WPZY rejected with status ${res.status}`);
     }
 
     const html = await readTextWithLimit(res);
     if (!html.trim()) {
-        throw createHttpError("WPZYS returned an empty response", 502);
+        throw createHttpError("WPZY returned an empty response", 502);
     }
     if (isChallengePage(html)) {
-        throw createHttpError("WPZYS returned a challenge page", 502);
+        throw createHttpError("WPZY returned a challenge page", 502);
     }
+    if (isWpzyLoginPage(html)) throw createResourceAccessError("login_required");
 
     return parseWpzysResources(html, query);
 }
 
-async function collectQuarkUrlsFromResources(resources, deadline = null) {
+async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
     const batchSize = RESOURCE_DETAIL_BATCH_SIZE;
     const maxPages = Math.min(resources.length, RESOURCE_MAX_DETAIL_PAGES);
     let failedPages = 0;
+    let restrictedPages = 0;
+    let loginRequiredPages = 0;
     let attemptedPages = 0;
 
     for (let index = 0; index < maxPages; index += batchSize) {
@@ -2236,13 +2318,16 @@ async function collectQuarkUrlsFromResources(resources, deadline = null) {
                 entry.url,
                 entry.title,
                 entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`,
-                deadline
+                deadline,
+                wpzySession
             ))
         );
 
         for (const group of quarkUrlGroups) {
             if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
                 failedPages += 1;
+                if (group.reason?.resourceIssue === "access_restricted") restrictedPages += 1;
+                if (group.reason?.resourceIssue === "login_required") loginRequiredPages += 1;
                 continue;
             }
 
@@ -2263,7 +2348,9 @@ async function collectQuarkUrlsFromResources(resources, deadline = null) {
     return {
         quarkUrls,
         attemptedPages,
-        failedPages
+        failedPages,
+        restrictedPages,
+        loginRequiredPages
     };
 }
 
@@ -2276,7 +2363,7 @@ function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOUR
             added = true;
         }
         if (selected.length >= maxPages) break;
-        if (index < wpzysResources.length) {
+        if (index < Math.min(wpzysResources.length, RESOURCE_MAX_WPZY_DETAIL_PAGES)) {
             selected.push(wpzysResources[index]);
             added = true;
         }
@@ -2285,25 +2372,26 @@ function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOUR
     return selected;
 }
 
-async function handleResourceSearch(query, ctx, { refresh = false } = {}) {
+async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
     const queryCheck = validateRequiredText(query, "query");
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
+    const wpzySession = await getWpzySession(env);
 
     const response = await withInFlight(
         ctx,
-        `resource:${refresh ? "refresh:" : ""}${query}`,
-        () => handleResourceSearchUncoalesced(query, ctx, { refresh })
+        `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}`,
+        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession })
     );
     return response.clone();
 }
 
-async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } = {}) {
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession } = {}) {
     const queryCheck = validateRequiredText(query, "query");
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v6-cache.local/?q=${encodeURIComponent(query)}`);
+    const cacheKey = new Request(`https://resource-search-v7-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2311,7 +2399,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } =
         const deadline = createDeadline(RESOURCE_TOTAL_TIMEOUT_MS);
         const [by669Result, wpzysResult] = await Promise.allSettled([
             fetchBy669Resources(query, deadline),
-            fetchWpzysResources(query, deadline)
+            fetchWpzysResources(query, deadline, wpzySession)
         ]);
 
         if (by669Result.status === "rejected" && wpzysResult.status === "rejected") {
@@ -2325,7 +2413,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } =
         const resources = by669Result.status === "fulfilled" ? by669Result.value : [];
         const wpzysResources = wpzysResult.status === "fulfilled" ? wpzysResult.value : [];
         const detailResources = selectResourceDetails(resources, wpzysResources);
-        const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline);
+        const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
 
         const isPartial = by669Result.status === "rejected"
             || wpzysResult.status === "rejected"
@@ -2342,9 +2430,14 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false } =
                     by669: by669Result.status === "fulfilled" ? "ok" : "failed",
                     wpzys: wpzysResult.status === "fulfilled" ? "ok" : "failed"
                 },
+                providerIssues: wpzysResult.status === "rejected"
+                    ? { wpzys: wpzysResult.reason?.resourceIssue === "login_required" ? "login_required" : "upstream_unavailable" }
+                    : {},
                 selectedPages: detailResources.length,
                 attemptedPages: detailResult.attemptedPages,
-                failedPages: detailResult.failedPages
+                failedPages: detailResult.failedPages,
+                restrictedPages: detailResult.restrictedPages,
+                loginRequiredPages: detailResult.loginRequiredPages
             }
         }, isPartial ? 900 : 43200);
     } catch (e) {
