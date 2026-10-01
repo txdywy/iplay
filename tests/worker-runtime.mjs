@@ -14,7 +14,9 @@ const modules = await Promise.all(['worker/_worker.js', 'js/release.js'].map(asy
     contents: await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 })));
 const checks = [];
-const bindings = { ENVIRONMENT: 'production', TMDB_API_KEY: 'runtime-test' };
+const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
+const bindings = { ENVIRONMENT: 'production', TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
+let wpzyMode = 'public';
 const ratelimits = {
     API_RATE_LIMITER: { namespace_id: '1001', simple: { limit: 60, period: 60 } },
     RESOURCE_RATE_LIMITER: { namespace_id: '1002', simple: { limit: 10, period: 60 } }
@@ -26,12 +28,24 @@ async function upstream(request) {
         return Response.json({ id: 603, title: 'Runtime Movie', overview: 'Verified movie overview.' });
     }
     if (url.hostname === 'by669.org') {
+        assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
         await new Promise(resolve => setTimeout(resolve, 30));
         return url.pathname === '/api/discussions'
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
             : new Response('<p>https://pan.quark.cn/s/runtime42 提取码：abcd</p>');
     }
-    if (url.hostname === 'www.wpzys.org') return new Response('<html>No matching threads</html>');
+    if (url.hostname === 'wpzy.org') {
+        assert.equal(request.headers.get('Cookie'), runtimeCookie);
+        assert.equal(request.method, 'GET');
+        if (url.pathname === '/search.htm') {
+            if (wpzyMode === 'login') return new Response(null, {status:302,headers:{Location:'user-login.htm'}});
+            return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
+        }
+        assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
+        return new Response(wpzyMode === 'restricted'
+            ? '<h3>【待操作】点击&lt;立即回复&gt;查看资源（开通VIP会员无需操作）</h3>'
+            : '<p>https://pan.quark.cn/s/runtime-wpzy</p>');
+    }
     if (url.hostname === 'movie.douban.com' && url.pathname === '/subject/42/') {
         return new Response('<strong property="v:average">8.5</strong><span property="v:votes">12345</span><span property="v:genre">喜剧</span><span property="v:summary">A complete runtime synopsis.</span>');
     }
@@ -65,9 +79,31 @@ try {
             assert.equal(data.partial, false);
             assert.equal(data.quarkUrls[0]?.password, 'abcd');
             assert.equal(data.quarkUrls[0]?.url, 'https://pan.quark.cn/s/runtime42');
+            assert.equal(data.wpzysResources[0]?.url, 'https://wpzy.org/thread-100.htm');
+            assert.ok(data.quarkUrls.some(item => item.url === 'https://pan.quark.cn/s/runtime-wpzy'));
+            assert.ok(!JSON.stringify(data).includes('runtime-wpzy-secret'));
         }
         checks.push(`${phase}-concurrent-resource-streams`);
     }
+
+    wpzyMode = 'restricted';
+    const restricted = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-restricted');
+    const restrictedData = await restricted.json();
+    assert.equal(restricted.status, 200);
+    assert.equal(restrictedData.partial, true);
+    assert.equal(restrictedData.resourceMeta.restrictedPages, 1);
+    assert.equal(restrictedData.wpzysResources.length, 1);
+    assert.equal(restrictedData.quarkUrls.length, 1);
+    checks.push('authenticated-wpzy-and-restricted-posts');
+
+    wpzyMode = 'login';
+    const expired = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-expired');
+    const expiredData = await expired.json();
+    assert.equal(expiredData.partial, true);
+    assert.equal(expiredData.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.equal(expired.headers.get('cache-control'), 'public, max-age=900');
+    checks.push('wpzy-login-expiry-fails-closed');
+    wpzyMode = 'public';
 
     const douban = await request('/api/douban/detail?id=42');
     assert.equal(douban.status, 200);

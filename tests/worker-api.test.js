@@ -1517,10 +1517,10 @@ test('resource search keeps each provider in its own response collection', async
                 data: [{ id: '1', attributes: { title: '测试资源' } }]
             });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('<li data-href="./thread-123.htm"><a href="./thread-123.htm">测试夸克资源</a> 夸克</li>');
         }
-        if (value === 'https://by669.org/d/1' || value === 'https://www.wpzys.org/thread-123.htm') {
+        if (value === 'https://by669.org/d/1' || value === 'https://wpzy.org/thread-123.htm') {
             return new Response('', { status: 200 });
         }
         throw new Error(`Unexpected fetch: ${value}`);
@@ -1563,13 +1563,13 @@ test('resource detail fan-out fairly includes the second provider', async t => {
                 }))
             });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('<li data-href="./thread-999.htm"><a href="./thread-999.htm">fair wpzys resource</a> 夸克</li>');
         }
         if (value.startsWith('https://by669.org/d/by-')) {
             return new Response(`https://pan.quark.cn/s/${value.split('/').at(-1)}`);
         }
-        if (value === 'https://www.wpzys.org/thread-999.htm') {
+        if (value === 'https://wpzy.org/thread-999.htm') {
             return new Response('https://pan.quark.cn/s/wpzys-fair');
         }
         throw new Error(`Unexpected fetch: ${value}`);
@@ -1613,7 +1613,7 @@ test('resource detail extraction caps links per page and globally', async t => {
                 }))
             });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) return new Response('');
+        if (value.startsWith('https://wpzy.org/search.htm')) return new Response('');
         if (value.startsWith('https://by669.org/d/cap-')) {
             const resourceId = value.split('/').at(-1);
             const pageLinks = Array.from({ length: 30 }, (_, index) => `https://pan.quark.cn/s/${resourceId}-${index + 1}`).join('\n');
@@ -1656,7 +1656,7 @@ test('resource search never fetches an external URL supplied by forum HTML', asy
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ data: [] });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('<li data-href="https://attacker.example/thread-123.htm"><a href="https://attacker.example/thread-123.htm">测试夸克资源</a> 夸克</li>');
         }
         return new Response('unexpected external fetch', { status: 200 });
@@ -1696,7 +1696,7 @@ test('resource page redirects are checked before an external destination is fetc
                 data: [{ id: 'redirect', attributes: { title: '测试资源' } }]
             });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('', { status: 200 });
         }
         if (value === 'https://by669.org/d/redirect') {
@@ -1745,7 +1745,7 @@ test('resource search ignores an oversized forum response body', async t => {
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ data: [] });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response(oversizedHtml, { status: 200 });
         }
         return new Response('', { status: 200 });
@@ -1765,7 +1765,7 @@ test('resource search ignores an oversized forum response body', async t => {
     const body = await response.json();
 
     assert.deepEqual(body.wpzysResources, []);
-    assert.equal(requestedUrls.includes('https://www.wpzys.org/thread-999.htm'), false);
+    assert.equal(requestedUrls.includes('https://wpzy.org/thread-999.htm'), false);
 });
 
 test('OMDb accepts the documented i parameter as an IMDb id alias', async t => {
@@ -2036,7 +2036,7 @@ test('resource search treats HTTP 200 provider error payloads as an outage witho
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ errors: [{ detail: 'temporarily blocked' }] });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('', { status: 200 });
         }
         throw new Error(`Unexpected fetch: ${value}`);
@@ -2077,7 +2077,7 @@ test('resource search short-caches raw results when every detail page fails', as
                 data: [{ id: '1', attributes: { title: '测试资源' } }]
             });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('<html><body><p>No matching threads</p></body></html>');
         }
         if (value === 'https://by669.org/d/1') {
@@ -2362,7 +2362,7 @@ test('resource search treats a WPZYS HTTP 200 challenge page as a partial outage
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ data: [] });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('<html><title>Just a moment...</title><div id="challenge-platform"></div></html>');
         }
         throw new Error(`Unexpected fetch: ${value}`);
@@ -2524,7 +2524,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ data: [{ id: 'metadata-1', attributes: { title: 'Metadata resource' } }] });
         }
-        if (value.startsWith('https://www.wpzys.org/search.htm')) {
+        if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('temporarily unavailable', { status: 503 });
         }
         if (value === 'https://by669.org/d/metadata-1') return new Response('', { status: 200 });
@@ -2622,7 +2622,7 @@ test('resource refresh bypasses a cached partial result', async t => {
         providerCalls += 1;
         const parsed = new globalThis.URL(String(url));
         if (parsed.hostname === 'by669.org') return Response.json({ data: [] });
-        if (parsed.hostname === 'www.wpzys.org') {
+        if (parsed.hostname === 'wpzy.org') {
             wpzysCalls += 1;
             if (wpzysCalls === 1) return new Response('provider unavailable', { status: 503 });
             return new Response('<html><body>No matching resources</body></html>');

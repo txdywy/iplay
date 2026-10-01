@@ -26,6 +26,7 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
    - `TMDB_ACCESS_TOKEN`
    - `TMDB_API_KEY`（可选，作为备用）
    - `OMDB_API_KEY`（可选；未配置时 OMDb 功能不可用，项目不内置 Key）
+   - `WPZY_COOKIE`（可选；wpzy.org 专用只读账号的登录 Cookie，配置前确认站点允许此用途）
    - `CORS_ALLOWED_ORIGINS`（可选；额外允许的前端 Origin，以英文逗号分隔）
    - `ENVIRONMENT=production`（必填；缺少生产限流 binding 时让 Worker fail closed）
 5. 到 **Settings → Bindings** 配置两个 Rate Limiting bindings，名称必须分别为 `API_RATE_LIMITER` 和 `RESOURCE_RATE_LIMITER`，并与 `wrangler.toml` 中的 namespace ID 保持一致。
@@ -41,6 +42,7 @@ npm run wrangler -- login
 npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 npm run wrangler -- secret put TMDB_API_KEY
 npm run wrangler -- secret put OMDB_API_KEY
+npm run wrangler -- secret put WPZY_COOKIE
 npm run deploy:worker:dry-run
 npm run deploy:worker -- --message "本次变更说明"
 ```
@@ -127,6 +129,7 @@ npm run wrangler -- dev
 | `TMDB_ACCESS_TOKEN` | TMDB v4 访问令牌，推荐优先配置 |
 | `TMDB_API_KEY` | TMDB v3 API Key，作为备用 |
 | `OMDB_API_KEY` | OMDb API Key，可选 |
+| `WPZY_COOKIE` | wpzy.org 的 `bbs_token` 与可选 `bbs_sid`，仅放在 Worker Secret；不可公开、写进前端或 GitHub |
 | `CORS_ALLOWED_ORIGINS` | 额外允许的前端 Origin，多个值用英文逗号分隔；线上域名与 localhost:8080 已默认允许 |
 
 ### 本地开发
@@ -139,6 +142,16 @@ TMDB_API_KEY=your_key
 OMDB_API_KEY=your_omdb_key
 ```
 
+### WPZY 登录态与续期
+
+wpzy.org 当前对匿名搜索要求登录。浏览器登录不会自动传给线上 Worker；需要显式配置 `WPZY_COOKIE` Secret，格式为 `bbs_token=…; bbs_sid=…`。不要把真实值写入命令参数、文档、仓库、构建变量或日志；使用上述 Wrangler 交互输入，或受保护的标准输入。`.dev.vars` 与 `.dev.vars.*` 均已忽略。
+
+建议使用获准的专用只读账号。iPlay 的资源查询会共用此账号，并向用户展示它能读取的资源结果；登录过期或站点风控需要维护者重新登录并更新 Secret。更换或撤销 Secret 会切换内部缓存作用域，避免复用旧账号缓存；没有 Secret 时仅尝试匿名读取，并保留 By669 的可用结果。
+
+Worker 只向 `https://wpzy.org` 的搜索和帖子路径发送两个登录 Cookie，不向 `www.wpzy.org` 或其他来源发送，且不会转发浏览器提交的 Cookie。帖子链接统一为主域名并移除查询动作，每次搜索最多读取六个 WPZY 帖子。不自动回帖、开通会员、付费或绕过验证；需要回复/VIP 的帖子仍保留原帖入口，并显示限制提示。
+
+Cloudflare Workers Builds 已连接此仓库：main 推送运行 Wrangler 生产部署，其他分支仅上传预览版本。GitHub Actions 的 Worker 部署任务仍是手动入口，两者不是同一条流水线。登录 Cookie 是运行时 Secret，无需放入 GitHub Secrets 或公开构建变量。
+
 ---
 
 ## 部署后验证
@@ -149,6 +162,7 @@ OMDB_API_KEY=your_omdb_key
 - 搜索输入后能返回结果
 - 详情弹窗能展示评分、简介、演员与资源链接
 - Worker 接口返回 JSON，且没有跨域错误
+- 配置 WPZY 登录态后运行 `LIVE_REQUIRE_WPZY=1 npm run test:live`，必须验证 WPZY 搜索成功并提取到该源的公开链接；受限帖子可以正常报告部分结果
 - 海报和评分源在不同影片上都能回退到可用来源
 
 ---

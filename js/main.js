@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.7';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.7';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.7';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.7';
-import { RELEASE_VERSION } from './release.js?v=1.0.7';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.8';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.8';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.8';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.8';
+import { RELEASE_VERSION } from './release.js?v=1.0.8';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.7';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.7';
+} from './match.js?v=1.0.8';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.8';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1102,13 +1102,21 @@ function renderResourceNotice(resourceResult, onRetry) {
     const providers = meta.providers || {};
     const failedProviders = Object.entries(providers)
         .filter(([, status]) => status === 'failed')
-        .map(([provider]) => provider === 'by669' ? '资源页' : provider === 'wpzys' ? 'WPZYS' : provider);
+        .map(([provider]) => provider === 'by669' ? '资源页' : provider === 'wpzys' ? 'WPZY' : provider);
     const failedPages = Number(meta.failedPages) || 0;
-    const detail = failedProviders.length > 0
-        ? `${failedProviders.join('、')}暂时没有响应，已保留其他可用结果。`
-        : failedPages > 0
-            ? `有 ${failedPages} 个资源页面暂时无法打开，已保留其他可用结果。`
-            : '部分资源尚未完成提取，已保留当前可用结果。';
+    const restrictedPages = Number(meta.restrictedPages) || 0;
+    const loginRequiredPages = Number(meta.loginRequiredPages) || 0;
+    const loginRequired = meta.providerIssues?.wpzys === 'login_required' || loginRequiredPages > 0;
+    const unavailablePages = Math.max(0, failedPages - restrictedPages - loginRequiredPages);
+    const notes = [];
+    if (loginRequired) notes.push('WPZY 登录态不可用，需要维护者更新登录；其他可用结果已保留。');
+    const unavailableProviders = failedProviders.filter(provider => !loginRequired || provider !== 'WPZY');
+    if (unavailableProviders.length) notes.push(`${unavailableProviders.join('、')}暂时没有响应，已保留其他可用结果。`);
+    if (restrictedPages > 0) notes.push(`有 ${restrictedPages} 个 WPZY 帖子需回复或 VIP 才能查看链接，已保留原帖入口。`);
+    if (unavailablePages > 0) notes.push(`有 ${unavailablePages} 个资源页面暂时无法打开。`);
+    const detail = notes.join(' ') || '部分资源尚未完成提取，已保留当前可用结果。';
+    const canRetry = failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
+        || (Number(meta.attemptedPages) || 0) < (Number(meta.selectedPages) || 0) || notes.length === 0;
 
     const row = document.createElement('div');
     row.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
@@ -1125,7 +1133,7 @@ function renderResourceNotice(resourceResult, onRetry) {
     copy.appendChild(description);
     row.appendChild(copy);
 
-    if (typeof onRetry === 'function') {
+    if (canRetry && typeof onRetry === 'function') {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'min-h-11 shrink-0 rounded-full border border-accent-gold/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-accent-gold hover:bg-accent-gold/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
@@ -1407,7 +1415,7 @@ function renderResourceLoadingStates(title) {
         progressClass: 'resource-progress-blue'
     });
     renderResourceStatus(els.wpzysResourceList, {
-        title: '正在搜索 WPZYS 论坛',
+        title: '正在搜索 WPZY 论坛',
         detail: '正在筛选包含夸克资源的匹配帖子',
         iconName: 'comments',
         iconClass: 'text-accent-gold',
@@ -1474,7 +1482,7 @@ function renderResourceErrorStates(onRetry) {
         onAction: onRetry
     });
     renderResourceStatus(els.wpzysResourceList, {
-        title: 'WPZYS 扫描已暂停',
+        title: 'WPZY 扫描已暂停',
         detail: '论坛结果可能暂时不可用，你可以稍后重试',
         iconName: 'comments',
         iconClass: 'text-accent-gold',
@@ -1500,9 +1508,19 @@ function renderResourceList(resources) {
     });
 }
 
-function renderWpzysResourceList(resources) {
+function renderWpzysResourceList(resources, meta = {}) {
+    if (!resources.length && meta?.providers?.wpzys === 'failed') {
+        renderResourceStatus(els.wpzysResourceList, {
+            title: meta.providerIssues?.wpzys === 'login_required' ? 'WPZY 登录需要维护' : 'WPZY 暂时不可用',
+            detail: meta.providerIssues?.wpzys === 'login_required'
+                ? '需要维护者更新上游登录态，其他来源不受影响'
+                : '论坛没有正常响应，已保留其他来源的结果',
+            iconName: 'comments', iconClass: 'text-accent-gold', progressClass: 'resource-progress-gold', isLoading: false
+        });
+        return;
+    }
     renderLinkCards(els.wpzysResourceList, resources, {
-        emptyLabel: '暂未匹配到 WPZYS 夸克资源',
+        emptyLabel: '暂未匹配到 WPZY 夸克资源',
         itemClass: 'p-3',
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-[transform,background-color,border-color] hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
         iconName: 'comments',
@@ -1918,10 +1936,10 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
             result: resourceResult
         };
         renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
-        renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : []);
+        renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [], resourceResult.resourceMeta);
         renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
         if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
-            setResourceStatus('资源扫描部分完成，可重试补全');
+            setResourceStatus('资源扫描部分完成，已保留可用结果');
             renderResourceNotice(resourceResult, async () => {
                 resourceResultState = null;
                 resourceLoadStarted = false;
