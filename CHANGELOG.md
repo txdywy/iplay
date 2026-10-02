@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.10] - 2026-10-02
+
+### Fixed
+
+- Literal TMDB title matches take precedence over type/year words inferred from a title, so titles such as The Truman Show, The TV Set and 电影少女 are not discarded by an incorrect media-type filter.
+- Poster and OMDb enrichment stay bound to the selected TMDB ID and media type. Known IMDb IDs use exact lookups; all identified OMDb profiles must map back to the selected TMDB work. Mismatched frontend responses cannot replace confirmed metadata or images, and verified profiles remain usable without a poster.
+- Resource and broken-poster retries bypass the browser HTTP cache as well as Worker caches, including repeated retries of the same URL.
+- HTTP 200 maintenance/unavailable resource detail pages retain their source cards, count as incomplete scans and use the 15-minute recovery cache. Normal resource posts discussing maintenance remain readable. Resource v9 and poster v4 cache namespaces exclude earlier false successes and identity-free poster entries.
+- Actor filters keep the unfiltered TV + movie total in the “全部” count and accessible label instead of displaying the currently filtered total.
+
+### Added
+
+- Public-route regressions for literal titles, selected poster/IMDb identity, verified metadata without images, invalid identity parameters and both resource providers' detail maintenance pages.
+- Browser checks for mismatched TMDB/IMDb poster responses, identity-verified title enrichment, fresh repeated retries and stable actor filter totals; native Workers checks for literal-title recognition, identity-isolated poster caches and partial detail maintenance scans.
+- Live release checks for The Truman Show and exact selected movie/TV posters, alongside byte-for-byte static release matching.
+
 ## [1.0.9] - 2026-10-02
 
 ### Fixed

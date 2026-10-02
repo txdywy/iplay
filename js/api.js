@@ -153,7 +153,8 @@ export const OmdbAPI = {
 export const ResourceAPI = {
     async search(query, options = {}, { refresh = false } = {}) {
         const refreshParam = refresh ? '&refresh=1' : '';
-        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${refreshParam}`, options, RESOURCE_TIMEOUT_MS);
+        const requestOptions = refresh ? { ...options, cache: 'no-store' } : options;
+        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${refreshParam}`, requestOptions, RESOURCE_TIMEOUT_MS);
     }
 };
 
@@ -164,8 +165,15 @@ export const PosterAPI = {
     async getPoster(title, year, options = {}, { refresh = false } = {}) {
         if (!title) return null;
         try {
+            const { mediaId, mediaType, imdbId, ...fetchOptions } = options;
+            const identityParams = [
+                mediaId ? `&id=${encodeURIComponent(mediaId)}` : '',
+                mediaType ? `&type=${encodeURIComponent(mediaType)}` : '',
+                imdbId ? `&imdb=${encodeURIComponent(imdbId)}` : ''
+            ].join('');
             const refreshParam = refresh ? '&refresh=1' : '';
-            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}${refreshParam}`, options, POSTER_TIMEOUT_MS);
+            const requestOptions = refresh ? { ...fetchOptions, cache: 'no-store' } : fetchOptions;
+            return await fetchWithTimeout(`${API_BASE}/api/poster?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}${identityParams}${refreshParam}`, requestOptions, POSTER_TIMEOUT_MS);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Poster fetch failed:", e);
