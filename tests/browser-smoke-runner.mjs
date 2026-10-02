@@ -5,6 +5,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { waitForJson } from './helpers/browser-readiness.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -87,25 +88,6 @@ async function stopProcess(child) {
     });
 }
 
-async function waitForJson(url, predicate, timeoutMs = 10000) {
-    const startedAt = Date.now();
-    let lastError = null;
-    while (Date.now() - startedAt < timeoutMs) {
-        try {
-            const response = await globalThis.fetch(url);
-            if (response.ok) {
-                const value = await response.json();
-                if (predicate(value)) return value;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-        await new Promise(resolve => globalThis.setTimeout(resolve, 100));
-    }
-    const suffix = lastError ? ': ' + lastError.message : '';
-    throw new Error('Timed out waiting for ' + url + suffix);
-}
-
 async function waitForHttp(url, timeoutMs = 10000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
@@ -143,7 +125,7 @@ try {
     const targets = await waitForJson(
         'http://127.0.0.1:' + debugPort + '/json/list',
         value => Array.isArray(value) && value.some(target => target.type === 'page' && target.webSocketDebuggerUrl),
-        15000
+        { child: chrome }
     );
     const page = targets.find(target => target.type === 'page' && target.webSocketDebuggerUrl);
     smoke = startProcess(process.execPath, ['tests/browser-smoke.mjs'], {
