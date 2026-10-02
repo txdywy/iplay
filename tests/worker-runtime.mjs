@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { RELEASE_VERSION } from '../js/release.js';
+import { probeNativeRateLimit } from './helpers/native-rate-limit.js';
+import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 
 const { Response } = globalThis;
 
@@ -27,6 +29,9 @@ async function upstream(request) {
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/603') {
         return Response.json({ id: 603, title: 'Runtime Movie', overview: 'Verified movie overview.' });
     }
+    if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/604') {
+        return Response.json({ status_message: 'Fetch failed for https://api.themoviedb.org/?api_key=runtime-test; Bearer runtime-private-token' }, { status: 503 });
+    }
     if (url.hostname === 'by669.org') {
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
         await new Promise(resolve => setTimeout(resolve, 30));
@@ -39,6 +44,8 @@ async function upstream(request) {
         assert.equal(request.method, 'GET');
         if (url.pathname === '/search.htm') {
             if (wpzyMode === 'login') return new Response(null, {status:302,headers:{Location:'user-login.htm'}});
+            if (wpzyMode === 'maintenance') return new Response('<title>网站维护</title><p>请求过于频繁，请稍后重试</p>');
+            if (wpzyMode === 'empty') return new Response(WPZY_EMPTY_SEARCH_HTML);
             return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
@@ -103,7 +110,32 @@ try {
     assert.equal(expiredData.resourceMeta.providerIssues.wpzys, 'login_required');
     assert.equal(expired.headers.get('cache-control'), 'public, max-age=900');
     checks.push('wpzy-login-expiry-fails-closed');
+
+    wpzyMode = 'maintenance';
+    const maintenance = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-maintenance');
+    const maintenanceData = await maintenance.json();
+    assert.equal(maintenance.status, 200);
+    assert.equal(maintenanceData.partial, true);
+    assert.equal(maintenanceData.resourceMeta.providers.wpzys, 'failed');
+    assert.equal(maintenanceData.resourceMeta.providerIssues.wpzys, 'upstream_unavailable');
+    assert.equal(maintenance.headers.get('cache-control'), 'public, max-age=900');
+    checks.push('wpzy-maintenance-fails-closed');
+
+    wpzyMode = 'empty';
+    const empty = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-empty');
+    const emptyData = await empty.json();
+    assert.equal(emptyData.partial, false);
+    assert.equal(emptyData.resourceMeta.providers.wpzys, 'ok');
+    assert.deepEqual(emptyData.wpzysResources, []);
+    assert.equal(empty.headers.get('cache-control'), 'public, max-age=43200');
+    checks.push('wpzy-recognized-empty-search');
     wpzyMode = 'public';
+
+    const failedDetail = await request('/api/tmdb/detail?id=604&type=movie', 'runtime-safe-errors');
+    assert.equal(failedDetail.status, 503);
+    assert.equal(failedDetail.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await failedDetail.json(), { error: 'TMDB unavailable' });
+    checks.push('safe-public-error-boundary');
 
     const douban = await request('/api/douban/detail?id=42');
     assert.equal(douban.status, 200);
@@ -119,9 +151,10 @@ try {
     assert.equal((await wiki.json()).title, '三体 (电视剧)');
     checks.push('typed-wiki-summary');
 
-    let limited;
-    for (let i = 0; i < 61; i++) limited = await request('/not-found', 'runtime-rate-limit');
-    assert.equal(limited.status, 429);
+    const limited = await probeNativeRateLimit(ip => request('/not-found', ip), {
+        limit: ratelimits.API_RATE_LIMITER.simple.limit,
+        periodSeconds: ratelimits.API_RATE_LIMITER.simple.period
+    });
     assert.equal(limited.headers.get('retry-after'), '60');
     checks.push('native-rate-limiter');
 
