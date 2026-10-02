@@ -78,8 +78,10 @@ test('TMDB person API encodes pagination, type filters, and person selection', a
 test('resource and poster retries request fresh Worker data', async t => {
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];
-    globalThis.fetch = async url => {
+    const cacheModes = [];
+    globalThis.fetch = async (url, options) => {
         requestedUrls.push(String(url));
+        cacheModes.push(options.cache);
         return Response.json({ ok: true });
     };
     t.after(() => { globalThis.fetch = originalFetch; });
@@ -88,8 +90,17 @@ test('resource and poster retries request fresh Worker data', async t => {
     await ResourceAPI.search('retry me', {}, { refresh: true });
     await PosterAPI.getPoster('retry me', 2024, {}, { refresh: true });
 
+    // Reusing the refresh URL must still reach the server after a partial retry.
+    await ResourceAPI.search('retry me', { cache: 'force-cache' }, { refresh: true });
+    await PosterAPI.getPoster('retry me', 2024, { cache: 'force-cache' }, { refresh: true });
+    await ResourceAPI.search('retry me');
+    await PosterAPI.getPoster('retry me', 2024);
+
     assert.match(requestedUrls[0], /\/api\/resource\?q=retry%20me&refresh=1$/);
     assert.match(requestedUrls[1], /\/api\/poster\?title=retry%20me&year=2024&refresh=1$/);
+    assert.equal(requestedUrls[2], requestedUrls[0]);
+    assert.equal(requestedUrls[3], requestedUrls[1]);
+    assert.deepEqual(cacheModes, ['no-store', 'no-store', 'no-store', 'no-store', undefined, undefined]);
 });
 
 test('API client timeout aborts a request after the documented default', async t => {
@@ -216,6 +227,25 @@ test('OMDb client can enrich a title when an IMDb id is unavailable', async t =>
 
     assert.deepEqual(result, { omdb: true, title: 'Test Movie' });
     assert.match(requestedUrl, /\/api\/omdb\?title=Test%20Movie&year=2024$/);
+});
+
+test('poster client sends the selected work identity without leaking it into fetch options', async t => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl;
+    globalThis.fetch = async (url, options) => {
+        requestedUrl = new URL(url);
+        assert.equal(options.mediaId, undefined);
+        assert.equal(options.mediaType, undefined);
+        assert.equal(options.imdbId, undefined);
+        assert.equal(options.cache, 'no-store');
+        return Response.json({ tmdbId: 101, mediaType: 'tv' });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const { PosterAPI } = await import('../js/api.js');
+    await PosterAPI.getPoster('Shared Title', 2024, { mediaId: 101, mediaType: 'tv', imdbId: 'tt1111111' }, { refresh: true });
+    assert.equal(requestedUrl.searchParams.get('id'), '101');
+    assert.equal(requestedUrl.searchParams.get('type'), 'tv');
+    assert.equal(requestedUrl.searchParams.get('imdb'), 'tt1111111');
 });
 
 test('OMDb client keeps provider failures recoverable and preserves caller aborts', async t => {

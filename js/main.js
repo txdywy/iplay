@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.9';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.9';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.9';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.9';
-import { RELEASE_VERSION } from './release.js?v=1.0.9';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.10';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.10';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.10';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.10';
+import { RELEASE_VERSION } from './release.js?v=1.0.10';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.9';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.9';
+} from './match.js?v=1.0.10';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.10';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -271,7 +271,7 @@ function updateActorFilterControls() {
     if (!state) return;
     const counts = state.counts || {};
     const filters = [
-        [els.actorFilterAll, '', '全部', state.totalResults],
+        [els.actorFilterAll, '', '全部', Number(counts.tv || 0) + Number(counts.movie || 0)],
         [els.actorFilterTv, 'tv', '电视剧', counts.tv || 0],
         [els.actorFilterMovie, 'movie', '电影', counts.movie || 0]
     ];
@@ -693,6 +693,24 @@ function pickPosterFallback(posterResult, failedSource) {
         .find(value => value && value !== failedSource) || null;
 }
 
+function selectedPosterOptions(candidate, viewModel, searchOptions) {
+    return {
+        ...searchOptions,
+        mediaId: viewModel.detail?.id || candidate?.id,
+        mediaType: viewModel.detail?.mediaType || candidate?.mediaType,
+        imdbId: viewModel.detail?.imdbId || candidate?.imdbId || viewModel.omdbProfile?.imdbId
+    };
+}
+
+function matchSelectedPosterResult(result, identity) {
+    if (!result || !identity.mediaId
+        || Number(result.tmdbId) !== Number(identity.mediaId)
+        || result.mediaType !== identity.mediaType) return null;
+    const profile = typeof result.omdb === 'object' ? result.omdb : result.omdb ? result : null;
+    if (profile && identity.imdbId && profile.imdbId !== identity.imdbId) return null;
+    return result;
+}
+
 function handlePosterLoadError() {
     if (!els.cover) return;
     const failedSource = els.cover.getAttribute('src');
@@ -712,11 +730,16 @@ function handlePosterLoadError() {
     setEnrichmentStatus(els.omdbStatus, '海报加载失败，正在查找备用海报…', true);
     const { viewModel, searchId, loadId, searchOptions } = context;
 
-    void PosterAPI.getPoster(context.enrichmentQuery || context.title, context.year, searchOptions, { refresh: true })
-        .then(posterResult => {
+    const identity = selectedPosterOptions(context.candidate, viewModel, searchOptions);
+    void PosterAPI.getPoster(context.enrichmentQuery || context.title, context.year, identity, { refresh: true })
+        .then(result => {
             if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
+            const posterResult = matchSelectedPosterResult(result, identity);
             const fallbackPoster = pickPosterFallback(posterResult, failedSource);
             if (fallbackPoster) {
+                if (posterResult.omdb) {
+                    viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
+                }
                 viewModel.posterUrl = fallbackPoster;
                 loadPoster(fallbackPoster, viewModel.title, { ...context, fallbackAttempted: true });
                 renderTmdbProfile(viewModel);
@@ -1970,12 +1993,14 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
 }
 
 function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
-    setEnrichmentStatus(els.omdbStatus, '正在查找备用海报…', true);
+    setEnrichmentStatus(els.omdbStatus, viewModel.posterUrl ? '正在核对并补充 OMDb 数据…' : '正在查找备用海报…', true);
     const posterContext = createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-    return PosterAPI.getPoster(enrichmentQuery, candidate.year, searchOptions).then(posterResult => {
+    const identity = selectedPosterOptions(candidate, viewModel, searchOptions);
+    return PosterAPI.getPoster(enrichmentQuery, candidate.year, identity).then(result => {
         if (!isActiveSearch(searchId, loadId)) return;
+        const posterResult = matchSelectedPosterResult(result, identity);
         if (!posterResult) {
-            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : '暂无备用海报');
+            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报');
             return;
         }
 
@@ -1983,57 +2008,27 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
             viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
         }
         const safePoster = toSafeImageUrl(posterResult.poster);
-        if (!viewModel.posterUrl && safePoster) {
+        const addedPoster = !viewModel.posterUrl && safePoster;
+        if (addedPoster) {
             viewModel.posterUrl = safePoster;
             loadPoster(safePoster, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
         setEnrichmentStatus(
             els.omdbStatus,
-            viewModel.omdbProfile ? '已补充 OMDb 数据' : safePoster ? '已找到备用海报' : '暂无备用海报'
+            viewModel.omdbProfile ? '已补充 OMDb 数据' : addedPoster ? '已找到备用海报' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报'
         );
     }).catch(error => {
         if (error?.name === 'AbortError') return;
-        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.omdbStatus, '暂无备用海报');
+        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报');
         console.debug('Poster enrichment skipped:', error);
     });
-}
-
-async function startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
-    setEnrichmentStatus(els.omdbStatus, '正在补充 OMDb 数据…', true);
-    const posterContext = createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-
-    let omdbProfile = null;
-    try {
-        omdbProfile = await OmdbAPI.search(enrichmentQuery, candidate.year, searchOptions);
-    } catch (error) {
-        if (error?.name === 'AbortError') return;
-        console.debug('OMDb title enrichment skipped:', error);
-    }
-
-    if (!isActiveSearch(searchId, loadId)) return;
-    if (omdbProfile) {
-        viewModel.omdbProfile = omdbProfile;
-        const safePoster = toSafeImageUrl(omdbProfile.poster);
-        if (!viewModel.posterUrl && safePoster) {
-            viewModel.posterUrl = safePoster;
-            loadPoster(safePoster, viewModel.title, posterContext);
-        }
-        renderTmdbProfile(viewModel);
-    }
-
-    if (viewModel.posterUrl) {
-        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
-        return;
-    }
-
-    await startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
 }
 
 function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
     const imdbId = viewModel.detail?.imdbId || candidate.imdbId;
     if (!imdbId) {
-        void startTitleEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+        void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
         return;
     }
 

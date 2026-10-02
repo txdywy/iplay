@@ -55,7 +55,7 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     assert.equal(body.quarkUrls[0]?.sourceUrl, 'https://wpzy.org/thread-201.htm');
     assert.ok(requests.filter(request => request.url.startsWith('https://by669.org/')).every(request => request.cookie === null));
     assert.ok(requests.every(request => request.method === 'GET'));
-    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v8-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
+    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v9-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
 });
@@ -142,6 +142,15 @@ test('WPZY restricted posts retain source cards without extracting gated links',
     assert.equal(body.resourceMeta.failedPages, 1);
     assert.equal(body.resourceMeta.restrictedPages, 1);
     assert.ok(requests.every(request => request.method === 'GET' && !request.url.includes('post-create')));
+});
+
+test('valid resource posts discussing maintenance still expose their public links', async t => {
+    const { search } = setup(t, url => new Response(url.pathname === '/search.htm'
+        ? thread(303)
+        : '<title>网站维护教程 夸克资源</title><p>教程介绍系统维护中与 service unavailable 的处理。</p><a href="https://pan.quark.cn/s/maintenance-tutorial">公开资源</a>'));
+    const { body } = await search();
+    assert.equal(body.partial, false);
+    assert.equal(body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/maintenance-tutorial');
 });
 
 test('malformed WPZY detail HTML cannot monopolize resource parsing CPU', async t => {

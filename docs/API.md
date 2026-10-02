@@ -352,7 +352,7 @@ GET /api/resource?q={query}
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `q` | string | 是 | 搜索关键词 |
-| `refresh` | `1` | 否 | 显式重试时绕过 Worker 的部分结果缓存，正常访问不需要设置 |
+| `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
 
@@ -459,6 +459,8 @@ curl "https://iplayw.hackx64.eu.org/api/omdb?title=The+Wandering+Earth&year=2019
 
 智能海报获取接口：优先从 TMDB 获取高清海报，失败时自动降级到 OMDb。若中文标题在 OMDb 未找到，还会尝试通过中文 Wikipedia 查找英文标题后再搜索 OMDb。
 
+前端始终提供已选作品的 `id` 和 `type`，TMDB 只查询该作品详情，不按片名选择另一作品。已知 `imdb` 时 OMDb 只按该 ID 查询，不降级到片名或 Wikipedia；缺少 IMDb ID 时可以按片名和年份检索，但所有带身份的 OMDb 结果都必须经 TMDB IMDb 映射确认属于已选作品后才能返回。身份校验需要配置 TMDB，无法确认时不会附加 OMDb 数据。已验证的资料即使没有海报也可返回，且包含 `tmdbId` / `mediaType`；前端再次核对身份，并保留已有的正确海报和评分。
+
 至少需要配置 TMDB 或 OMDb 中的一个来源；两者都未配置时返回 `503`。所有已配置来源健康时聚合结果缓存 24 小时；某个已配置来源临时失败但仍有可用结果时只缓存 15 分钟。若没有可用结果，接口保留上游的 `429`、`5xx` 或 `504` 状态，而不是误报为未找到。
 
 ```
@@ -471,12 +473,15 @@ GET /api/poster?title={title}&year={year}
 |------|------|------|------|
 | `title` | string | 是 | 影片标题（支持中文） |
 | `year` | string | 否 | 发行年份，用于提高匹配准确度 |
-| `refresh` | `1` | 否 | 海报加载失败后的重试会设置此参数，以绕过旧缓存 |
+| `id` | 正整数 | 否 | 已选 TMDB 作品 ID；与 `type` 必须同时提供 |
+| `type` | `movie` / `tv` | 否 | 已选作品类型，避免同名电影与剧集混用 |
+| `imdb` | string | 否 | 已知 IMDb ID，须同时提供 TMDB `id` / `type`；不再按片名兜底 |
+| `refresh` | `1` | 否 | 海报加载失败后的重试绕过 Worker 缓存；前端同时绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
 
 ```bash
-curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
+curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019&id=550988&type=movie"
 ```
 
 **Example Response（TMDB 命中）：**
@@ -507,6 +512,8 @@ curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019"
 ```json
 {
   "omdb": true,
+  "tmdbId": 550988,
+  "mediaType": "movie",
   "imdb": 6.0,
   "imdbVotes": "12,345",
   "rottenTomatoes": 70,
@@ -568,12 +575,14 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v7-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v9-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
-| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v3-cache.local/?title={title}&year={year}&sources={sources}` |
+| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v2-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
+
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v9 和海报 v4 缓存排除了此前的假成功和缺少作品身份的海报条目。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 
@@ -671,20 +680,25 @@ const { resources, wpzysResources, quarkUrls } = await ResourceAPI.search('流�
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `search` | `(query, options = {})` | `{ resources[], wpzysResources[], quarkUrls[] }` |
+| `search` | `(query, options = {}, { refresh = false } = {})` | `{ resources[], wpzysResources[], quarkUrls[], resourceMeta, partial }` |
 
 ### `PosterAPI`
 
 ```javascript
 import { PosterAPI } from './api.js';
 
-const poster = await PosterAPI.getPoster('流浪地球', '2019');
+const poster = await PosterAPI.getPoster(selected.title, selected.year, {
+    mediaId: selected.id,
+    mediaType: selected.mediaType,
+    imdbId: selected.imdbId,
+    signal: controller.signal
+});
 // 失败时返回 null
 ```
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `getPoster` | `(title, year, options = {})` | 海报对象 或 `null` |
+| `getPoster` | `(title, year, options = {}, { refresh = false } = {})` | 身份验证后的海报 / 资料对象 或 `null`；`options` 可含作品身份和取消信号 |
 
 ### 取消请求示例
 

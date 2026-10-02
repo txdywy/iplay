@@ -26,6 +26,13 @@ const ratelimits = {
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/search/multi') {
+        return Response.json({ results: [{ id: 41, media_type: 'movie', title: 'The Truman Show', original_title: 'The Truman Show', release_date: '1998-06-04' }] });
+    }
+    if (url.hostname === 'api.themoviedb.org' && /^\/3\/(tv|movie)\/101$/.test(url.pathname)) {
+        const tv = url.pathname.includes('/tv/');
+        return Response.json({ id: 101, title: tv ? undefined : 'Shared Title', name: tv ? 'Shared Title' : undefined, poster_path: tv ? '/series.jpg' : '/movie.jpg' });
+    }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/603') {
         return Response.json({ id: 603, title: 'Runtime Movie', overview: 'Verified movie overview.' });
     }
@@ -49,6 +56,7 @@ async function upstream(request) {
             return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
+        if (wpzyMode === 'detail-maintenance') return new Response('<title>Service unavailable</title><h1>Maintenance in progress</h1>');
         return new Response(wpzyMode === 'restricted'
             ? '<h3>【待操作】点击&lt;立即回复&gt;查看资源（开通VIP会员无需操作）</h3>'
             : '<p>https://pan.quark.cn/s/runtime-wpzy</p>');
@@ -77,6 +85,23 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const literalTitle = await request('/api/tmdb/search?q=The%20Truman%20Show');
+    const literalTitleData = await literalTitle.json();
+    assert.equal(literalTitle.status, 200);
+    assert.equal(literalTitleData.results[0]?.id, 41);
+    assert.equal(literalTitleData.searchMeta.mediaType, null);
+    checks.push('literal-title-over-inferred-type');
+
+    for (const mediaType of ['tv', 'movie', 'tv']) {
+        const poster = await request(`/api/poster?title=Shared%20Title&id=101&type=${mediaType}`);
+        const posterData = await poster.json();
+        assert.equal(poster.status, 200);
+        assert.equal(posterData.tmdbId, 101);
+        assert.equal(posterData.mediaType, mediaType);
+        assert.ok(posterData.poster.endsWith(mediaType === 'tv' ? '/series.jpg' : '/movie.jpg'));
+    }
+    checks.push('selected-poster-and-native-cache-identity-isolation');
 
     for (const phase of ['cold', 'cached']) {
         const responses = await Promise.all(Array.from({ length: 5 }, (_, i) => request('/api/resource?q=Runtime%20Movie', `runtime-${phase}-${i}`)));
@@ -120,6 +145,16 @@ try {
     assert.equal(maintenanceData.resourceMeta.providerIssues.wpzys, 'upstream_unavailable');
     assert.equal(maintenance.headers.get('cache-control'), 'public, max-age=900');
     checks.push('wpzy-maintenance-fails-closed');
+
+    wpzyMode = 'detail-maintenance';
+    const detailMaintenance = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-detail-maintenance');
+    const detailMaintenanceData = await detailMaintenance.json();
+    assert.equal(detailMaintenance.status, 200);
+    assert.equal(detailMaintenanceData.partial, true);
+    assert.equal(detailMaintenanceData.resourceMeta.failedPages, 1);
+    assert.equal(detailMaintenanceData.wpzysResources.length, 1);
+    assert.equal(detailMaintenance.headers.get('cache-control'), 'public, max-age=900');
+    checks.push('detail-maintenance-keeps-source-and-short-cache');
 
     wpzyMode = 'empty';
     const empty = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-empty');

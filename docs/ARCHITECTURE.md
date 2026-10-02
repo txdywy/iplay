@@ -134,7 +134,7 @@ User submits a search
 ### 3. Poster Resolution Flow
 
 ```
-Frontend requests /api/poster?title=X&year=Y
+Frontend requests /api/poster?title=X&year=Y&id=ID&type=TYPE[&imdb=IMDB]
         |
         v
 +-------+-------+
@@ -146,10 +146,10 @@ Frontend requests /api/poster?title=X&year=Y
    |         |
    v         v
 TMDB      OMDb
-search    search
+detail    ID/title lookup
    |         |
    v         v
-TMDB    OMDb poster
+TMDB    OMDb profile
 poster  found?
 found?      |
    |    +----+----+
@@ -169,6 +169,8 @@ found?      |
    Return aggregated
    poster + ratings
 ```
+
+For selected works, TMDB loads only the exact ID/type. Every OMDb profile must map back to that TMDB identity; a known IMDb ID never falls back to title/Wikipedia lookup. Verified metadata can be returned even without an image. The frontend rejects mismatched TMDB/IMDb responses and preserves already-confirmed metadata. Legacy title-only API clients retain title lookup behavior. Refresh retries bypass both browser HTTP cache and Worker cache.
 
 ---
 
@@ -195,7 +197,7 @@ found?      |
 | **TMDB Handler** | `_worker.js` | Title search (`/api/tmdb/search`), actor filmography search (`/api/tmdb/person`), and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Searches normalize query intent, score matches, and use bounded fallbacks; raw upstream responses are cached for 24h. |
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **OMDb Handler** | `_worker.js` | Proxy for IMDb/Rotten Tomatoes data (`/api/omdb`). Supports search by title+year or by IMDb ID. Caches for 24h. |
-| **Poster Handler** | `_worker.js` | Aggregates poster data from configured TMDB and OMDb sources. When no TMDB poster exists and direct OMDb title lookup misses, it can use Wikipedia to discover an English title. Total upstream work is bounded to about 15s; complete results cache for 24h; degraded results cache for 15 minutes. |
+| **Poster Handler** | `_worker.js` | Aggregates images and metadata bound to the selected TMDB ID/type. OMDb uses a known IMDb ID or a title lookup verified through TMDB external-ID mapping. Only unknown-IMDb title lookups may use Wikipedia's English title fallback. Total upstream work is bounded to about 15s; complete results cache for 24h; degraded results cache for 15 minutes. |
 | **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
 | **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating By669 and WPZY. Keeps provider lists separate, fairly selects up to 12 detail pages across both providers, extracts and deduplicates at most 100 share URLs with bounded page/total work, and caches complete results for 12h. |
 
@@ -216,7 +218,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
 | `GET` | `/api/resource` | `q` (string) | Search By669 and WPZY, then extract and deduplicate Quark netdisk URLs. |
 | `GET` | `/api/omdb` | `title` (string), `year` (string) OR `imdb` (string) | OMDb proxy for IMDb/Rotten Tomatoes ratings and metadata. |
-| `GET` | `/api/poster` | `title` (string), `year` (string) | Poster fetch with TMDB first, OMDb fallback, Wikipedia title fallback. |
+| `GET` | `/api/poster` | `title`, optional `year`, paired `id` / `type`, optional `imdb`, `refresh=1` | Exact selected-work poster and verified OMDb metadata; legacy title-only fallback. |
 | `GET` | `/api/wiki/zh` | `q` (string), optional `type` / `year` | Related Chinese Wikipedia summary with media/year validation. |
 
 ### Response Formats
@@ -374,7 +376,7 @@ Worker deploy (manual or via Wrangler CLI):
   - TMDB/Douban/OMDb/Wiki: 24 hours (`max-age=86400`)
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
-- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v7-cache.local/`, and `https://poster-v3-cache.local/`) to avoid polluting external cache namespaces. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v2-cache.local` to exclude old inaccurate entries.
+- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v9-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v2-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching as well.
 - The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
 
 ### Data Privacy
@@ -387,7 +389,7 @@ Worker deploy (manual or via Wrangler CLI):
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
 - **Resource site dependency:** The `/api/resource` endpoint depends on By669 and WPZY availability and markup. One provider may fail without hiding the other's results; if both fail the endpoint returns `502`.
-- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v7 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices.
+- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v9 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
 - **OMDb configuration:** Without `OMDB_API_KEY`, OMDb enrichment is intentionally unavailable while TMDB and other sources continue to work.
 
 ---

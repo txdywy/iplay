@@ -50,7 +50,7 @@ test('inline decorative icons are hidden from screen readers and external icon f
 test('result enrichment keeps the critical path independent from resource scanning', () => {
     assert.match(mainJs, /scheduleResourceLoad\(candidate, searchId, searchOptions, loadId\)/);
     assert.match(mainJs, /OmdbAPI\.getById\(imdbId, searchOptions\)/);
-    assert.match(mainJs, /OmdbAPI\.search\(enrichmentQuery, candidate\.year, searchOptions\)/);
+    assert.match(mainJs, /PosterAPI\.getPoster\(enrichmentQuery, candidate\.year, identity\)/);
     assert.match(mainJs, /new AbortController\(\)/);
     assert.match(mainJs, /资源扫描部分完成/);
     assert.match(mainJs, /海报加载失败，正在查找备用海报/);

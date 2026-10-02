@@ -125,6 +125,88 @@ test('poster search rejects a popular but unrelated title', async t => {
     assert.equal(response.status, 404);
 });
 
+test('selected poster identities never fall back to a same-title movie when the selected series has no image', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', first_air_date: '2024-01-01', poster_path: null });
+        return Response.json({ results: [{ id: 202, media_type: 'movie', title: 'Shared Title', release_date: '2024-01-01', poster_path: '/wrong-movie.jpg' }] });
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('selected poster lookups preserve a known IMDb identity instead of title-search metadata', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
+        if (url.hostname === 'api.themoviedb.org') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        const exact = url.searchParams.get('i') === 'tt1111111';
+        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: exact ? 'series' : 'movie',
+            imdbID: exact ? 'tt1111111' : 'tt2222222', imdbRating: exact ? '8.8' : '2.0', Poster: 'https://example.org/poster.jpg' });
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv&imdb=tt1111111'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.imdbId, 'tt1111111');
+    assert.equal(data.imdb, 8.8);
+    assert.equal(data.tmdbId, 101);
+    assert.equal(data.mediaType, 'tv');
+});
+
+test('title-based OMDb poster metadata must map back to the selected TMDB identity', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/find/tt2222222') return Response.json({ movie_results: [{ id: 202, title: 'Shared Title' }], tv_results: [] });
+        if (url.hostname === 'zh.wikipedia.org') return Response.json({ query: { search: [] } });
+        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'movie', imdbID: 'tt2222222', Poster: 'https://example.org/wrong.jpg' });
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('even an explicit IMDb ID cannot relabel a different TMDB work as the selection', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/find/tt2222222') return Response.json({ movie_results: [{ id: 202, title: 'Shared Title' }], tv_results: [] });
+        return Response.json({ Response: 'True', Title: 'Shared Title', imdbID: 'tt2222222', Poster: 'https://example.org/wrong.jpg' });
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&id=101&type=tv&imdb=tt2222222'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('identity-verified title enrichment returns ratings even without an OMDb poster', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
+        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'series', imdbID: 'tt1111111', imdbRating: '8.8', Poster: 'N/A' });
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&id=101&type=tv'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.tmdbId, 101);
+    assert.equal(data.mediaType, 'tv');
+    assert.equal(data.imdbId, 'tt1111111');
+    assert.equal(data.imdb, 8.8);
+    assert.equal(data.poster, null);
+});
+
+test('poster identity parameters fail before upstream access when incomplete or invalid', async t => {
+    let fetchCalls = 0;
+    const ctx = mockUpstreams(t, async () => { fetchCalls += 1; return Response.json({}); });
+    for (const params of ['id=101', 'type=tv', 'id=-1&type=tv', 'id=101&type=person', 'imdb=tt1111111', 'id=101&type=tv&imdb=bad']) {
+        const response = await worker.fetch(request(`/api/poster?title=Test&${params}`), { TMDB_API_KEY: 'test' }, ctx);
+        assert.equal(response.status, 400, params);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
+    assert.equal(fetchCalls, 0);
+});
+
 test('OMDb year fallback cannot attach a different remake to the requested year', async t => {
     const ctx = mockUpstreams(t, async url => new URL(url).searchParams.has('y')
         ? Response.json({ Response: 'False', Error: 'Movie not found!' })
@@ -146,6 +228,29 @@ test('HTTP 200 challenge detail pages are reported as incomplete resource scans'
     assert.equal(data.partial, true);
     assert.equal(data.resourceMeta.failedPages, 1);
     assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+});
+
+test('HTTP 200 resource detail maintenance pages stay partial and recoverable for both providers', async t => {
+    let provider = 'wpzy';
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/api/discussions') return Response.json({ data: provider === 'by669'
+            ? [{ id: '42', attributes: { title: 'Review Movie 夸克' } }] : [] });
+        if (url.pathname === '/search.htm') return new Response(provider === 'wpzy'
+            ? '<li data-href="thread-100.htm"><a href="thread-100.htm">Review Movie 夸克</a></li>'
+            : WPZY_EMPTY_SEARCH_HTML);
+        return new Response('<title>网站维护</title><p>系统维护中，请稍后再试。</p>');
+    });
+    for (provider of ['wpzy', 'by669']) {
+        const response = await worker.fetch(request('/api/resource?q=Review%20Movie&refresh=1'), {}, ctx);
+        const data = await response.json();
+        assert.equal(response.status, 200);
+        assert.equal(data.partial, true, provider);
+        assert.equal(data.resourceMeta.failedPages, 1, provider);
+        assert.equal(data.resources.length + data.wpzysResources.length, 1, provider);
+        assert.deepEqual(data.quarkUrls, []);
+        assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+    }
 });
 
 test('Douban streaming text chunks preserve full ratings, votes and genres', async t => {
@@ -199,6 +304,31 @@ test('a wrong-year exact title requires confirmation instead of automatic select
     assert.equal(data.results[0]?.title, 'Dune');
     assert.notEqual(data.results[0]?.matchConfidence, 'high');
     assert.ok(data.searchMeta.matchScore < 0.72);
+});
+
+test('literal film and series titles do not become inferred media-type instructions', async t => {
+    const titles = [
+        { id: 41, media_type: 'movie', title: 'The Truman Show' },
+        { id: 42, media_type: 'movie', title: 'The TV Set' },
+        { id: 43, media_type: 'tv', name: '电影少女' }
+    ];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        return Response.json({ results: url.pathname === '/3/search/multi'
+            ? titles.filter(item => (item.title || item.name) === url.searchParams.get('query'))
+            : [] });
+    });
+    for (const item of titles) {
+        const title = item.title || item.name;
+        const response = await worker.fetch(request(`/api/tmdb/search?q=${encodeURIComponent(title)}`), { TMDB_API_KEY: 'test' }, ctx);
+        const data = await response.json();
+        assert.equal(response.status, 200);
+        assert.equal(data.results[0]?.id, item.id, title);
+        assert.equal(data.results[0]?.mediaType, item.media_type, title);
+        assert.equal(data.results[0]?.matchConfidence, 'high', title);
+        assert.equal(data.searchMeta.mediaType, null, title);
+        assert.equal(data.searchMeta.normalizedQuery, title);
+    }
 });
 
 test('unrelated Douban suggestions cannot become trusted TMDB aliases', async t => {

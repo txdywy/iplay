@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { URLSearchParams } from 'node:url';
 
 // Explicit opt-in only: this performs public read-only requests, not mocked CI tests.
 const site = process.env.LIVE_BASE_URL || 'https://iplay.hackx64.eu.org/';
@@ -29,10 +30,14 @@ for (const path of ['index.html', 'js/main.js', 'js/api.js', 'js/match.js', 'js/
     results.push({ check: path, status: 'exact-release-match' });
 }
 
-for (const query of ['流浪地球', 'The Matrix']) {
+for (const query of ['流浪地球', 'The Matrix', 'The Truman Show']) {
     const { data } = await getApi(`/api/tmdb/search?q=${encodeURIComponent(query)}`);
     assert.ok(data.results?.length > 0, `${query}: no results`);
     assert.ok(data.searchMeta?.matchScore >= 0.72, `${query}: unreliable match`);
+    if (query === 'The Truman Show') {
+        assert.ok(data.results.some(item => item.id === 37165 && item.mediaType === 'movie'));
+        assert.equal(data.searchMeta.mediaType, null, 'literal Show must not impose a TV filter');
+    }
     results.push({ check: `search:${query}`, status: 'passed', count: data.results.length });
 }
 
@@ -43,6 +48,13 @@ for (const [id, type] of [[603, 'movie'], [1399, 'tv']]) {
     assert.ok(data.title && data.summary && data.genres?.length);
     if (type === 'tv') assert.ok(data.seasons?.length && data.totalEpisodes > 0);
     results.push({ check: `detail:${type}:${id}`, status: 'passed', title: data.title });
+    const posterParams = new URLSearchParams({ title: data.title, id: String(id), type });
+    if (data.imdbId) posterParams.set('imdb', data.imdbId);
+    const { data: selectedPoster } = await getApi(`/api/poster?${posterParams}`);
+    assert.equal(selectedPoster.tmdbId, id);
+    assert.equal(selectedPoster.mediaType, type);
+    assert.equal(selectedPoster.poster, data.poster);
+    results.push({ check: `selected-poster:${type}:${id}`, status: 'passed' });
 }
 
 const { data: person } = await getApi('/api/tmdb/person?id=31&q=Tom%20Hanks&limit=2');
