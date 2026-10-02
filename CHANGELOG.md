@@ -15,6 +15,7 @@
 - Public-route regressions for literal titles, selected poster/IMDb identity, verified metadata without images, invalid identity parameters and both resource providers' detail maintenance pages.
 - Browser checks for mismatched TMDB/IMDb poster responses, identity-verified title enrichment, fresh repeated retries and stable actor filter totals; native Workers checks for literal-title recognition, identity-isolated poster caches and partial detail maintenance scans.
 - Live release checks for The Truman Show and exact selected movie/TV posters, alongside byte-for-byte static release matching.
+- Isolated browser startup waits up to 60 seconds for healthy cold CI Chrome, checks process exit immediately and bounds each debug request, avoiding false failures before page tests begin.
 
 ## [1.0.9] - 2026-10-02
 
