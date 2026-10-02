@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.9] - 2026-10-02
+
+### Fixed
+
+- Resource completion retries remain functional after retrying TMDB details; retained results are rebound to the current request ID and abort signal.
+- HTML tag cleanup and WPZY result-item scanning avoid repeated full-page scans on malformed input; incomplete result markup is rejected as an upstream failure.
+- HTTP 200 WPZY maintenance, soft-block and unknown pages are no longer cached as healthy empty searches. Recognized empty results remain valid; a v8 resource cache namespace excludes earlier false successes.
+- API error responses only expose application-controlled messages, never raw transport/provider diagnostics. Provider HTTP statuses remain intact and structured logs redact Bearer/Basic credentials as well as API keys and login cookies.
+- Native rate-limit verification accounts for wall-clock window rollover using bounded fresh-key attempts, while still requiring the configured quota and a real HTTP 429.
+
+### Added
+
+- Browser regression for resource completion after detail retry, malformed-HTML performance checks, safe-error fault injection across API routes, and deterministic rollover/negative rate-limit tests.
+- A credential-free empty-search fixture verified against WPZY's current page structure; native Workers checks cover maintenance, valid empty searches and safe provider-error responses.
+
 ## [1.0.8] - 2026-10-01
 
 ### Fixed

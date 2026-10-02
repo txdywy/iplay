@@ -168,7 +168,7 @@ export default {
             return withCors(jsonResponse({ error: "Not Found" }, 404), request, env);
         } catch (error) {
             logEvent("error", "request_failed", { path, error: logErrorMessage(error), status: getErrorStatus(error) });
-            return withCors(jsonResponse({ error: error.message || "Internal Server Error" }, getErrorStatus(error)), request, env);
+            return withCors(errorResponse(error, 500), request, env);
         }
     },
 
@@ -195,6 +195,7 @@ function logErrorMessage(error) {
     return String(error?.message || error || "Unknown error")
         .replace(/([?&](?:api_key|apikey|access_token|token)=)[^&\s]+/giu, "$1[REDACTED]")
         .replace(/(\bbbs_(?:token|sid)\s*=\s*)[^;\s"<>]+/giu, "$1[REDACTED]")
+        .replace(/(\b(?:Bearer|Basic)\s+)[^\s;,"<>]+/giu, "$1[REDACTED]")
         .slice(0, 500);
 }
 
@@ -249,10 +250,23 @@ function validateOptionalYear(value) {
     return { value: text };
 }
 
-function createHttpError(message, status = 500) {
+const publicHttpErrors = new WeakMap();
+
+function createHttpError(message, status = 500, publicMessage = message) {
     const error = new Error(message);
     error.status = status;
+    // Only application-created errors have public messages. Provider-supplied
+    // diagnostics must pass a separate, fixed publicMessage at their boundary.
+    publicHttpErrors.set(error, publicMessage);
     return error;
+}
+
+function errorResponse(error, fallbackStatus = 502) {
+    const status = getErrorStatus(error, fallbackStatus);
+    const publicMessage = error && typeof error === "object" ? publicHttpErrors.get(error) : null;
+    return jsonResponse({ error: publicMessage || (status === 504
+        ? "Upstream request timed out"
+        : status === 500 ? "Internal Server Error" : "Upstream service unavailable") }, status);
 }
 
 const UPSTREAM_TIMEOUT_MS = 10000;
@@ -827,7 +841,7 @@ async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
 
     if (!response.ok) {
         const message = data && data.status_message ? data.status_message : `TMDB HTTP ${response.status}`;
-        throw createHttpError(message, response.status);
+        throw createHttpError(message, response.status, response.status === 404 ? "TMDB resource not found" : "TMDB unavailable");
     }
 
     if (!isValidTmdbPayload(path, data)) {
@@ -1550,7 +1564,7 @@ async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
         });
     } catch (error) {
         logEvent("error", "tmdb_person_failed", { error: logErrorMessage(error) });
-        return jsonResponse({ error: error.message }, error.status || 502);
+        return errorResponse(error);
     }
 }
 
@@ -1606,7 +1620,7 @@ async function handleTmdbSearch(query, env, ctx) {
                 return buildTmdbSearchResponse(ranked, intent, 1);
             } catch (error) {
                 logEvent("error", "tmdb_external_id_failed", { error: logErrorMessage(error) });
-                return jsonResponse({ error: error.message }, error.status || 502);
+                return errorResponse(error);
             }
         }
 
@@ -1667,7 +1681,7 @@ async function handleTmdbSearch(query, env, ctx) {
         return buildTmdbSearchResponse(ranked, intent, attempts);
     } catch (e) {
         logEvent("error", "tmdb_search_failed", { error: logErrorMessage(e) });
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -1701,12 +1715,12 @@ async function handleTmdbDetail(id, type, env, ctx) {
         } catch (e) {
             lastError = e;
             if (e.status !== 404) {
-                return jsonResponse({ error: e.message }, e.status || 502);
+                return errorResponse(e);
             }
         }
     }
 
-    return jsonResponse({ error: lastError ? lastError.message : "TMDB detail not found" }, 404);
+    return errorResponse(lastError || createHttpError("TMDB detail not found", 404), 404);
 }
 
 const DOUBAN_SEARCH_HEADERS = {
@@ -1749,7 +1763,7 @@ async function handleDoubanSearch(query, ctx) {
         return cacheJson(ctx, cacheKey, data, 86400);
     } catch (e) {
         logEvent("error", "douban_search_failed", { error: logErrorMessage(e) });
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -1887,7 +1901,7 @@ async function handleDoubanDetail(id, ctx) {
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
         logEvent("error", "douban_detail_failed", { error: logErrorMessage(e) });
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -2081,7 +2095,9 @@ function decodeHtmlEntities(value) {
 }
 
 function stripHtml(value) {
-    return decodeHtmlEntities(value.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+    // Do not retry every '<' against the same unterminated tag. Excluding
+    // nested openers bounds the work for malformed input to a linear scan.
+    return decodeHtmlEntities(value.replace(/<[^<>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
 function resolveResourceUrl(rawUrl, baseUrl) {
@@ -2229,14 +2245,21 @@ async function fetchBy669Resources(query, deadline = null) {
 
 function parseWpzysResources(html, query) {
     const resources = [];
+    let hasResultItems = false;
     const seenUrls = new Set();
     const normalizedQuery = normalizeMatchText(query);
-    const itemPattern = /<li\b[^>]*data-href=["']([^"']*thread-\d+\.htm[^"']*)["'][\s\S]*?<\/li>/gi;
+    const itemPattern = /<li\b[^<>]*\bdata-href=["']([^"'<>]*thread-\d+\.htm[^"'<>]*)["'][^<>]*>/gi;
+    const itemEndPattern = /<\/li\s*>/gi;
     let match;
 
     while ((match = itemPattern.exec(html)) !== null) {
-        const block = match[0];
+        itemEndPattern.lastIndex = itemPattern.lastIndex;
+        const itemEnd = itemEndPattern.exec(html);
+        if (!itemEnd) break;
+        const block = html.slice(match.index, itemEndPattern.lastIndex);
+        itemPattern.lastIndex = itemEndPattern.lastIndex;
         const rawUrl = match[1];
+        if (rawUrl.length > 2048) continue;
         const resolvedUrl = resolveResourceUrl(rawUrl, WPZYS_BASE);
         if (!resolvedUrl) continue;
         const parsedUrl = new URL(resolvedUrl);
@@ -2246,12 +2269,19 @@ function parseWpzysResources(html, query) {
         if (seenUrls.has(url)) continue;
 
         const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
-        const titlePattern = new RegExp(`<a[^>]+href=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
-        const titleMatch = block.match(titlePattern) || block.match(/<a[^>]+href=["'][^"']*thread-\d+\.htm[^"']*["'][^>]*>([\s\S]*?)<\/a>/i);
-        const title = (titleMatch ? stripHtml(titleMatch[1]) : stripHtml(block)).slice(0, 300).trim();
+        const titlePattern = new RegExp(`<a\\b[^<>]*\\bhref=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^<>]*>`, "i");
+        const titleMatch = titlePattern.exec(block) || /<a\b[^<>]*\bhref=["'][^"'<>]*thread-\d+\.htm[^"'<>]*["'][^<>]*>/i.exec(block);
+        const titleEndPattern = /<\/a\s*>/gi;
+        titleEndPattern.lastIndex = titleMatch ? titleMatch.index + titleMatch[0].length : block.length;
+        const titleEnd = titleEndPattern.exec(block);
+        const title = stripHtml(titleEnd
+            ? block.slice(titleMatch.index + titleMatch[0].length, titleEnd.index)
+            : block).slice(0, 300).trim();
         const normalizedTitle = normalizeMatchText(title);
 
-        if (!title || (normalizedQuery && !normalizedTitle.includes(normalizedQuery))) continue;
+        if (!title) continue;
+        hasResultItems = true;
+        if (normalizedQuery && !normalizedTitle.includes(normalizedQuery)) continue;
         if (!isQuarkResourceText(block)) continue;
 
         seenUrls.add(url);
@@ -2264,11 +2294,21 @@ function parseWpzysResources(html, query) {
         if (resources.length >= RESOURCE_MAX_PROVIDER_RESULTS) break;
     }
 
-    return resources;
+    return { resources, hasResultItems };
 }
 
 function isChallengePage(html) {
     return /(?:id=["']challenge-platform["']|\bcf-chl-|<title>\s*just a moment(?:\.\.\.)?\s*<\/title>|enable javascript and cookies to continue)/i.test(html);
+}
+
+function isWpzyEmptySearchPage(html) {
+    // An empty response must be a recognized search result, not arbitrary
+    // HTTP 200 HTML (maintenance pages and soft blocks often use that status).
+    return /<form\b[^<>]*\bclass=["'][^"'<>]*\bfxz-search-panel\b[^"'<>]*["'][^<>]*>/i.test(html)
+        && /<input\b[^<>]*\bname=["']keyword["'][^<>]*>/i.test(html)
+        && /<div\b[^<>]*\bclass=["'][^"'<>]*\bfxz-search-meta\b[^"'<>]*["'][^<>]*>/i.test(html)
+        && /<div\b[^<>]*\bclass=["'][^"'<>]*\bfxz-empty\b[^"'<>]*["'][^<>]*>/i.test(html)
+        && /找到约\s*0\s*条结果/.test(stripHtml(html));
 }
 
 async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
@@ -2295,8 +2335,11 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
         throw createHttpError("WPZY returned a challenge page", 502);
     }
     if (isWpzyLoginPage(html)) throw createResourceAccessError("login_required");
-
-    return parseWpzysResources(html, query);
+    const parsed = parseWpzysResources(html, query);
+    if (!parsed.hasResultItems && !isWpzyEmptySearchPage(html)) {
+        throw createHttpError("WPZY returned an unrecognized search page", 502);
+    }
+    return parsed.resources;
 }
 
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
@@ -2391,7 +2434,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v7-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v8-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2441,7 +2484,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
             }
         }, isPartial ? 900 : 43200);
     } catch (e) {
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -2460,7 +2503,7 @@ function getOmdbApplicationError(data) {
     if (/not found|no such title/i.test(message)) return null;
 
     const status = /limit|too many requests/i.test(message) ? 429 : 502;
-    return createHttpError(`OMDb: ${message}`, status);
+    return createHttpError(`OMDb: ${message}`, status, status === 429 ? "OMDb: Request limit reached!" : "OMDb service unavailable");
 }
 
 async function handleOmdbById(imdbId, env, ctx) {
@@ -2494,7 +2537,7 @@ async function handleOmdbById(imdbId, env, ctx) {
         if (applicationError) throw applicationError;
         return jsonResponse({ error: "OMDb: Not found" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -2520,7 +2563,7 @@ async function handleOmdbSearch(title, year, env, ctx) {
         if (data) return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
         return jsonResponse({ error: "Not found on OMDb" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -2669,12 +2712,12 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
 
         if (sourceFailures.length > 0) {
             const failure = sourceFailures.find(error => error?.status === 504) || sourceFailures[0];
-            return jsonResponse({ error: failure.message }, failure.status || 502);
+            return errorResponse(failure);
         }
 
         return jsonResponse({ error: "No poster found" }, 404);
     } catch (e) {
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }
 
@@ -2849,6 +2892,6 @@ async function handleWikiZh(query, ctx, options = {}) {
 
         return cacheJson(ctx, cacheKey, result, 86400);
     } catch (e) {
-        return jsonResponse({ error: e.message }, e.status || 502);
+        return errorResponse(e);
     }
 }

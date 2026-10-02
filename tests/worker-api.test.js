@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker from '../worker/_worker.js';
+import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 
 function muteConsole(t, method) {
     const original = console[method];
@@ -2625,7 +2626,7 @@ test('resource refresh bypasses a cached partial result', async t => {
         if (parsed.hostname === 'wpzy.org') {
             wpzysCalls += 1;
             if (wpzysCalls === 1) return new Response('provider unavailable', { status: 503 });
-            return new Response('<html><body>No matching resources</body></html>');
+            return new Response(WPZY_EMPTY_SEARCH_HTML);
         }
         throw new Error('Unexpected provider request: ' + url);
     };

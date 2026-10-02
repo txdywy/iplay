@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
+import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 
 const LOGIN_COOKIE = 'bbs_token=test-session-a; bbs_sid=test-sid';
 const title = '流浪地球';
@@ -25,8 +26,8 @@ function setup(t, upstream) {
     };
     t.after(() => { globalThis.fetch = originalFetch; globalThis.caches = originalCaches; });
     const ctx = { waitUntil(promise) { writes.push(promise); } };
-    async function search(cookie = LOGIN_COOKIE) {
-        const response = await worker.fetch(new Request(`https://worker.test/api/resource?q=${encodeURIComponent(title)}`, {
+    async function search(cookie = LOGIN_COOKIE, { refresh = false } = {}) {
+        const response = await worker.fetch(new Request(`https://worker.test/api/resource?q=${encodeURIComponent(title)}${refresh ? '&refresh=1' : ''}`, {
             headers: { 'cf-connecting-ip': t.name, Cookie: 'bbs_token=untrusted-client-cookie' }
         }), cookie ? { WPZY_COOKIE: cookie } : {}, ctx);
         const body = await response.json();
@@ -54,7 +55,7 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     assert.equal(body.quarkUrls[0]?.sourceUrl, 'https://wpzy.org/thread-201.htm');
     assert.ok(requests.filter(request => request.url.startsWith('https://by669.org/')).every(request => request.cookie === null));
     assert.ok(requests.every(request => request.method === 'GET'));
-    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v7-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
+    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v8-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
 });
@@ -77,6 +78,57 @@ test('WPZY HTTP 200 login forms are not mistaken for no matching resources', asy
     assert.equal(body.resourceMeta.providerIssues.wpzys, 'login_required');
 });
 
+test('WPZY HTTP 200 maintenance pages are recoverable provider failures, not healthy empty searches', async t => {
+    const { search } = setup(t, () => new Response('<html><title>网站维护</title><p>请求过于频繁，请稍后重试。</p></html>'));
+    const { response, body } = await search();
+    assert.equal(response.status, 200);
+    assert.equal(body.partial, true);
+    assert.equal(body.resourceMeta.providers.wpzys, 'failed');
+    assert.equal(body.resourceMeta.providerIssues.wpzys, 'upstream_unavailable');
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+});
+
+test('recognized WPZY empty search results remain healthy and cacheable', async t => {
+    const { search } = setup(t, () => new Response(WPZY_EMPTY_SEARCH_HTML));
+    const { response, body } = await search();
+    assert.equal(body.partial, false);
+    assert.equal(body.resourceMeta.providers.wpzys, 'ok');
+    assert.deepEqual(body.wpzysResources, []);
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=43200');
+});
+
+test('unknown WPZY HTTP 200 documents do not qualify as empty search results', async t => {
+    const { search } = setup(t, () => new Response('<html>No matching resources</html>'));
+    const { response, body } = await search();
+    assert.equal(body.resourceMeta.providers.wpzys, 'failed');
+    assert.equal(body.partial, true);
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+});
+
+test('valid WPZY results without Quark links are not provider failures', async t => {
+    const { search } = setup(t, () => new Response('<li data-href="thread-901.htm"><a href="thread-901.htm">流浪地球 百度</a></li>'));
+    const { body } = await search();
+    assert.equal(body.resourceMeta.providers.wpzys, 'ok');
+    assert.equal(body.partial, false);
+    assert.deepEqual(body.wpzysResources, []);
+});
+
+test('a cached WPZY maintenance result can be refreshed after upstream recovery', async t => {
+    let recovered = false;
+    const { search, requests } = setup(t, url => new Response(!recovered
+        ? '<title>网站维护</title>'
+        : url.pathname === '/search.htm' ? thread(902) : 'https://pan.quark.cn/s/recovered'));
+    assert.equal((await search()).body.partial, true);
+    const requestsAfterFailure = requests.length;
+    recovered = true;
+    assert.equal((await search()).body.partial, true);
+    assert.equal(requests.length, requestsAfterFailure, 'partial results can still use their short cache');
+    const { response, body } = await search(LOGIN_COOKIE, { refresh: true });
+    assert.equal(body.partial, false);
+    assert.equal(body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/recovered');
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=43200');
+});
+
 test('WPZY restricted posts retain source cards without extracting gated links', async t => {
     const { search, requests } = setup(t, url => {
         if (url.pathname === '/search.htm') return new Response(thread(301) + thread(302));
@@ -90,6 +142,26 @@ test('WPZY restricted posts retain source cards without extracting gated links',
     assert.equal(body.resourceMeta.failedPages, 1);
     assert.equal(body.resourceMeta.restrictedPages, 1);
     assert.ok(requests.every(request => request.method === 'GET' && !request.url.includes('post-create')));
+});
+
+test('malformed WPZY detail HTML cannot monopolize resource parsing CPU', async t => {
+    const { search } = setup(t, url => new Response(url.pathname === '/search.htm'
+        ? thread(801) : '<'.repeat(40000)));
+    const startedAt = globalThis.performance.now();
+    const { response, body } = await search();
+    const elapsedMs = globalThis.performance.now() - startedAt;
+    assert.equal(response.status, 200);
+    assert.equal(body.wpzysResources.length, 1);
+    assert.ok(elapsedMs < 500, `40KB malformed HTML took ${elapsedMs.toFixed(1)}ms (budget: 500ms)`);
+});
+
+test('unterminated WPZY result items are rejected without repeated full-page scans', async t => {
+    const { search } = setup(t, () => new Response('<li data-href="thread-801.htm">'.repeat(4000)));
+    const startedAt = globalThis.performance.now();
+    const { body } = await search();
+    const elapsedMs = globalThis.performance.now() - startedAt;
+    assert.equal(body.resourceMeta.providers.wpzys, 'failed');
+    assert.ok(elapsedMs < 500, `Unterminated result items took ${elapsedMs.toFixed(1)}ms (budget: 500ms)`);
 });
 
 test('WPZY cache and in-flight work are isolated by normalized login state', async t => {
@@ -134,7 +206,7 @@ test('host-only WPZY credentials are not sent to the www alias', async t => {
 });
 
 test('WPZY validates cookies and excludes analytics cookies from the upstream header', async t => {
-    const { search, requests } = setup(t, () => new Response('<html>No matching resources</html>'));
+    const { search, requests } = setup(t, () => new Response(WPZY_EMPTY_SEARCH_HTML));
     await search('bbs_token=test-session-a; HMACCOUNT=tracking; bbs_sid=test-sid');
     assert.equal(requests.find(request => request.url.startsWith('https://wpzy.org/'))?.cookie, LOGIN_COOKIE);
     requests.length = 0;

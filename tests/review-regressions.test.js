@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
+import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 
 function mockUpstreams(t, fetcher) {
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
@@ -16,6 +17,69 @@ function request(path) {
         headers: { 'cf-connecting-ip': encodeURIComponent(path) }
     });
 }
+
+test('unexpected upstream exceptions do not expose request URLs or credentials to API clients', async t => {
+    const ctx = mockUpstreams(t, async url => { throw new Error(`Fetch failed for ${url}; Authorization: Bearer private-bearer; bbs_token=private-cookie`); });
+    const response = await worker.fetch(request('/api/omdb?imdb=tt1234567'), { OMDB_API_KEY: 'private-omdb-key' }, ctx);
+    const data = await response.json();
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(data, { error: 'Upstream service unavailable' });
+    assert.ok(!JSON.stringify(data).includes('private-'));
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('all API failure paths hide raw diagnostics while logs redact authentication fragments', async t => {
+    const logs = [];
+    t.mock.method(console, 'error', message => logs.push(String(message)));
+    t.mock.method(console, 'warn', message => logs.push(String(message)));
+    const ctx = mockUpstreams(t, async url => {
+        const error = new Error(`Fetch failed for ${url}; Authorization: Bearer private-bearer; bbs_token=private-cookie; bbs_sid=private-sid; ?api_key=private-key&apikey=private-omdb-key`);
+        error.status = 302; // An upstream exception must not turn an error into a successful/redirect response.
+        throw error;
+    });
+    const env = { TMDB_API_KEY: 'private-key', OMDB_API_KEY: 'private-omdb-key', WPZY_COOKIE: 'bbs_token=private-cookie' };
+    for (const path of [
+        '/api/tmdb/search?q=Review', '/api/tmdb/search?q=tt1234567',
+        '/api/tmdb/person?id=31&q=Review', '/api/tmdb/detail?id=42&type=movie',
+        '/api/douban/search?q=Review', '/api/douban/detail?id=42',
+        '/api/omdb?title=Review', '/api/poster?title=Review',
+        '/api/wiki/zh?q=Review', '/api/resource?q=Review'
+    ]) {
+        const response = await worker.fetch(request(path), env, ctx);
+        const body = await response.text();
+        assert.equal(response.status, 502, path);
+        assert.equal(response.headers.get('cache-control'), 'no-store', path);
+        assert.ok(!body.includes('private-') && !body.includes('Fetch failed') && !body.includes('https://'), path);
+    }
+    assert.ok(logs.length > 0);
+    assert.ok(logs.every(log => !log.includes('private-')));
+    assert.ok(logs.some(log => log.includes('[REDACTED]')));
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('provider error payloads cannot bypass safe public messages', async t => {
+    const ctx = mockUpstreams(t, async url => String(url).includes('themoviedb.org')
+        ? Response.json({ status_message: 'Failed: ?api_key=private-key; Bearer private-bearer' }, { status: 503 })
+        : Response.json({ Response: 'False', Error: 'Request limit reached: ?apikey=private-omdb-key' }));
+    for (const [path, status, message] of [
+        ['/api/tmdb/detail?id=42&type=movie', 503, 'TMDB unavailable'],
+        ['/api/omdb?imdb=tt1234567', 429, 'OMDb: Request limit reached!']
+    ]) {
+        const response = await worker.fetch(request(path), { TMDB_API_KEY: 'private-key', OMDB_API_KEY: 'private-omdb-key' }, ctx);
+        assert.equal(response.status, status);
+        assert.deepEqual(await response.json(), { error: message });
+    }
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('the outer Worker failure boundary also hides raw exceptions', async t => {
+    t.mock.method(console, 'error', () => {});
+    const env = { get WPZY_COOKIE() { throw new Error('Secret lookup failed: bbs_token=private-cookie'); } };
+    const response = await worker.fetch(request('/api/resource?q=Outer'), env, { waitUntil() {} });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'Internal Server Error' });
+});
 
 test('explicit media types never fall back to an unrelated same-id title', async t => {
     const paths = [];
@@ -74,7 +138,7 @@ test('HTTP 200 challenge detail pages are reported as incomplete resource scans'
     const ctx = mockUpstreams(t, async url => {
         const parsed = new URL(url);
         if (parsed.pathname === '/api/discussions') return Response.json({ data: [{ id: '1', attributes: { title: 'Test 夸克' } }] });
-        if (parsed.pathname === '/search.htm') return new Response('<html>No results</html>');
+        if (parsed.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
         return new Response('<title>Just a moment...</title>');
     });
     const response = await worker.fetch(request('/api/resource?q=Test'), {}, ctx);

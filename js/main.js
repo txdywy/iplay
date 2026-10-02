@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.8';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.8';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.8';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.8';
-import { RELEASE_VERSION } from './release.js?v=1.0.8';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.9';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.9';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.9';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.9';
+import { RELEASE_VERSION } from './release.js?v=1.0.9';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.8';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.8';
+} from './match.js?v=1.0.9';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.9';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1881,10 +1881,35 @@ function beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh
     void loadResources(candidate, searchId, searchOptions, loadId, { refresh });
 }
 
+function createResourceRetry(candidate, searchId, searchOptions, loadId) {
+    return () => {
+        if (!isActiveSearch(searchId, loadId)) return;
+        resourceResultState = null;
+        resourceLoadStarted = false;
+        beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
+    };
+}
+
+function renderResourceResult(resourceResult, onRetry) {
+    renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
+    renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [], resourceResult.resourceMeta);
+    renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
+    if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
+        setResourceStatus('资源扫描部分完成，已保留可用结果');
+        renderResourceNotice(resourceResult, onRetry);
+    } else {
+        hideResourceNotice();
+        setResourceStatus('资源扫描完成');
+    }
+}
+
 function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     cancelResourceLoadSchedule();
     if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
         resourceLoadStarted = true;
+        // Detail retries rotate the load ID and abort signal. Keep the data,
+        // but bind its retry controls to this request rather than the old one.
+        renderResourceResult(resourceResultState.result, createResourceRetry(candidate, searchId, searchOptions, loadId));
         return;
     }
     resourceLoadStarted = false;
@@ -1935,28 +1960,11 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
             candidateKey: resourceCandidateKey(candidate),
             result: resourceResult
         };
-        renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
-        renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [], resourceResult.resourceMeta);
-        renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
-        if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
-            setResourceStatus('资源扫描部分完成，已保留可用结果');
-            renderResourceNotice(resourceResult, async () => {
-                resourceResultState = null;
-                resourceLoadStarted = false;
-                beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
-            });
-        } else {
-            hideResourceNotice();
-            setResourceStatus('资源扫描完成');
-        }
+        renderResourceResult(resourceResult, createResourceRetry(candidate, searchId, searchOptions, loadId));
     } catch (error) {
         if (error?.name === 'AbortError') return;
         if (!isActiveSearch(searchId, loadId)) return;
-        renderResourceErrorStates(() => {
-            resourceResultState = null;
-            resourceLoadStarted = false;
-            beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
-        });
+        renderResourceErrorStates(createResourceRetry(candidate, searchId, searchOptions, loadId));
         console.debug('Resource enrichment skipped:', error);
     }
 }

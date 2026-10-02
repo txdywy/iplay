@@ -10,9 +10,14 @@ if (!browserWs) {
 const socket = new globalThis.WebSocket(browserWs);
 let nextCommandId = 1;
 const pendingCommands = new Map();
+const browserExceptions = [];
 
 socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if (message.method === 'Runtime.exceptionThrown') {
+        const detail = message.params.exceptionDetails;
+        browserExceptions.push(detail.exception?.description || detail.text);
+    }
     const pending = pendingCommands.get(message.id);
     if (!pending) return;
     pendingCommands.delete(message.id);
@@ -51,7 +56,7 @@ async function waitFor(expression, timeoutMs = 5000) {
         if (await evaluate(expression)) return;
         await new Promise(resolve => setTimeout(resolve, 25));
     }
-    throw new Error(`Timed out waiting for: ${expression}`);
+    throw new Error(`Timed out waiting for: ${expression}; browser exceptions: ${JSON.stringify(browserExceptions)}`);
 }
 
 await command('Page.enable');
@@ -480,6 +485,30 @@ async function runDetailRetryFlow() {
     await waitFor("document.querySelector('#dataNotice')?.classList.contains('hidden')");
 }
 
+async function runResourceRetryAfterDetailRetryFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Retry Detail Movie');
+    await assertSearchReady('Retry Detail Movie');
+    await waitFor("document.querySelector('#dataNotice button')?.textContent.includes('重试详情')");
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#resourcesSection button')?.textContent.includes('重试资源扫描')");
+    await evaluate("document.querySelector('#resourcesSection button').click()");
+    await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 2);
+
+    await evaluate("document.querySelector('#dataNotice button').click()");
+    await waitFor('window.__smoke.detailAttempts[107] === 2');
+    await waitFor("document.querySelector('#dataNotice')?.classList.contains('hidden')");
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 2, 'detail retry must retain completed resource scans');
+    assert.equal(await evaluate("document.querySelector('#resourceList a')?.getAttribute('href')"), 'https://resource.example/smoke');
+
+    await evaluate("document.querySelector('#resourcesNotice button').click()");
+    await waitFor('window.__smoke.resourceCalls === 3');
+    await waitFor("document.querySelector('#quarkUrlList a')?.getAttribute('href') === 'https://pan.quark.cn/s/smoke'");
+    assert.equal(await evaluate("document.querySelector('#resourcesNotice').classList.contains('hidden')"), true);
+    assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/resource?q=Retry%20Detail%20Movie&refresh=1')));
+}
+
 async function runTitleOmdbFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -683,6 +712,7 @@ try {
     await runEmptyActorFlow();
     await runProgressiveFlow();
     await runDetailRetryFlow();
+    await runResourceRetryAfterDetailRetryFlow();
     await runTitleOmdbFlow();
     await runBrokenPosterFlow();
     await runUnsafePosterFlow();
@@ -695,7 +725,7 @@ try {
     await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }
