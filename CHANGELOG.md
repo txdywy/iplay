@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.11] - 2026-10-07
+
+### Fixed
+
+- Quark passwords stay associated with their share across consecutive links, leading/following labels, rendered line breaks and HTML formatting. Other providers' URLs and explicit labels, separate cards and footers are pairing boundaries; Baidu extraction codes no longer leak into Quark shares.
+- URL-bound passwords take priority over nearby prose during same-page and cross-page deduplication, with provenance from the winning source. Equal-confidence disagreements, including conflicting URL parameters, omit the password rather than choosing by page order. Overlong tokens are not truncated into plausible codes.
+- Duplicate markup and other providers' passwords no longer consume the unique-link/password scan limits. Resource v10 and release-tagged browser requests exclude cached incorrect URL/password associations. Case-insensitive schemes/hosts preserve the actual share token.
+
+### Added
+
+- Public resource API regressions for password pairing, foreign-provider isolation, formatting, row/line boundaries, conflict handling, limits and unchanged response fields; native Workers and browser checks verify the same associations and password-only copy behavior.
+
 ## [1.0.10] - 2026-10-02
 
 ### Fixed

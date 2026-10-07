@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.10';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.10';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.10';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.10';
-import { RELEASE_VERSION } from './release.js?v=1.0.10';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.11';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.11';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.11';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.11';
+import { RELEASE_VERSION } from './release.js?v=1.0.11';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.10';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.10';
+} from './match.js?v=1.0.11';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.11';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 

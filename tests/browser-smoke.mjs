@@ -363,7 +363,11 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 return json({
                     resources: [{ title: 'Smoke resource', url: 'https://resource.example/smoke' }],
                     wpzysResources: [{ title: 'Smoke forum', url: 'https://forum.example/smoke' }],
-                    quarkUrls: [{ title: 'Smoke Quark', url: 'https://pan.quark.cn/s/smoke', password: 'abcd' }]
+                    quarkUrls: [
+                        { title: 'Smoke Quark', url: 'https://pan.quark.cn/s/smoke', password: 'abcd' },
+                        { title: 'Smoke Quark second', url: 'https://pan.quark.cn/s/smoke-second', password: 'e5F6' },
+                        { title: 'Smoke Quark public', url: 'https://pan.quark.cn/s/smoke-public' }
+                    ]
                 });
             }
             if (url.pathname === '/api/poster') {
@@ -422,6 +426,14 @@ async function runObserverFlow() {
     await waitFor('window.__smoke.resourceCalls === 3');
     await waitFor("Boolean(document.querySelector('#resourceList a[href=\\\"https://resource.example/smoke\\\"]'))");
     assert.equal(await evaluate('document.querySelector("#quarkUrlList a")?.getAttribute("href")'), 'https://pan.quark.cn/s/smoke');
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#quarkUrlList li')).map(card => ({ url: card.querySelector('a')?.getAttribute('href'), passwordText: card.innerText.match(/提取码：[a-z0-9]+/i)?.[0] || '', buttons: card.querySelectorAll('button').length }))"), [
+        { url: 'https://pan.quark.cn/s/smoke', passwordText: '提取码：abcd', buttons: 1 },
+        { url: 'https://pan.quark.cn/s/smoke-second', passwordText: '提取码：e5F6', buttons: 1 },
+        { url: 'https://pan.quark.cn/s/smoke-public', passwordText: '', buttons: 0 }
+    ]);
+    await evaluate("document.querySelectorAll('#quarkUrlList button')[1].click()");
+    await waitFor("window.__smoke.copied === 'e5F6'");
+    assert.equal(await evaluate('window.__smoke.copied'), 'e5F6');
     const calls = await evaluate('window.__smoke.calls');
     assert.ok(calls.some(call => call.includes('/api/resource?q=Test%20Movie&refresh=1')));
     assert.deepEqual(await evaluate("window.__smoke.requestOptions.filter(call => call.path === '/api/resource' && call.refresh === '1').map(call => call.cache)"), ['no-store', 'no-store']);
