@@ -395,6 +395,8 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
 
+提取码按相邻链接、段落/行与资源卡片范围配对，不跨其他网盘链接或独立卡片、页脚取码。支持链接前后文本、HTML 行内格式以及 URL 的密码查询/Hash 参数；URL 自带密码优先于附近文字，去重后保留该密码的实际来源。相同优先级的密码相互矛盾时省略 `password`、仍保留链接，不猜测归属；内部配对优先级不会暴露在 API 中。单页 25 个的上限按去重后的夸克链接计算，重复 HTML/JSON 表达与其他网盘提取码不占此配额。
+
 `resourceMeta.providerIssues.wpzys` 可为 `login_required` 或 `upstream_unavailable`，用于区分登录维护和一般上游故障。`restrictedPages` 与 `loginRequiredPages` 分别记录回复/VIP 受限、详情页要求重新登录的数量，均计入 `failedPages` 并使结果为部分完成。受限内容不会提取链接，但原帖卡片仍可访问；客户端不应把登录页当作空搜索结果，也不应通过重复重试解锁受限内容。
 
 ---

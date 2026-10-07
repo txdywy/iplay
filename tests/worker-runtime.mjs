@@ -44,7 +44,9 @@ async function upstream(request) {
         await new Promise(resolve => setTimeout(resolve, 30));
         return url.pathname === '/api/discussions'
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
-            : new Response('<p>https://pan.quark.cn/s/runtime42 提取码：abcd</p>');
+            : new Response('<p>链接：https://pan.quark.cn/s/runtime42 提取码：abcd</p>'
+                + '<p>链接：<a href="https://pan.quark.cn/s/runtime-formatted">夸克资源</a><b>提取码：</b><span>e5F6</span></p>'
+                + '<p>夸克：https://pan.quark.cn/s/runtime-public 百度：https://pan.baidu.com/s/foreign?pwd=6868 提取码：6868</p>');
     }
     if (url.hostname === 'wpzy.org') {
         assert.equal(request.headers.get('Cookie'), runtimeCookie);
@@ -57,6 +59,8 @@ async function upstream(request) {
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
         if (wpzyMode === 'detail-maintenance') return new Response('<title>Service unavailable</title><h1>Maintenance in progress</h1>');
+        if (wpzyMode === 'pairing') return new Response('<p>链接：https://pan.quark.cn/s/wpzy-private 提取码：w7P8</p>'
+            + '<p>夸克：https://pan.quark.cn/s/wpzy-public 百度：https://pan.baidu.com/s/wpzy-foreign 提取码：6868</p>');
         return new Response(wpzyMode === 'restricted'
             ? '<h3>【待操作】点击&lt;立即回复&gt;查看资源（开通VIP会员无需操作）</h3>'
             : '<p>https://pan.quark.cn/s/runtime-wpzy</p>');
@@ -111,11 +115,17 @@ try {
             assert.equal(data.partial, false);
             assert.equal(data.quarkUrls[0]?.password, 'abcd');
             assert.equal(data.quarkUrls[0]?.url, 'https://pan.quark.cn/s/runtime42');
+            assert.equal(data.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/runtime-formatted')?.password, 'e5F6');
+            const publicShare = data.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/runtime-public');
+            assert.ok(publicShare);
+            assert.equal(publicShare.password, undefined, 'Baidu password must not leak into a Quark share');
+            assert.ok(data.quarkUrls.every(item => Object.keys(item).every(key => !key.startsWith('_'))));
             assert.equal(data.wpzysResources[0]?.url, 'https://wpzy.org/thread-100.htm');
             assert.ok(data.quarkUrls.some(item => item.url === 'https://pan.quark.cn/s/runtime-wpzy'));
             assert.ok(!JSON.stringify(data).includes('runtime-wpzy-secret'));
         }
         checks.push(`${phase}-concurrent-resource-streams`);
+        checks.push(`${phase}-quark-password-pairing-and-foreign-provider-isolation`);
     }
 
     wpzyMode = 'restricted';
@@ -125,8 +135,22 @@ try {
     assert.equal(restrictedData.partial, true);
     assert.equal(restrictedData.resourceMeta.restrictedPages, 1);
     assert.equal(restrictedData.wpzysResources.length, 1);
-    assert.equal(restrictedData.quarkUrls.length, 1);
+    assert.equal(restrictedData.quarkUrls.length, 3);
+    assert.ok(restrictedData.quarkUrls.every(item => item.sourceUrl.startsWith('https://by669.org/')));
     checks.push('authenticated-wpzy-and-restricted-posts');
+
+    wpzyMode = 'pairing';
+    const wpzyPairing = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-pairing');
+    const wpzyPairingData = await wpzyPairing.json();
+    assert.equal(wpzyPairing.status, 200);
+    assert.equal(wpzyPairingData.partial, false);
+    const wpzyPrivate = wpzyPairingData.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/wpzy-private');
+    assert.equal(wpzyPrivate?.password, 'w7P8');
+    assert.equal(wpzyPrivate?.sourceUrl, 'https://wpzy.org/thread-100.htm');
+    const wpzyPublic = wpzyPairingData.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/wpzy-public');
+    assert.ok(wpzyPublic);
+    assert.equal(wpzyPublic.password, undefined);
+    checks.push('authenticated-wpzy-quark-password-pairing');
 
     wpzyMode = 'login';
     const expired = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-expired');

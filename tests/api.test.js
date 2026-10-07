@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { RELEASE_VERSION } from '../js/release.js';
 
 const originalLocation = globalThis.location;
 globalThis.location = { hostname: 'localhost' };
@@ -18,6 +19,17 @@ test('resource API propagates provider failures to the UI layer', async t => {
         ResourceAPI.search('test'),
         /Resource providers unavailable/
     );
+});
+
+test('resource searches isolate browser-cached passwords from previous releases', async t => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async url => Response.json({ quarkUrls: [{
+        url: 'https://pan.quark.cn/s/public',
+        ...(new URL(url).searchParams.get('v') === RELEASE_VERSION ? {} : { password: '6868' })
+    }] });
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const result = await ResourceAPI.search('cached public share');
+    assert.equal(result.quarkUrls[0].password, undefined, 'a cached pre-fix code must not survive a frontend release');
 });
 
 test('API clients encode queries and return JSON responses', async t => {
@@ -96,7 +108,11 @@ test('resource and poster retries request fresh Worker data', async t => {
     await ResourceAPI.search('retry me');
     await PosterAPI.getPoster('retry me', 2024);
 
-    assert.match(requestedUrls[0], /\/api\/resource\?q=retry%20me&refresh=1$/);
+    const resourceUrl = new URL(requestedUrls[0]);
+    assert.equal(resourceUrl.pathname, '/api/resource');
+    assert.equal(resourceUrl.searchParams.get('q'), 'retry me');
+    assert.equal(resourceUrl.searchParams.get('refresh'), '1');
+    assert.equal(resourceUrl.searchParams.get('v'), RELEASE_VERSION);
     assert.match(requestedUrls[1], /\/api\/poster\?title=retry%20me&year=2024&refresh=1$/);
     assert.equal(requestedUrls[2], requestedUrls[0]);
     assert.equal(requestedUrls[3], requestedUrls[1]);

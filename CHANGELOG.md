@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.11] - 2026-10-07
+
+### Fixed
+
+- Quark passwords stay associated with their share across consecutive links, leading/following labels, rendered line breaks and HTML formatting. Other providers' URLs and explicit labels, separate cards and footers are pairing boundaries; Baidu extraction codes no longer leak into Quark shares.
+- URL-bound passwords take priority over nearby prose during same-page and cross-page deduplication, with provenance from the winning source. Equal-confidence disagreements, including conflicting URL parameters, omit the password rather than choosing by page order. Overlong tokens are not truncated into plausible codes.
+- Duplicate markup and other providers' passwords no longer consume the unique-link/password scan limits. Reaching the total link cap still reconciles duplicate passwords from already-fetched pages. Resource v10 and release-tagged browser requests exclude cached incorrect URL/password associations. Case-insensitive schemes/hosts preserve the actual share token.
+
+### Added
+
+- Public resource API regressions for password pairing, foreign-provider isolation, formatting, row/line boundaries, conflict handling, limits and unchanged response fields; native Workers and browser checks verify the same associations and password-only copy behavior.
+
 ## [1.0.10] - 2026-10-02
 
 ### Fixed
@@ -15,6 +27,7 @@
 - Public-route regressions for literal titles, selected poster/IMDb identity, verified metadata without images, invalid identity parameters and both resource providers' detail maintenance pages.
 - Browser checks for mismatched TMDB/IMDb poster responses, identity-verified title enrichment, fresh repeated retries and stable actor filter totals; native Workers checks for literal-title recognition, identity-isolated poster caches and partial detail maintenance scans.
 - Live release checks for The Truman Show and exact selected movie/TV posters, alongside byte-for-byte static release matching.
+- Isolated browser startup waits up to 60 seconds for healthy cold CI Chrome, checks process exit immediately and bounds each debug request, avoiding false failures before page tests begin.
 
 ## [1.0.9] - 2026-10-02
 

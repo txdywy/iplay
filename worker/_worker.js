@@ -1925,7 +1925,10 @@ async function handleDoubanDetail(id, ctx) {
 // matching arbitrary path characters also consumes `\\r\\n`, `\\u003C`, or the
 // next Markdown URL.
 const QUARK_URL_PATTERN = /(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\/[a-z0-9_-]+(?:[?#][^\s"'<>\\),，。；;]*)?/gi;
-const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})/gi;
+// Foreign destinations participate in pairing, but are never returned as Quark
+// results. Their extraction codes must not bleed backwards or forwards.
+const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\),，。；;]+/gi;
+const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})(?![a-z0-9])/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://wpzy.org";
 const WPZY_ORIGINS = new Set([WPZYS_BASE, "https://www.wpzy.org"]);
@@ -1987,23 +1990,26 @@ function isValidQuarkPassword(value) {
     return /^[a-z0-9]{2,12}$/i.test(value) && !/^https?$/i.test(value);
 }
 
-function extractQuarkPasswordFromParams(params) {
+function collectQuarkPasswordParams(params, passwords) {
     for (const key of ["pwd", "password", "passcode", "code"]) {
-        const value = params.get(key);
-        if (value && isValidQuarkPassword(value)) return value;
+        for (const value of params.getAll(key)) {
+            if (isValidQuarkPassword(value)) passwords.add(value);
+        }
     }
-    return "";
 }
 
 function extractQuarkPasswordFromUrl(url) {
-    const searchPassword = extractQuarkPasswordFromParams(url.searchParams);
-    if (searchPassword) return searchPassword;
-
+    const passwords = new Set();
+    collectQuarkPasswordParams(url.searchParams, passwords);
     const hashText = url.hash.replace(/^#/, "");
-    if (!hashText) return "";
-
-    const hashQuery = hashText.includes("?") ? hashText.slice(hashText.indexOf("?") + 1) : hashText;
-    return extractQuarkPasswordFromParams(new URL(`https://quark-password.local/?${hashQuery}`).searchParams);
+    if (hashText) {
+        const hashQuery = hashText.includes("?") ? hashText.slice(hashText.indexOf("?") + 1) : hashText;
+        collectQuarkPasswordParams(new URL(`https://quark-password.local/?${hashQuery}`).searchParams, passwords);
+    }
+    return {
+        password: passwords.size === 1 ? [...passwords][0] : "",
+        _passwordConflict: passwords.size > 1
+    };
 }
 
 function parseQuarkUrl(rawUrl) {
@@ -2013,16 +2019,17 @@ function parseQuarkUrl(rawUrl) {
         .replace(/&amp;/g, "&")
         .replace(/[。．｡]$/g, "")
         .replace(/[),.；;]+$/g, "");
+    const absoluteUrl = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
 
     try {
-        const url = new URL(cleaned.startsWith("http") ? cleaned : `https://${cleaned}`);
+        const url = new URL(absoluteUrl);
         return {
             url: `${url.origin}${url.pathname}`,
-            password: extractQuarkPasswordFromUrl(url)
+            ...extractQuarkPasswordFromUrl(url)
         };
     } catch {
         return {
-            url: cleaned.startsWith("http") ? cleaned : `https://${cleaned}`,
+            url: absoluteUrl,
             password: ""
         };
     }
@@ -2036,59 +2043,113 @@ function normalizeResourcePageText(text) {
     return decodeHtmlEntities(text)
         .replace(/\\\//g, "/")
         .replace(/\\u([0-9a-f]{4})/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)))
-        .replace(/\\[rnt]/g, " ")
-        .replace(/%3a/gi, ":");
+        .replace(/\\r\\n|\\[rn]/g, "\n")
+        .replace(/\\t/g, "\t")
+        .replace(/%3a/gi, ":")
+        .replace(/<br\b[^<>]*>/gi, "\n")
+        .replace(/<\/?(?:a|span|strong|b|em|i|code|font|u|small|mark)\b[^<>]*>/gi, tag => {
+            // Keep the destination even when an anchor only says "下载". Inline
+            // formatting and long attributes must not split a label from its code.
+            const href = /^<a\b/i.test(tag)
+                ? tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+                : null;
+            return href ? `${href[1] ?? href[2] ?? href[3]} ` : "";
+        });
+}
+
+function quarkPasswordContextDistance(text) {
+    if (/https?:\/\/|<\/?(?:div|li|tr|section|article|header|footer|form|script|style|meta)\b|[\r\n]\s*[\r\n]/i.test(text)) {
+        return Number.POSITIVE_INFINITY;
+    }
+    const blocks = text.match(/<\/?(?:p|td|th)\b[^<>]*>/gi)?.length || 0;
+    const lines = text.match(/[\r\n]+/g)?.length || 0;
+    return blocks * 10 + lines;
+}
+
+function mergeQuarkPassword(target, source) {
+    const sourceRank = source._passwordRank || 0;
+    const targetRank = target._passwordRank || 0;
+    if (!sourceRank || sourceRank < targetRank) return false;
+    if (sourceRank > targetRank) {
+        target._passwordRank = sourceRank;
+        target._passwordConflict = Boolean(source._passwordConflict);
+        if (source.password && !target._passwordConflict) {
+            target.password = source.password;
+            return true;
+        }
+    } else if (!source._passwordConflict && !target._passwordConflict && source.password === target.password) {
+        return false;
+    }
+    // Equal-confidence disagreement is not resolved by page order or repetition.
+    // Preserve the link and let a higher-confidence URL password resolve it later.
+    target._passwordConflict = true;
+    delete target.password;
+    return false;
 }
 
 function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
     if (!text) return [];
 
     const normalizedText = normalizeResourcePageText(text);
-    const occurrences = [];
-    for (const match of normalizedText.matchAll(QUARK_URL_PATTERN)) {
-        if (occurrences.length >= maxEntries) break;
-        const parsed = parseQuarkUrl(match[0]);
-        if (parsed && parsed.url) {
-            occurrences.push({
-                index: match.index,
-                end: match.index + match[0].length,
-                url: parsed.url,
-                ...(parsed.password ? { password: parsed.password } : {})
-            });
-        }
+    const links = [];
+    for (const match of normalizedText.matchAll(RESOURCE_LINK_PATTERN)) {
+        const isQuark = /^(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\//i.test(match[0]);
+        const rawQuark = isQuark ? match[0].match(QUARK_URL_PATTERN)?.[0] : null;
+        const parsed = rawQuark ? parseQuarkUrl(rawQuark) : null;
+        links.push({
+            index: match.index,
+            end: match.index + match[0].length,
+            url: parsed?.url,
+            ...(parsed?.password ? { password: parsed.password } : {}),
+            ...(parsed?.password || parsed?._passwordConflict ? {
+                _passwordRank: 2, _passwordConflict: parsed._passwordConflict
+            } : {})
+        });
     }
 
-    let processedPasswords = 0;
+    let linkIndex = 0;
     for (const match of normalizedText.matchAll(QUARK_PASSWORD_PATTERN)) {
-        if (processedPasswords >= maxEntries) break;
         if (!isValidQuarkPassword(match[1])) continue;
-        processedPasswords += 1;
 
         const passwordIndex = match.index;
-        const previous = occurrences
-            .filter(occurrence => occurrence.end <= passwordIndex && passwordIndex - occurrence.end <= 160)
-            .at(-1);
-        const next = occurrences.find(occurrence => (
-            occurrence.index >= passwordIndex + match[0].length
-            && occurrence.index - (passwordIndex + match[0].length) <= 160
-        ));
+        if (/(?:百度(?:网盘)?|迅雷|阿里(?:云盘|网盘)?|天翼(?:云盘)?|UC(?:网盘)?|115(?:网盘)?|123(?:云盘)?)\s*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 24), passwordIndex))) {
+            continue;
+        }
+        while (linkIndex < links.length && links[linkIndex].end <= passwordIndex) linkIndex += 1;
+        // A label inside another URL's query is not prose for a nearby share.
+        if (links[linkIndex]?.index <= passwordIndex) continue;
+        const precedingLink = links[linkIndex - 1];
+        const followingLink = links[linkIndex];
+        const previous = precedingLink && passwordIndex - precedingLink.end <= 160 ? precedingLink : null;
+        const next = followingLink && followingLink.index - (passwordIndex + match[0].length) <= 160 ? followingLink : null;
         const textBeforeNext = next
             ? normalizedText.slice(passwordIndex + match[0].length, next.index)
             : "";
-        const target = next && /(?:链接|地址|夸克)/.test(textBeforeNext) ? next : previous || next;
+        const previousDistance = previous
+            ? quarkPasswordContextDistance(normalizedText.slice(previous.end, passwordIndex))
+            : Number.POSITIVE_INFINITY;
+        const nextDistance = next ? quarkPasswordContextDistance(textBeforeNext) : Number.POSITIVE_INFINITY;
+        // Prefer the link in the same paragraph/line. On a tie, a following
+        // password belongs to the preceding link, regardless of the next label.
+        const target = nextDistance < previousDistance ? next : previousDistance < Number.POSITIVE_INFINITY ? previous : null;
 
-        if (target && !target.password) target.password = match[1];
+        if (target?.url) mergeQuarkPassword(target, { password: match[1], _passwordRank: 1 });
     }
 
     const entries = new Map();
-    for (const occurrence of occurrences) {
+    for (const occurrence of links) {
+        if (!occurrence.url) continue;
         const existing = entries.get(occurrence.url);
         if (!existing) {
-            entries.set(occurrence.url, occurrence.password
-                ? { url: occurrence.url, password: occurrence.password }
-                : { url: occurrence.url });
-        } else if (!existing.password && occurrence.password) {
-            existing.password = occurrence.password;
+            if (entries.size >= maxEntries) continue;
+            entries.set(occurrence.url, {
+                url: occurrence.url,
+                ...(occurrence.password ? { password: occurrence.password } : {}),
+                _passwordRank: occurrence._passwordRank,
+                _passwordConflict: occurrence._passwordConflict
+            });
+        } else {
+            mergeQuarkPassword(existing, occurrence);
         }
     }
 
@@ -2218,10 +2279,12 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
     }
     const quarkEntries = collectQuarkEntries(text, RESOURCE_MAX_QUARK_URLS_PER_PAGE);
 
-    return quarkEntries.map(({ url, password }) => ({
+    return quarkEntries.map(({ url, password, _passwordRank, _passwordConflict }) => ({
         title: resourceTitle,
         url,
         ...(password ? { password } : {}),
+        _passwordRank,
+        _passwordConflict,
         sourceUrl: safeResourceUrl,
         sourceTitle: resourceTitle
     }));
@@ -2404,13 +2467,19 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             }
 
             for (const item of group.value) {
-                if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) break;
                 if (!item.url) continue;
                 const existing = quarkUrlsByUrl.get(item.url);
                 if (existing) {
-                    if (!existing.password && item.password) existing.password = item.password;
+                    if (mergeQuarkPassword(existing, item)) {
+                        existing.title = item.title;
+                        existing.sourceUrl = item.sourceUrl;
+                        existing.sourceTitle = item.sourceTitle;
+                    }
                     continue;
                 }
+                // The cap limits new results, not reconciliation of duplicates
+                // from pages already fetched in this batch.
+                if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) continue;
                 quarkUrlsByUrl.set(item.url, item);
                 quarkUrls.push(item);
             }
@@ -2418,7 +2487,9 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
     }
 
     return {
-        quarkUrls,
+        quarkUrls: quarkUrls.map(({ title, url, password, sourceUrl, sourceTitle }) => ({
+            title, url, ...(password ? { password } : {}), sourceUrl, sourceTitle
+        })),
         attemptedPages,
         failedPages,
         restrictedPages,
@@ -2463,7 +2534,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v9-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v10-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
