@@ -2467,7 +2467,6 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             }
 
             for (const item of group.value) {
-                if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) break;
                 if (!item.url) continue;
                 const existing = quarkUrlsByUrl.get(item.url);
                 if (existing) {
@@ -2478,6 +2477,9 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
                     }
                     continue;
                 }
+                // The cap limits new results, not reconciliation of duplicates
+                // from pages already fetched in this batch.
+                if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) continue;
                 quarkUrlsByUrl.set(item.url, item);
                 quarkUrls.push(item);
             }

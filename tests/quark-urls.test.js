@@ -150,6 +150,22 @@ test('resource search resolves an earlier prose conflict with a later URL-bound 
     ]), [{ url: 'https://pan.quark.cn/s/resolved', password: 'r5T6' }]);
 });
 
+test('resource search still reconciles fetched duplicate passwords after reaching the total link limit', async t => {
+    const fullPages = Array.from({ length: 4 }, (_, page) => Array.from({ length: 25 }, (_, index) =>
+        `<p>https://pan.quark.cn/s/limit-${page}-${index} 提取码：a1B2</p>`
+    ).join(''));
+    const entries = await searchQuarkPages(t, [...fullPages,
+        '<p>https://pan.quark.cn/s/overflow 提取码：over1</p>'
+        + '<p>https://pan.quark.cn/s/limit-0-0 提取码：c3D4</p>'
+        + '<p>https://pan.quark.cn/s/limit-0-1?pwd=url7</p>'
+    ]);
+    assert.equal(entries.length, 100);
+    assert.deepEqual(entries.slice(0, 2), [
+        { url: 'https://pan.quark.cn/s/limit-0-0' },
+        { url: 'https://pan.quark.cn/s/limit-0-1', password: 'url7' }
+    ]);
+});
+
 test('resource search canonicalizes case-insensitive schemes and hosts without changing share tokens', async t => {
     assert.deepEqual(await searchQuarkPages(t, [
         '<p>HTTPS://PAN.QUARK.CN/s/AbC123?pwd=a1B2</p>'
