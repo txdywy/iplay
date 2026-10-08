@@ -764,7 +764,7 @@ function normalizeTmdbDetail(data, type) {
     };
 }
 
-function isValidTmdbPayload(path, data) {
+function isValidTmdbPayload(path, data, params = {}) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return false;
     if (/^\/search\/(?:multi|movie|tv|person)$/.test(path)) return Array.isArray(data.results);
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
@@ -772,7 +772,9 @@ function isValidTmdbPayload(path, data) {
         return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbTitle(data));
     }
     if (/^\/person\/\d+$/.test(path)) {
-        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbPersonName(data));
+        const expectsCredits = String(params.append_to_response || "").split(",").includes("combined_credits");
+        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbPersonName(data))
+            && (!expectsCredits || (isObject(data.combined_credits) && Array.isArray(data.combined_credits.cast)));
     }
     return true;
 }
@@ -849,7 +851,7 @@ async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
         throw createHttpError(message, response.status, response.status === 404 ? "TMDB resource not found" : "TMDB unavailable");
     }
 
-    if (!isValidTmdbPayload(path, data)) {
+    if (!isValidTmdbPayload(path, data, params)) {
         if (cachedResponse) {
             await deleteCachedResponse(cacheKey);
             return fetchTmdbJsonUncoalesced(path, params, env, ctx, { ...options, refreshCache: true });
@@ -2988,7 +2990,7 @@ async function handleWikiZh(query, ctx, options = {}) {
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
 
-    const cacheKey = new Request(`https://wiki-zh-v2-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
+    const cacheKey = new Request(`https://wiki-zh-v3-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -3017,7 +3019,9 @@ async function handleWikiZh(query, ctx, options = {}) {
             throw createHttpError("Wiki returned an invalid response", 502);
         }
 
-        const intro = summaryData.extract.split(/[。.!?！？]/u)[0];
+        // Latin titles such as "Mr. Bean" can contain periods inside the
+        // Chinese lead sentence; keep its media/year evidence intact.
+        const intro = summaryData.extract.split(/[。!?！？\r\n]/u)[0];
         const summaryKind = getWikiKind(summaryData.title)
             || getWikiKind(summaryData.description || "")
             || getWikiKind(intro);
@@ -3025,6 +3029,7 @@ async function handleWikiZh(query, ctx, options = {}) {
             || !summaryData.extract.trim()
             || !wikiTitleMatches(query, summaryData.title)
             || !wikiYearMatches(year, `${summaryData.title} ${summaryData.description || ""}`)
+            || !wikiYearMatches(year, intro)
             || (mediaType && summaryKind !== mediaType)) {
             return jsonResponse({ error: "No matching media summary on zh.wikipedia" }, 404);
         }

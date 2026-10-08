@@ -376,7 +376,9 @@ Worker deploy (manual or via Wrangler CLI):
   - TMDB/Douban/OMDb/Wiki: 24 hours (`max-age=86400`)
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
-- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v9-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v2-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching as well.
+- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v10-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v3-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching; resource and Wiki client requests carry the release version to isolate browser caches.
+- Person payloads requested with combined credits must include a cast array before caching; malformed cached payloads are evicted and refetched. Wikipedia checks known years in both title/description and the opening sentence before replacing the selected work's overview.
+- Resource completion keeps existing links and expanded lists usable during loading and after failure. Selected-actor retries retain the person ID, and shared detail links reject invalid explicit media types before issuing API requests.
 - The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
 
 ### Data Privacy

@@ -19,6 +19,8 @@ const checks = [];
 const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
 const bindings = { ENVIRONMENT: 'production', TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
 let wpzyMode = 'public';
+let personCreditsAvailable = false;
+let wikiRemakeYear = '2005';
 const ratelimits = {
     API_RATE_LIMITER: { namespace_id: '1001', simple: { limit: 60, period: 60 } },
     RESOURCE_RATE_LIMITER: { namespace_id: '1002', simple: { limit: 10, period: 60 } }
@@ -38,6 +40,9 @@ async function upstream(request) {
     }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/604') {
         return Response.json({ status_message: 'Fetch failed for https://api.themoviedb.org/?api_key=runtime-test; Bearer runtime-private-token' }, { status: 503 });
+    }
+    if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/person/31') {
+        return Response.json({ id: 31, name: 'Runtime Actor', ...(personCreditsAvailable ? { combined_credits: { cast: [] } } : {}) });
     }
     if (url.hostname === 'by669.org') {
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
@@ -69,6 +74,12 @@ async function upstream(request) {
         return new Response('<strong property="v:average">8.5</strong><span property="v:votes">12345</span><span property="v:genre">喜剧</span><span property="v:summary">A complete runtime synopsis.</span>');
     }
     if (url.hostname === 'zh.wikipedia.org') {
+        if (url.pathname.endsWith('/summary/Runtime%20Remake')) {
+            return Response.json({ title: 'Runtime Remake', description: '电影', extract: `Runtime Remake（Mr. Bean）是一部${wikiRemakeYear}年上映的电影。` });
+        }
+        if (url.searchParams.get('srsearch') === 'Runtime Remake') {
+            return Response.json({ query: { search: [{ title: 'Runtime Remake' }] } });
+        }
         return url.pathname.includes('/summary/')
             ? Response.json({ title: '三体 (电视剧)', description: '2023年电视剧', extract: '三体是一部电视剧。' })
             : Response.json({ query: { search: [{ title: '三体' }, { title: '三体 (电视剧)' }] } });
@@ -89,6 +100,16 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const malformedPerson = await request('/api/tmdb/person?id=31&q=Runtime%20Actor');
+    assert.equal(malformedPerson.status, 502);
+    assert.equal(malformedPerson.headers.get('cache-control'), 'no-store');
+    await malformedPerson.json();
+    personCreditsAvailable = true;
+    const recoveredPerson = await request('/api/tmdb/person?id=31&q=Runtime%20Actor');
+    assert.equal(recoveredPerson.status, 200, 'incomplete appended data must not poison native actor caches');
+    assert.deepEqual((await recoveredPerson.json()).credits, []);
+    checks.push('appended-actor-credits-validation-and-recovery');
 
     const literalTitle = await request('/api/tmdb/search?q=The%20Truman%20Show');
     const literalTitleData = await literalTitle.json();
@@ -209,6 +230,16 @@ try {
     assert.equal(wiki.status, 200);
     assert.equal((await wiki.json()).title, '三体 (电视剧)');
     checks.push('typed-wiki-summary');
+
+    const wrongRemake = await request('/api/wiki/zh?q=Runtime%20Remake&type=movie&year=2024');
+    assert.equal(wrongRemake.status, 404);
+    assert.equal(wrongRemake.headers.get('cache-control'), 'no-store');
+    await wrongRemake.json();
+    wikiRemakeYear = '2024';
+    const matchingRemake = await request('/api/wiki/zh?q=Runtime%20Remake&type=movie&year=2024');
+    assert.equal(matchingRemake.status, 200, 'a wrong-year summary must not poison the native cache');
+    assert.ok((await matchingRemake.json()).extract.includes('2024'));
+    checks.push('wiki-introduction-year-validation-and-recovery');
 
     const limited = await probeNativeRateLimit(ip => request('/not-found', ip), {
         limit: ratelimits.API_RATE_LIMITER.simple.limit,

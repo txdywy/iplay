@@ -103,6 +103,44 @@ test('TMDB details reject mismatched identities and title-less payloads', async 
     }
 });
 
+test('selected actors reject missing or malformed appended credits instead of caching empty filmographies', async t => {
+    let payload;
+    const ctx = mockUpstreams(t, async () => Response.json(payload));
+    for (const combinedCredits of [undefined, null, [], { cast: null }, { cast: {} }]) {
+        payload = { id: 31, name: 'Selected Actor', combined_credits: combinedCredits };
+        const response = await worker.fetch(request('/api/tmdb/person?id=31&q=Selected%20Actor'), { TMDB_API_KEY: 'test' }, ctx);
+        assert.equal(response.status, 502);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.equal(ctx.writes.length, 0);
+    }
+
+    payload = { id: 31, name: 'Selected Actor', combined_credits: { cast: [] } };
+    const empty = await worker.fetch(request('/api/tmdb/person?id=31&q=Selected%20Actor'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(empty.status, 200);
+    assert.deepEqual((await empty.json()).credits, []);
+    assert.equal(ctx.writes.length, 1, 'a valid empty cast list remains cacheable');
+});
+
+test('cached actor payloads without appended credits are evicted and repaired from upstream', async t => {
+    let upstreamCalls = 0;
+    const deleted = [];
+    const ctx = mockUpstreams(t, async () => {
+        upstreamCalls += 1;
+        return Response.json({ id: 31, name: 'Selected Actor', combined_credits: { cast: [
+            { id: 42, media_type: 'tv', name: 'Recovered Series' }
+        ] } });
+    });
+    globalThis.caches.default.match = async () => Response.json({ id: 31, name: 'Selected Actor' });
+    globalThis.caches.default.delete = async key => { deleted.push(key.url); return true; };
+
+    const response = await worker.fetch(request('/api/tmdb/person?id=31&q=Selected%20Actor'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).credits[0]?.title, 'Recovered Series');
+    assert.equal(upstreamCalls, 1);
+    assert.equal(deleted.length, 1);
+    assert.equal(ctx.writes.length, 1);
+});
+
 test('TV runtime uses episode data and directors exclude assistant directors', async t => {
     const ctx = mockUpstreams(t, async () => Response.json({
         id: 42, name: 'Test series', episode_run_time: [0, 45],
@@ -405,6 +443,27 @@ test('typed Wiki queries reject novel-only results instead of replacing the seri
     const response = await worker.fetch(request('/api/wiki/zh?q=三体&type=tv&year=2023'), {}, ctx);
     assert.equal(response.status, 404);
     assert.equal(ctx.writes.length, 0);
+});
+
+test('Wiki summaries reject a different remake year stated only in the introduction', async t => {
+    let summary = { title: 'Shared Title', description: '电影', extract: 'Shared Title是一部2005年上映的电影。' };
+    const ctx = mockUpstreams(t, async url => new URL(url).pathname.includes('/summary/')
+        ? Response.json(summary)
+        : Response.json({ query: { search: [{ title: summary.title }] } }));
+    for (const title of ['Shared Title', 'Mr. Bean']) {
+        for (const description of ['电影', '2024年电影']) {
+            summary = { title, description, extract: `《${title}》是一部2005年上映的电影。` };
+            const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=2024`), {}, ctx);
+            assert.equal(response.status, 404);
+            assert.equal(ctx.writes.length, 0);
+        }
+    }
+
+    summary = { title: 'Shared Title', description: '电影', extract: 'Shared Title是一部2024年上映的电影。' };
+    const matching = await worker.fetch(request('/api/wiki/zh?q=Shared%20Title&type=movie&year=2024'), {}, ctx);
+    assert.equal(matching.status, 200);
+    assert.equal((await matching.json()).extract, summary.extract);
+    assert.equal(ctx.writes.length, 1);
 });
 
 test('separate Worker execution contexts never share credentials or request-scoped I/O', async t => {
