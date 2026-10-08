@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.11';
+import { RELEASE_VERSION } from './release.js?v=1.0.12';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -116,7 +116,7 @@ export const WikiAPI = {
         const typeParam = mediaType ? `&type=${encodeURIComponent(mediaType)}` : '';
         const yearParam = year ? `&year=${encodeURIComponent(year)}` : '';
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}${typeParam}${yearParam}`, requestOptions);
+            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}${typeParam}${yearParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Wiki zh fetch failed:", e);

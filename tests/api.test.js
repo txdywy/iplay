@@ -198,10 +198,14 @@ test('caller cancellation wins over a transport that returns stale data after ab
     await assert.rejects(TmdbAPI.search('stale', { signal: controller.signal }), error => error.name === 'AbortError');
 });
 
-test('Wiki requests carry the selected media type and year without passing them as fetch options', async t => {
+test('Wiki requests carry selected identity and release without passing them as fetch options', async t => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options) => {
-        assert.match(String(url), /q=Test%20Series&type=tv&year=2023$/);
+        const params = new URL(url).searchParams;
+        assert.equal(params.get('q'), 'Test Series');
+        assert.equal(params.get('type'), 'tv');
+        assert.equal(params.get('year'), '2023');
+        assert.equal(params.get('v'), RELEASE_VERSION, 'previous-release browser summaries must not bypass current validation');
         assert.equal(options.mediaType, undefined);
         assert.equal(options.year, undefined);
         return Response.json({ extract: 'A series synopsis.' });

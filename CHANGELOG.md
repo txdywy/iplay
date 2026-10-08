@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.12] - 2026-10-08
+
+### Fixed
+
+- Resource completion preserves usable links, password-copy controls and expanded lists during pending and failed retries; retry buttons remain disabled until the request completes.
+- Selected actor and actor-share recovery retries retain the exact person ID and history behavior instead of repeating an ambiguous name search.
+- Shared detail links reject invalid explicit media types before any API request and normalize valid type values.
+- TMDB person payloads require the requested combined-credit cast array before caching; incomplete cached entries are evicted and refetched, while valid empty filmographies remain supported.
+- Wikipedia checks opening-sentence years as well as title/description years. Wiki v3 Worker caches and release-tagged client requests exclude earlier incorrect summaries.
+
+### Added
+
+- Regression tests for actor payload validation/cache repair and Wiki remake-year mismatches, native workerd recovery checks, and browser coverage for resource preservation and selected/shared actor retries.
+- A dated code-review record and updated API, architecture and testing documentation.
+
 ## [1.0.11] - 2026-10-07
 
 ### Fixed

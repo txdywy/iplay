@@ -205,6 +205,10 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     });
                 }
                 if (url.searchParams.get('id') === '901') {
+                    if (new URL(location.href).searchParams.has('actor-retry')) {
+                        window.__smoke.actorSelectionAttempts = (window.__smoke.actorSelectionAttempts || 0) + 1;
+                        if (window.__smoke.actorSelectionAttempts === 1) return json({ error: 'temporary selected actor outage' }, 503);
+                    }
                     return json({
                         person: { id: 901, name: 'Ambiguous Actor', originalName: 'Ambiguous Actor', profile: poster, matchScore: 1, matchConfidence: 'high' },
                         credits: [{ ...candidate('Selected Film', 304), mediaType: 'movie', title: 'Selected Film', originalTitle: 'Selected Film' }],
@@ -340,6 +344,22 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/omdb') return json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
+                if (window.__smoke.resourceMode === 'recovery') {
+                    if (window.__smoke.resourceCalls === 2) {
+                        await new Promise(resolve => setTimeout(resolve, 350));
+                        return json({ error: 'temporary completion outage' }, 502);
+                    }
+                    const partial = window.__smoke.resourceCalls === 1;
+                    return json({
+                        partial,
+                        resourceMeta: { partial, providers: { by669: 'ok', wpzys: partial ? 'failed' : 'ok' }, failedPages: 0 },
+                        resources: [{ title: 'Retained resource', url: 'https://resource.example/retained' }],
+                        wpzysResources: [],
+                        quarkUrls: Array.from({ length: 8 }, (_, index) => ({
+                            title: 'Retained Quark', url: 'https://pan.quark.cn/s/retained' + (index ? '-' + index : ''), password: 'keep'
+                        }))
+                    });
+                }
                 if (window.__smoke.resourceMode) return json({
                     partial: true,
                     resourceMeta: {
@@ -757,7 +777,76 @@ async function runActorFilterRaceFlow() {
     assert.equal(await evaluate("document.querySelector('#actorCreditList').getAttribute('aria-busy')"), 'false');
 }
 
+async function runResourceRetryPreservationFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'recovery'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#resourcesNotice button') && window.__smoke.resourceCalls === 1");
+    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.textContent.startsWith('显示更多')).click()");
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 8);
+
+    await evaluate("document.querySelector('#resourcesNotice button').click()");
+    await waitFor('window.__smoke.resourceCalls === 2');
+    assert.equal(await evaluate("document.querySelector('#resourceList a')?.getAttribute('href')"), 'https://resource.example/retained',
+        'resource completion must keep usable source cards visible while loading');
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList a')?.getAttribute('href')"), 'https://pan.quark.cn/s/retained');
+    assert.equal(await evaluate("document.querySelector('#resourcesNotice button')?.disabled"), true,
+        'completion cannot be submitted repeatedly while the request is pending');
+    await evaluate("document.querySelector('#quarkUrlList button').click()");
+    await waitFor("window.__smoke.copied === 'keep'");
+
+    await waitFor("document.querySelector('#resourcesStatus').getAttribute('aria-busy') === 'false'");
+    assert.match(await evaluate("document.querySelector('#resourcesStatus').textContent"), /失败.*保留/);
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList a')?.getAttribute('href')"), 'https://pan.quark.cn/s/retained',
+        'a failed completion must not remove already-extracted share links');
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 8,
+        'a failed completion must preserve the expanded resource list');
+    await evaluate("document.querySelector('#resourcesNotice button').click()");
+    await waitFor("window.__smoke.resourceCalls === 3 && document.querySelector('#resourcesNotice').classList.contains('hidden')");
+    assert.equal(await evaluate("document.querySelector('#resourcesStatus').textContent"), '资源扫描完成');
+}
+
+async function runActorIdentityRetryFlow(shared) {
+    await command('Page.navigate', { url: `${baseUrl}?actor-retry=1${shared ? '&actor=Ambiguous%20Actor&person=901' : ''}` });
+    if (!shared) {
+        await search('Ambiguous Actor');
+        await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)')");
+        await evaluate("document.querySelector('#actorCandidateList button[data-person-id=\"901\"]').click()");
+    }
+    await waitFor("document.querySelector('#errorState:not(.hidden)') && window.__smoke.actorSelectionAttempts === 1");
+    const callsBeforeRetry = await evaluate('window.__smoke.calls.length');
+    await evaluate("document.querySelector('#retrySearchButton').click()");
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    assert.equal(await evaluate('window.__smoke.actorSelectionAttempts'), 2);
+    assert.equal(await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"304\"]') !== null"), true);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('person')"), '901');
+    const retryCalls = await evaluate(`window.__smoke.calls.slice(${callsBeforeRetry})`);
+    assert.equal(retryCalls.length, 1, 'selected actor recovery must use a single exact-ID request');
+    assert.equal(new URL(retryCalls[0], baseUrl).searchParams.get('id'), '901');
+    assert.equal(await evaluate("document.querySelector('#errorState').classList.contains('hidden')"), true);
+}
+
+async function runSharedTypeValidationFlow() {
+    for (const type of ['book', '']) {
+        await command('Page.navigate', { url: `${baseUrl}?id=109&type=${type}&title=Shared%20Title` });
+        await waitFor("document.querySelector('#errorState:not(.hidden)')");
+        assert.match(await evaluate("document.querySelector('#errorMsg').textContent"), /类型.*无效/);
+        assert.deepEqual(await evaluate('window.__smoke.calls'), [], 'invalid explicit media types must never probe another ID namespace');
+    }
+    await command('Page.navigate', { url: `${baseUrl}?id=109&type=MOVIE&title=Shared%20Title` });
+    await assertSearchReady('Canonical Movie');
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('type')"), 'movie');
+    assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/tmdb/detail?id=109&type=movie')));
+}
+
 try {
+    await runResourceRetryPreservationFlow();
+    await runActorIdentityRetryFlow(false);
+    await runActorIdentityRetryFlow(true);
+    await runSharedTypeValidationFlow();
     await runObserverFlow();
     await runWpzyAccessFlow('restricted');
     await runWpzyAccessFlow('login');
@@ -781,7 +870,8 @@ try {
     await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

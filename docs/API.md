@@ -185,6 +185,8 @@ GET /api/tmdb/person?q={actorName}
 
 同名人物无法安全区分时返回 `person: null`、`personCandidates[]` 和 `searchMeta.ambiguous: true`；前端会要求用户选择人物，再使用 `id` 参数加载对应作品。无可靠人物匹配时返回 `person: null` 与空的 `credits`；前端会继续按影视标题搜索。
 
+人物详情必须包含请求的 `combined_credits.cast` 数组；缺失或类型错误返回 `502`，不写入缓存。已有不完整人物缓存会被删除并从上游重取。合法的空数组仍表示该人物暂无出演作品。
+
 ---
 
 ### 3. TMDB 详情
@@ -544,6 +546,8 @@ GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 
 可选参数 `type` 为 `movie` 或 `tv`，`year` 为四位年份。
 
+年份校验会同时检查标题/描述和中文简介首句：标题/描述或首句提供了年份，却没有匹配所选年份时，返回 `404` 并保留 TMDB 简介。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
+
 **Example Request：**
 
 ```bash
@@ -577,14 +581,14 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v9-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v10-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
 | `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v2-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v3-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
 
-详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v9 和海报 v4 缓存排除了此前的假成功和缺少作品身份的海报条目。
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v10 缓存排除了此前错误的链接/密码关联，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v3 缓存排除了此前漏检首句年份的摘要。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 
@@ -596,9 +600,11 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 
 ### 前端搜索与恢复行为
 
-`js/main.js` 会并行检查标题和演员意图：命中高置信度演员时按电视剧 / 电影分组展示出演作品；影视查询则使用 `js/match.js` 对 Worker 返回的候选进行二次判断，高置信度且分数明显领先的结果会直接加载详情，中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。详情页的 TMDB / OMDb 演员名以按钮形式复用演员搜索。
+`js/main.js` 先检查影视标题，仅在没有可靠标题匹配时查询演员：命中高置信度演员时按电视剧 / 电影分组展示出演作品；影视查询则使用 `js/match.js` 对 Worker 返回的候选进行二次判断，高置信度且分数明显领先的结果会直接加载详情，中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。详情页的 TMDB / OMDb 演员名以按钮形式复用演员搜索。
 
 搜索结果会先于详情接口出现，详情接口失败时页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；现代浏览器中的资源聚合默认延后到资源区接近视口或用户主动点击后执行，不支持 IntersectionObserver 的旧环境才使用空闲回调或定时回退。资源接口返回部分成功时，三个资源列表会保留可用内容，并显示“重试补全资源”；完全失败时三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
+
+补全资源时，已有链接和复制密码按钮继续可用，补全按钮在请求结束前禁用；补全失败后保留当前结果和展开状态，可再次重试。演员候选或分享链接的加载失败后，“重试演员作品”继续请求已选人物 ID。分享链接中明确提供但无效的 `type`（包括空值）会显示错误，不按同 ID 的其他媒体类型回退；类型值会去除首尾空白并转为小写。
 
 剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。
 

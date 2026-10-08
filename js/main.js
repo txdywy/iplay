@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.11';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.11';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.11';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.11';
-import { RELEASE_VERSION } from './release.js?v=1.0.11';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.12';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.12';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.12';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.12';
+import { RELEASE_VERSION } from './release.js?v=1.0.12';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.11';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.11';
+} from './match.js?v=1.0.12';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.12';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -515,6 +515,8 @@ async function loadActorCandidate(candidate, query, searchId, searchOptions, { h
     if (!isActiveSearch(searchId) || !candidate?.id) return;
     const loadId = ++currentCandidateLoadId;
     const candidateOptions = createCandidateRequestOptions(searchOptions);
+    searchRetryAction = null;
+    els.error.classList.add('hidden');
     els.loading.classList.remove('hidden');
     setSearching(true);
     setSearchStatus(`正在加载演员“${candidate.name || query}”的作品`);
@@ -539,7 +541,8 @@ async function loadActorCandidate(candidate, query, searchId, searchOptions, { h
         focusActorHeading();
     } catch (error) {
         if (error?.name !== 'AbortError' && isActiveSearch(searchId, loadId)) {
-            showSearchError(error, query, searchId);
+            showSearchError(error, query, searchId, () =>
+                loadActorCandidate(candidate, query, searchId, searchOptions, { historyMode }));
         }
     } finally {
         if (isActiveSearch(searchId, loadId)) setSearching(false);
@@ -1755,6 +1758,7 @@ let currentCandidateLoadId = 0;
 let currentActorPageController = null;
 let actorResultState = null;
 let lastSearchQuery = '';
+let searchRetryAction = null;
 
 function getAppHistoryUrl(url) {
     const nextUrl = url instanceof URL ? url : new URL(url, window.location.href);
@@ -1800,6 +1804,7 @@ function getSearchErrorMessage(error) {
 }
 
 function getSearchErrorHint(error) {
+    if (/链接.*类型.*无效/.test(error?.message || '')) return '请重新搜索片名，确认条目后再复制分享链接。';
     if (error?.status === 429) return '请求比较频繁，请稍等片刻后再试。';
     if (error?.status === 503) return '数据服务暂时不可用，稍后重试通常即可恢复。';
     if (error?.status === 504 || /timed out|timeout|超时/i.test(error?.message || '')) {
@@ -1827,12 +1832,12 @@ function showEmptySearchError() {
     els.input?.focus();
 }
 
-function showSearchError(error, query, searchId) {
+function showSearchError(error, query, searchId, onRetry = null) {
     if (!isActiveSearch(searchId)) return;
     const message = getSearchErrorMessage(error);
     setText(els.errorMsg, message);
     setText(els.errorHint, getSearchErrorHint(error));
-    setText(els.retrySearchButton, '重试搜索');
+    setText(els.retrySearchButton, onRetry ? '重试演员作品' : '重试搜索');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
@@ -1842,6 +1847,7 @@ function showSearchError(error, query, searchId) {
     setSearchStatus(`搜索失败：${message}`);
     setSearching(false);
     lastSearchQuery = query;
+    searchRetryAction = onRetry;
 }
 
 function resetResultAnimation() {
@@ -1900,16 +1906,19 @@ function beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh
     if (!isActiveSearch(searchId, loadId) || resourceLoadStarted) return;
     resourceLoadStarted = true;
     cancelResourceLoadSchedule();
-    renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
-    void loadResources(candidate, searchId, searchOptions, loadId, { refresh });
+    if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+        setResourceStatus('正在补全资源，已保留可用结果…', true);
+    } else {
+        renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
+    }
+    return loadResources(candidate, searchId, searchOptions, loadId, { refresh });
 }
 
 function createResourceRetry(candidate, searchId, searchOptions, loadId) {
     return () => {
         if (!isActiveSearch(searchId, loadId)) return;
-        resourceResultState = null;
         resourceLoadStarted = false;
-        beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
+        return beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
     };
 }
 
@@ -1987,7 +1996,11 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
     } catch (error) {
         if (error?.name === 'AbortError') return;
         if (!isActiveSearch(searchId, loadId)) return;
-        renderResourceErrorStates(createResourceRetry(candidate, searchId, searchOptions, loadId));
+        if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+            setResourceStatus('资源补全失败，已保留可用结果，可重试');
+        } else {
+            renderResourceErrorStates(createResourceRetry(candidate, searchId, searchOptions, loadId));
+        }
         console.debug('Resource enrichment skipped:', error);
     }
 }
@@ -2226,6 +2239,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
 
 function beginSearchSession(query) {
     lastSearchQuery = query;
+    searchRetryAction = null;
     cancelResourceLoadSchedule();
     resourceLoadStarted = false;
     resourceResultState = null;
@@ -2262,6 +2276,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         resourceResultState = null;
         hideActorCandidatePicker();
         lastSearchQuery = '';
+        searchRetryAction = null;
         showEmptySearchError();
         return;
     }
@@ -2376,7 +2391,8 @@ if (els.retrySearchButton) {
     els.retrySearchButton.addEventListener('click', () => {
         if (!lastSearchQuery) return;
         els.input.value = lastSearchQuery;
-        void handleSearch();
+        if (searchRetryAction) void searchRetryAction();
+        else void handleSearch();
     });
 }
 
@@ -2411,6 +2427,7 @@ function resetInitialView() {
     resourceLoadStarted = false;
     resourceResultState = null;
     lastSearchQuery = '';
+    searchRetryAction = null;
     if (els.input) els.input.value = '';
     els.loading.classList.add('hidden');
     els.error.classList.add('hidden');
@@ -2451,11 +2468,14 @@ async function restoreUrlState() {
 
     const idText = params.get('id')?.trim() || '';
     if (/^[1-9]\d{0,11}$/.test(idText)) {
-        const mediaType = ['movie', 'tv'].includes(params.get('type')) ? params.get('type') : null;
+        const mediaType = params.get('type')?.trim().toLowerCase() ?? null;
         const title = params.get('title')?.trim() || `TMDB ${idText}`;
         els.input.value = title;
         const { searchId, searchOptions } = beginSearchSession(title);
         try {
+            if (mediaType !== null && !['movie', 'tv'].includes(mediaType)) {
+                throw new Error('分享链接中的影视类型无效，请重新搜索片名');
+            }
             await loadCandidateDetails({
                 id: Number(idText),
                 mediaType,
