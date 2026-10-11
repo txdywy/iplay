@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.13] - 2026-10-11
+
+### Fixed
+
+- Explicit invalid or empty person/media IDs in share links fail before any API request; malformed person links cannot fall back to a different same-name actor. Legacy name-only actor links remain supported.
+- Douban, Wikipedia and OMDb enrichment use the canonical title, media type and year after TMDB details finish. Search metadata remains immediately visible, and an early old-title synopsis can no longer survive a corrected detail response.
+- TMDB media details require the requested credits cast/crew arrays and external-ID object before caching; incomplete cached entries are evicted and refetched, while valid empty fields remain supported.
+- Updated the matched Wrangler/Miniflare toolchain to 4.149.0 / 5.20261006.1-alpha (sharp 0.35.5) and source-map-js to 1.2.2 to resolve the two underlying security advisories reported across four development dependencies.
+
+### Added
+
+- Browser regressions for share ID validation and canonical enrichment; API and native workerd checks for incomplete media details and cache recovery.
+- A dated review record, corrected development/deployment instructions and an immutable commit pin for the CI Chrome installer.
+
 ## [1.0.12] - 2026-10-08
 
 ### Fixed

@@ -122,7 +122,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Progressive Movie': 106,
                     'Retry Detail Movie': 107,
                     'Unsafe Poster Movie': 108,
-                    'Identity Movie': 110
+                    'Identity Movie': 110,
+                    'Changing Metadata Movie': 111
                 };
                 if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
@@ -308,11 +309,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     108: 'Unsafe Poster Movie',
                     109: 'Canonical Movie',
                     110: 'Identity Movie',
+                    111: 'Canonical Renamed Movie',
                     200: 'Actor Movie',
                     201: 'Smoke Series'
                 };
                 const title = titles[id] || 'Smoke Movie';
-                if (id === 106 || id === 109) {
+                if (id === 106 || id === 109 || id === 111) {
                     await new Promise(resolve => setTimeout(resolve, 450));
                 }
                 if (id === 107) {
@@ -322,6 +324,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 if (id === 108) await new Promise(resolve => setTimeout(resolve, 200));
                 const response = json({
                     ...candidate(title, id),
+                    year: id === 111 ? '2025' : '2024',
                     poster: id === 110 ? null : poster,
                     genres: ['Drama'],
                     runtime: 120,
@@ -333,14 +336,23 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     castDetails: [{ id: 900, name: 'Clickable Actor', character: 'Lead' }],
                     director: ['Smoke Director'],
                     writer: ['Smoke Writer'],
-                    imdbId: id === 104 ? '' : 'tt1234567',
+                    imdbId: id === 104 || id === 111 ? '' : 'tt1234567',
                     summary: id === 106 ? '详情已到达。' : 'A browser smoke test detail.'
                 });
                 window.__smoke.detailResolved += 1;
                 return response;
             }
-            if (url.pathname === '/api/douban/search') return json([]);
-            if (url.pathname === '/api/wiki/zh') return json({ extract: '中文烟测简介。' });
+            if (url.pathname === '/api/douban/search') {
+                if (url.searchParams.get('q') === 'Canonical Renamed Movie') return json([
+                    { id: '411', title: 'Canonical Renamed Movie', year: '2024' },
+                    { id: '412', title: 'Canonical Renamed Movie', year: '2025' }
+                ]);
+                return json([]);
+            }
+            if (url.pathname === '/api/douban/detail') return json({ rating: 9.1 });
+            if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
+                ? '旧片同名作品简介。'
+                : url.searchParams.get('q') === 'Canonical Renamed Movie' ? '详情确认后的新版作品简介。' : '中文烟测简介。' });
             if (url.pathname === '/api/omdb') return json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
@@ -842,7 +854,54 @@ async function runSharedTypeValidationFlow() {
     assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/tmdb/detail?id=109&type=movie')));
 }
 
+async function runSharedIdentityValidationFlow() {
+    for (const person of ['', '0', '-1', '901x', '1234567890123']) {
+        await command('Page.navigate', { url: `${baseUrl}?actor=Ambiguous%20Actor&person=${person}` });
+        await waitFor("document.readyState === 'complete' && document.querySelector('#errorState:not(.hidden)')");
+        assert.deepEqual(await evaluate('window.__smoke.calls'), [], 'an invalid explicit person ID must never fall back to a same-name actor');
+        assert.equal(await evaluate("document.querySelector('#errorState:not(.hidden)') !== null"), true);
+        assert.match(await evaluate("document.querySelector('#errorMsg').textContent"), /人物.*ID.*无效/);
+    }
+    for (const id of ['', '0', '-1', '109x', '1234567890123']) {
+        await command('Page.navigate', { url: `${baseUrl}?id=${id}&type=movie&title=Shared%20Title` });
+        await waitFor("document.querySelector('#errorState:not(.hidden)')");
+        assert.match(await evaluate("document.querySelector('#errorMsg').textContent"), /影视.*ID.*无效/);
+        assert.deepEqual(await evaluate('window.__smoke.calls'), []);
+    }
+    await command('Page.navigate', { url: `${baseUrl}?actor=Smoke%20Actor` });
+    await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
+    assert.equal(await evaluate("document.querySelector('#actorResultsTitle').textContent"), 'Smoke Actor', 'legacy name-only actor links remain supported');
+    await command('Page.navigate', { url: `${baseUrl}?actor=Ambiguous%20Actor&person=%20901%20` });
+    await waitFor("document.querySelector('#actorCreditList button[data-media-id=\"304\"]')");
+    assert.equal((await evaluate('window.__smoke.calls')).length, 1, 'valid trimmed person IDs use exact selection');
+}
+
+async function runCanonicalEnrichmentFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Changing Metadata Movie');
+    await assertSearchReady('Changing Metadata Movie');
+    assert.equal(await evaluate('window.__smoke.detailResolved'), 0, 'search metadata remains immediately visible');
+    assert.equal(await evaluate("window.__smoke.calls.some(call => ['/api/wiki/', '/api/douban/', '/api/omdb', '/api/poster'].some(path => call.startsWith(path)))"), false,
+        'identity-sensitive enrichment waits for canonical details');
+    await assertSearchReady('Canonical Renamed Movie');
+    await waitFor("document.querySelector('#wikiStatus').getAttribute('aria-busy') === 'false'");
+    const calls = (await evaluate('window.__smoke.calls')).map(call => new URL(call, baseUrl));
+    for (const path of ['/api/wiki/zh', '/api/douban/search']) {
+        const enrichment = calls.find(url => url.pathname === path);
+        assert.equal(enrichment?.searchParams.get('q'), 'Canonical Renamed Movie', path);
+    }
+    assert.equal(calls.find(url => url.pathname === '/api/wiki/zh')?.searchParams.get('year'), '2025');
+    await waitFor("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=412'))");
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=411'))"), false);
+    await waitFor("window.__smoke.calls.some(call => call.includes('/api/poster?'))");
+    assert.equal(new URL((await evaluate("window.__smoke.calls.find(call => call.includes('/api/poster?'))")), baseUrl).searchParams.get('title'), 'Canonical Renamed Movie');
+    assert.equal(await evaluate("document.body.textContent.includes('旧片同名作品简介。')"), false);
+    assert.equal(await evaluate("document.body.textContent.includes('详情确认后的新版作品简介。')"), true);
+}
+
 try {
+    await runSharedIdentityValidationFlow();
+    await runCanonicalEnrichmentFlow();
     await runResourceRetryPreservationFlow();
     await runActorIdentityRetryFlow(false);
     await runActorIdentityRetryFlow(true);
@@ -871,7 +930,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['shared-identity-validation', 'canonical-enrichment', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

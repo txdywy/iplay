@@ -23,7 +23,7 @@
 
 ### 前置要求
 
-- **Node.js**：最低 20.19.0，推荐 22 LTS（仓库提供 `.nvmrc`）
+- **Node.js**：最低 22.13.0，推荐 24 LTS（仓库提供 `.nvmrc`）
 - **npm**：随 Node.js 一起安装
 - **Python 3**：用于本地静态服务器预览
 - **Wrangler CLI**（可选）：通过 `npm run wrangler -- <command>` 使用仓库固定版本，用于本地测试 Cloudflare Worker
@@ -31,7 +31,7 @@
 ### 安装依赖
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 本地开发流程

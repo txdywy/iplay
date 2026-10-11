@@ -1,15 +1,15 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.12';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.12';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.12';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.12';
-import { RELEASE_VERSION } from './release.js?v=1.0.12';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.13';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.13';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.13';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.13';
+import { RELEASE_VERSION } from './release.js?v=1.0.13';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.12';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.12';
+} from './match.js?v=1.0.13';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.13';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -2073,7 +2073,7 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
     });
 }
 
-function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId, detailPromise = Promise.resolve()) {
+function startMetadataEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId) {
     const enrichmentQuery = candidate.title || candidate.originalTitle || query;
     setEnrichmentStatus(els.wikiStatus, '正在补充中文 Wikipedia 简介…', true);
 
@@ -2086,7 +2086,6 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
                 if (error?.name === 'AbortError') throw error;
                 return null;
             });
-            await detailPromise;
             if (!isActiveSearch(searchId, loadId) || !doubanResult) return;
             if (doubanResult.imdbId && viewModel.detail?.imdbId && doubanResult.imdbId !== viewModel.detail.imdbId) return;
             viewModel.doubanRating = doubanResult.rating;
@@ -2117,12 +2116,15 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
         console.debug('Wiki enrichment skipped:', error);
     });
 
-    scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
+    startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+}
 
+function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId, detailPromise = Promise.resolve()) {
+    scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
     void detailPromise
         .then(() => {
             if (isActiveSearch(searchId, loadId)) {
-                startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+                startMetadataEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId);
             }
         })
         .catch(error => {
@@ -2184,15 +2186,10 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         .then(tmdbDetail => {
             if (!isActiveSearch(searchId, loadId)) return null;
 
-            const existingSummary = viewModel.overviewSource === 'ZH.WIKIPEDIA' ? viewModel.summary : '';
             const existingPoster = viewModel.posterUrl;
             const existingOmdbProfile = viewModel.omdbProfile;
             const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
             Object.assign(viewModel, detailViewModel);
-            if (existingSummary) {
-                viewModel.summary = existingSummary;
-                viewModel.overviewSource = 'ZH.WIKIPEDIA';
-            }
             if (existingPoster) viewModel.posterUrl = existingPoster;
             if (existingOmdbProfile) viewModel.omdbProfile = existingOmdbProfile;
             Object.assign(selectedCandidate, {
@@ -2457,8 +2454,12 @@ async function restoreUrlState() {
     if (actor) {
         els.input.value = actor;
         const personId = params.get('person')?.trim() || '';
-        if (/^[1-9]\d{0,11}$/.test(personId)) {
+        if (params.has('person')) {
             const { searchId, searchOptions } = beginSearchSession(actor);
+            if (!/^[1-9]\d{0,11}$/.test(personId)) {
+                showSearchError(new Error('分享链接中的人物 ID 无效，请重新搜索演员'), actor, searchId);
+                return;
+            }
             await loadActorCandidate({ id: personId }, actor, searchId, searchOptions, { historyMode: 'none' });
             return;
         }
@@ -2467,12 +2468,15 @@ async function restoreUrlState() {
     }
 
     const idText = params.get('id')?.trim() || '';
-    if (/^[1-9]\d{0,11}$/.test(idText)) {
+    if (params.has('id')) {
         const mediaType = params.get('type')?.trim().toLowerCase() ?? null;
         const title = params.get('title')?.trim() || `TMDB ${idText}`;
         els.input.value = title;
         const { searchId, searchOptions } = beginSearchSession(title);
         try {
+            if (!/^[1-9]\d{0,11}$/.test(idText)) {
+                throw new Error('分享链接中的影视 ID 无效，请重新搜索片名');
+            }
             if (mediaType !== null && !['movie', 'tv'].includes(mediaType)) {
                 throw new Error('分享链接中的影视类型无效，请重新搜索片名');
             }

@@ -93,7 +93,7 @@ User submits query from search form
 
 ### 2. Detail Page Flow
 
-After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It then renders core detail immediately, starts independent metadata enrichment, and defers resource scanning until it is useful:
+After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It renders search metadata immediately, then uses the detail response's canonical title, media type and year for Douban, Wiki and OMDb enrichment. If details fail, normal search retains its candidate metadata and retry action; unconfirmed shared links wait for a successful detail retry. Resource scanning starts when its section approaches the viewport or the user requests it:
 
 ```
 User submits a search
@@ -110,6 +110,8 @@ User submits a search
     TMDB     Douban    Wiki    OMDb     Resource
    Detail    Search   Summary  by IMDb  (deferred)
    API       +Detail   API     ID       Search
+     |          ^        ^       ^
+     +----------+--------+-------+  -- use canonical detail metadata
         |        |        |        |        |
         v        v        v        v        v
 +-------+--------+--------+--------+--------+
@@ -333,25 +335,23 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 ### Build Pipeline
 
 ```
-Developer pushes to main
+Feature branch / PR
         |
         v
-+-------+-------+
-|  npm test     |  -- Node tests + lint + build
-|  (package.json)|
-+-------+-------+
+CI: npm ci + tests/lint/build (Node 22/24)
+    strict Worker bundle + native runtime + Chrome smoke
         |
         v
-+-------+-------+
-|  GitHub Pages |  -- Auto-deploys static files
-|  (frontend)   |
-+---------------+
+Merge to main
+        |
+        +--> GitHub Pages: frontend
+        |
+        +--> Cloudflare Workers Builds: production Worker
+        |
+        v
+Wait for both deployments, then run test:live
 
-Worker deploy (manual or via Wrangler CLI):
-+-------+-------+
-| wrangler    |  -- Deploys worker/_worker.js
-| deploy      |     to Cloudflare edge
-+---------------+
+Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 ```
 
 ---
@@ -377,7 +377,7 @@ Worker deploy (manual or via Wrangler CLI):
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
 - Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v10-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v3-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching; resource and Wiki client requests carry the release version to isolate browser caches.
-- Person payloads requested with combined credits must include a cast array before caching; malformed cached payloads are evicted and refetched. Wikipedia checks known years in both title/description and the opening sentence before replacing the selected work's overview.
+- Media payloads requested with credits and external IDs must include cast/crew arrays and an external-ID object before caching. Person payloads requested with combined credits must include a cast array. Malformed cached payloads are evicted and refetched; genuinely empty arrays remain valid. Wikipedia checks known years in both title/description and the opening sentence before replacing the selected work's overview.
 - Resource completion keeps existing links and expanded lists usable during loading and after failure. Selected-actor retries retain the person ID, and shared detail links reject invalid explicit media types before issuing API requests.
 - The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
 

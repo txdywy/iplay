@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../worker/_worker.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
+import { tmdbDetail } from './fixtures/tmdb.js';
 
 function muteConsole(t, method) {
     const original = console[method];
@@ -728,7 +729,7 @@ test('direct TMDB search and detail routes use the resized poster URL', async t 
             });
         }
         if (value.includes('/movie/321')) {
-            return Response.json({
+            return Response.json(tmdbDetail({
                 id: 321,
                 title: 'Poster Check',
                 original_title: 'Poster Check',
@@ -743,7 +744,7 @@ test('direct TMDB search and detail routes use the resized poster URL', async t 
                     cast: [{ id: 77, name: 'Poster Actor', character: 'Lead', profile_path: '/actor.jpg' }]
                 },
                 external_ids: { imdb_id: 'tt3210000' }
-            });
+            }));
         }
         throw new Error(`Unexpected fetch: ${value}`);
     };
@@ -1132,7 +1133,7 @@ test('untyped TMDB detail retries the alternate media type only after a not-foun
         if (value.includes('/movie/42')) {
             return Response.json({ status_message: 'Not found' }, { status: 404 });
         }
-        return Response.json({ id: 42, name: 'Fallback Series', credits: {} });
+        return Response.json(tmdbDetail({ id: 42, name: 'Fallback Series' }));
     };
     t.after(() => {
         globalThis.caches = originalCaches;
@@ -1165,7 +1166,7 @@ test('TMDB TV detail exposes normalized per-season episode counts', async t => {
     };
     globalThis.fetch = async url => {
         assert.match(String(url), /\/tv\/123/);
-        return Response.json({
+        return Response.json(tmdbDetail({
             id: 123,
             name: '示例剧集',
             number_of_seasons: 3,
@@ -1177,7 +1178,7 @@ test('TMDB TV detail exposes normalized per-season episode counts', async t => {
                 { season_number: 'invalid', episode_count: 99 },
                 { season_number: 3, name: 'Season 3' }
             ]
-        });
+        }));
     };
     t.after(() => {
         globalThis.caches = originalCaches;
@@ -2449,7 +2450,7 @@ test('scheduled refresh limits title fan-out concurrency', async t => {
             });
         }
         if (value.includes('/movie/42')) {
-            return Response.json({ id: 42, title: 'Scheduled title', credits: {} });
+            return Response.json(tmdbDetail({ id: 42, title: 'Scheduled title' }));
         }
         throw new Error(`Unexpected fetch: ${value}`);
     };
