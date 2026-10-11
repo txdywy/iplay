@@ -769,7 +769,11 @@ function isValidTmdbPayload(path, data, params = {}) {
     if (/^\/search\/(?:multi|movie|tv|person)$/.test(path)) return Array.isArray(data.results);
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
     if (/^\/(?:movie|tv)\/\d+$/.test(path)) {
-        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbTitle(data));
+        const appended = String(params.append_to_response || "").split(",");
+        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbTitle(data))
+            && (!appended.includes("external_ids") || isObject(data.external_ids))
+            && (!appended.includes("credits") || (isObject(data.credits)
+                && Array.isArray(data.credits.cast) && Array.isArray(data.credits.crew)));
     }
     if (/^\/person\/\d+$/.test(path)) {
         const expectsCredits = String(params.append_to_response || "").split(",").includes("combined_credits");

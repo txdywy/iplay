@@ -33,7 +33,13 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 6. 保存运行时配置。
 7. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
 
-### 方式二：Wrangler CLI（当前推荐）
+### 日常发布：Cloudflare Workers Builds
+
+当前生产 Worker 已连接本仓库，生产分支为 `main`。功能分支推送触发预览构建；PR 的 CI 通过并合并到 `main` 后，Cloudflare Workers Builds 自动构建并部署生产 Worker，GitHub Pages 独立发布前端。两个部署都完成并通过 `test:live` 后才算发布完成。不要因 GitHub Actions 中没有自动 Worker 作业而重复手动部署。
+
+新建或自托管 Worker 时，需要在 Dashboard 的 **Settings → Build** 连接仓库并确认生产分支、构建命令和部署命令。分支行为见 [Cloudflare Build branches](https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/)。
+
+### 首次配置或自动部署故障回退：Wrangler CLI
 
 ```bash
 cd iplay
@@ -49,9 +55,9 @@ npm run deploy:worker -- --message "本次变更说明"
 
 TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `ENVIRONMENT=production`，并保留 `API_RATE_LIMITER` / `RESOURCE_RATE_LIMITER` 两个 binding；自托管前端还需在 Dashboard 设置 `CORS_ALLOWED_ORIGINS`，或在 `wrangler.toml` 的 `[vars]` 中配置允许的 Origin 后再部署。
 
-当前生产 Worker 使用本机 Wrangler OAuth 配置部署，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
+手动回退使用本机 Wrangler OAuth，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
 
-仓库锁定 Wrangler 4.144.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
+仓库锁定 Wrangler 4.149.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
 
 `wrangler.toml` 已声明 `ENVIRONMENT=production`，缺少分布式限流 binding 时拒绝请求；部署时保留两个 Rate Limiting bindings，不能依赖仅本地生效的隔离实例计数器。CI 的 Node 22 作业也会检查生产 Worker 打包。
 

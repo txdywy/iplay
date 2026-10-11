@@ -5,6 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { RELEASE_VERSION } from '../js/release.js';
 import { probeNativeRateLimit } from './helpers/native-rate-limit.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
+import { tmdbDetail } from './fixtures/tmdb.js';
 
 const { Response } = globalThis;
 
@@ -20,6 +21,7 @@ const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
 const bindings = { ENVIRONMENT: 'production', TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
 let wpzyMode = 'public';
 let personCreditsAvailable = false;
+let mediaFieldsAvailable = false;
 let wikiRemakeYear = '2005';
 const ratelimits = {
     API_RATE_LIMITER: { namespace_id: '1001', simple: { limit: 60, period: 60 } },
@@ -33,13 +35,18 @@ async function upstream(request) {
     }
     if (url.hostname === 'api.themoviedb.org' && /^\/3\/(tv|movie)\/101$/.test(url.pathname)) {
         const tv = url.pathname.includes('/tv/');
-        return Response.json({ id: 101, title: tv ? undefined : 'Shared Title', name: tv ? 'Shared Title' : undefined, poster_path: tv ? '/series.jpg' : '/movie.jpg' });
+        return Response.json(tmdbDetail({ id: 101, title: tv ? undefined : 'Shared Title', name: tv ? 'Shared Title' : undefined, poster_path: tv ? '/series.jpg' : '/movie.jpg' }));
     }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/603') {
-        return Response.json({ id: 603, title: 'Runtime Movie', overview: 'Verified movie overview.' });
+        return Response.json(tmdbDetail({ id: 603, title: 'Runtime Movie', overview: 'Verified movie overview.' }));
     }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/604') {
         return Response.json({ status_message: 'Fetch failed for https://api.themoviedb.org/?api_key=runtime-test; Bearer runtime-private-token' }, { status: 503 });
+    }
+    if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/605') {
+        return Response.json({ id: 605, title: 'Recovered Movie', ...(mediaFieldsAvailable ? {
+            external_ids: { imdb_id: 'tt1234567' }, credits: { cast: [{ id: 31, name: 'Runtime Actor' }], crew: [] }
+        } : {}) });
     }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/person/31') {
         return Response.json({ id: 31, name: 'Runtime Actor', ...(personCreditsAvailable ? { combined_credits: { cast: [] } } : {}) });
@@ -100,6 +107,18 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const incompleteMedia = await request('/api/tmdb/detail?id=605&type=movie');
+    assert.equal(incompleteMedia.status, 502);
+    assert.equal(incompleteMedia.headers.get('cache-control'), 'no-store');
+    await incompleteMedia.json();
+    mediaFieldsAvailable = true;
+    const recoveredMedia = await request('/api/tmdb/detail?id=605&type=movie');
+    assert.equal(recoveredMedia.status, 200, 'incomplete appended media fields must not poison native caches');
+    const recoveredMediaData = await recoveredMedia.json();
+    assert.deepEqual(recoveredMediaData.cast, ['Runtime Actor']);
+    assert.equal(recoveredMediaData.imdbId, 'tt1234567');
+    checks.push('appended-media-fields-validation-and-recovery');
 
     const malformedPerson = await request('/api/tmdb/person?id=31&q=Runtime%20Actor');
     assert.equal(malformedPerson.status, 502);

@@ -19,7 +19,7 @@
 
 ```bash
 cd iplay
-npm install
+npm ci
 npm run build
 ```
 
@@ -76,10 +76,11 @@ python3 -m http.server 8080
 ### 启动本地 Worker
 
 ```bash
+cp .dev.vars.example .dev.vars
 npm run wrangler -- dev
 ```
 
-Worker 会读取本地 `.dev.vars` 或 Cloudflare 账号里的密钥配置。
+在被 Git 忽略的 `.dev.vars` 中填写本地调试凭据。默认本地开发读取本地文件，不会自动下载生产 Worker 的 Secrets；配置方式见 [Cloudflare 本地密钥文档](https://developers.cloudflare.com/workers/configuration/secrets/#local-development-with-secrets)。
 
 ### Worker 代码位置
 

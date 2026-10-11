@@ -65,7 +65,7 @@ jobs:
         run: npm ci
 
       - name: Install Chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1
 
       - name: Run browser smoke
         run: npm run test:browser:ci

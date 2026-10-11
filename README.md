@@ -137,7 +137,7 @@ const PREFERENCE_WEIGHTS = {
 | `npm run test:runtime` | 在真实 workerd 中验证生产 bindings、缓存、并发响应流、HTMLRewriter 和限流；上游使用本地 mock |
 | `npm run test:browser:ci` | 自动启动隔离 Chrome，验证移动端和桌面交互 |
 | `npm run test:live` | 核对生产 HTML、全部 JS 模块、CSS、版本和真实 API；单独报告可选来源可用性 |
-| `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.144.0 运行本地 Worker 或部署命令 |
+| `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.149.0 运行本地 Worker 或部署命令 |
 
 ## 📜 协议
 

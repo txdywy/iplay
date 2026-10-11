@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
+import { tmdbDetail } from './fixtures/tmdb.js';
 
 function mockUpstreams(t, fetcher) {
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
@@ -93,14 +94,60 @@ test('explicit media types never fall back to an unrelated same-id title', async
 });
 
 test('TMDB details reject mismatched identities and title-less payloads', async t => {
-    let payload = { id: 99, title: 'Wrong title' };
+    let payload = tmdbDetail({ id: 99, title: 'Wrong title' });
     const ctx = mockUpstreams(t, async () => Response.json(payload));
-    for (const invalid of [payload, { id: 42 }]) {
+    for (const invalid of [payload, tmdbDetail({ id: 42 })]) {
         payload = invalid;
         const response = await worker.fetch(request('/api/tmdb/detail?id=42&type=movie'), { TMDB_API_KEY: 'test' }, ctx);
         assert.equal(response.status, 502);
         assert.equal(ctx.writes.length, 0);
     }
+});
+
+test('media details reject missing or malformed appended fields and allow genuinely empty credits', async t => {
+    let payload;
+    const ctx = mockUpstreams(t, async () => Response.json(payload));
+    for (const type of ['movie', 'tv']) {
+        const valid = { id: 42, [type === 'movie' ? 'title' : 'name']: 'Complete detail', external_ids: {}, credits: { cast: [], crew: [] } };
+        const malformed = [
+            { credits: undefined }, { credits: null }, { credits: [] }, { credits: {} },
+            { credits: { cast: [], crew: null } }, { credits: { cast: {}, crew: [] } },
+            { external_ids: undefined }, { external_ids: null }, { external_ids: [] }
+        ];
+        for (const fields of malformed) {
+            payload = { ...valid, ...fields };
+            const response = await worker.fetch(request(`/api/tmdb/detail?id=42&type=${type}`), { TMDB_API_KEY: 'test' }, ctx);
+            assert.equal(response.status, 502, `${type}: ${JSON.stringify(fields)}`);
+            assert.equal(response.headers.get('cache-control'), 'no-store');
+            assert.equal(ctx.writes.length, type === 'movie' ? 0 : 1, 'incomplete details must not be cached');
+        }
+        payload = valid;
+        const response = await worker.fetch(request(`/api/tmdb/detail?id=42&type=${type}`), { TMDB_API_KEY: 'test' }, ctx);
+        assert.equal(response.status, 200);
+        assert.deepEqual((await response.json()).cast, []);
+    }
+    assert.equal(ctx.writes.length, 2);
+});
+
+test('cached incomplete media details are evicted and repaired with credits and external IDs', async t => {
+    let upstreamCalls = 0;
+    const deleted = [];
+    const ctx = mockUpstreams(t, async () => {
+        upstreamCalls += 1;
+        return Response.json({ id: 42, title: 'Recovered Film', external_ids: { imdb_id: 'tt1234567' }, credits: {
+            cast: [{ id: 31, name: 'Recovered Actor' }], crew: []
+        } });
+    });
+    globalThis.caches.default.match = async () => Response.json({ id: 42, title: 'Recovered Film' });
+    globalThis.caches.default.delete = async key => { deleted.push(key.url); return true; };
+    const response = await worker.fetch(request('/api/tmdb/detail?id=42&type=movie'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.deepEqual(data.cast, ['Recovered Actor']);
+    assert.equal(data.imdbId, 'tt1234567');
+    assert.equal(upstreamCalls, 1);
+    assert.equal(deleted.length, 1);
+    assert.equal(ctx.writes.length, 1);
 });
 
 test('selected actors reject missing or malformed appended credits instead of caching empty filmographies', async t => {
@@ -142,13 +189,13 @@ test('cached actor payloads without appended credits are evicted and repaired fr
 });
 
 test('TV runtime uses episode data and directors exclude assistant directors', async t => {
-    const ctx = mockUpstreams(t, async () => Response.json({
+    const ctx = mockUpstreams(t, async () => Response.json(tmdbDetail({
         id: 42, name: 'Test series', episode_run_time: [0, 45],
         credits: { crew: [
             { name: 'Director', department: 'Directing', job: 'Director' },
             { name: 'Assistant', department: 'Directing', job: 'Assistant Director' }
         ] }
-    }));
+    })));
     const response = await worker.fetch(request('/api/tmdb/detail?id=42&type=tv'), { TMDB_API_KEY: 'test' }, ctx);
     const data = await response.json();
     assert.equal(data.runtime, 45);
@@ -166,7 +213,7 @@ test('poster search rejects a popular but unrelated title', async t => {
 test('selected poster identities never fall back to a same-title movie when the selected series has no image', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', first_air_date: '2024-01-01', poster_path: null });
+        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', first_air_date: '2024-01-01', poster_path: null }));
         return Response.json({ results: [{ id: 202, media_type: 'movie', title: 'Shared Title', release_date: '2024-01-01', poster_path: '/wrong-movie.jpg' }] });
     });
     const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv'), { TMDB_API_KEY: 'test' }, ctx);
@@ -178,7 +225,7 @@ test('selected poster lookups preserve a known IMDb identity instead of title-se
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
         if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
-        if (url.hostname === 'api.themoviedb.org') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.hostname === 'api.themoviedb.org') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
         const exact = url.searchParams.get('i') === 'tt1111111';
         return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: exact ? 'series' : 'movie',
             imdbID: exact ? 'tt1111111' : 'tt2222222', imdbRating: exact ? '8.8' : '2.0', Poster: 'https://example.org/poster.jpg' });
@@ -195,7 +242,7 @@ test('selected poster lookups preserve a known IMDb identity instead of title-se
 test('title-based OMDb poster metadata must map back to the selected TMDB identity', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
         if (url.pathname === '/3/find/tt2222222') return Response.json({ movie_results: [{ id: 202, title: 'Shared Title' }], tv_results: [] });
         if (url.hostname === 'zh.wikipedia.org') return Response.json({ query: { search: [] } });
         return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'movie', imdbID: 'tt2222222', Poster: 'https://example.org/wrong.jpg' });
@@ -208,7 +255,7 @@ test('title-based OMDb poster metadata must map back to the selected TMDB identi
 test('even an explicit IMDb ID cannot relabel a different TMDB work as the selection', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
         if (url.pathname === '/3/find/tt2222222') return Response.json({ movie_results: [{ id: 202, title: 'Shared Title' }], tv_results: [] });
         return Response.json({ Response: 'True', Title: 'Shared Title', imdbID: 'tt2222222', Poster: 'https://example.org/wrong.jpg' });
     });
@@ -220,7 +267,7 @@ test('even an explicit IMDb ID cannot relabel a different TMDB work as the selec
 test('identity-verified title enrichment returns ratings even without an OMDb poster', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json({ id: 101, name: 'Shared Title', poster_path: null });
+        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
         if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
         return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'series', imdbID: 'tt1111111', imdbRating: '8.8', Poster: 'N/A' });
     });
