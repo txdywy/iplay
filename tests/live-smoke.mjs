@@ -46,6 +46,8 @@ for (const [id, type] of [[603, 'movie'], [1399, 'tv']]) {
     assert.equal(data.id, id);
     assert.equal(data.mediaType, type);
     assert.ok(data.title && data.summary && data.genres?.length);
+    assert.ok(data.cast?.length > 0 && data.castDetails?.some(actor => actor.id > 0), `${type}:${id}: missing appended cast`);
+    assert.match(data.imdbId || '', /^tt\d+$/, `${type}:${id}: missing appended external ID`);
     if (type === 'tv') assert.ok(data.seasons?.length && data.totalEpisodes > 0);
     results.push({ check: `detail:${type}:${id}`, status: 'passed', title: data.title });
     const posterParams = new URLSearchParams({ title: data.title, id: String(id), type });

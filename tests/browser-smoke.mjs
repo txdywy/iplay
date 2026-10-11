@@ -857,8 +857,7 @@ async function runSharedTypeValidationFlow() {
 async function runSharedIdentityValidationFlow() {
     for (const person of ['', '0', '-1', '901x', '1234567890123']) {
         await command('Page.navigate', { url: `${baseUrl}?actor=Ambiguous%20Actor&person=${person}` });
-        await waitFor("document.readyState === 'complete'");
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await waitFor("document.readyState === 'complete' && document.querySelector('#errorState:not(.hidden)')");
         assert.deepEqual(await evaluate('window.__smoke.calls'), [], 'an invalid explicit person ID must never fall back to a same-name actor');
         assert.equal(await evaluate("document.querySelector('#errorState:not(.hidden)') !== null"), true);
         assert.match(await evaluate("document.querySelector('#errorMsg').textContent"), /人物.*ID.*无效/);
