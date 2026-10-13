@@ -34,7 +34,11 @@ async function searchQuarkPages(t, pages) {
     assert.equal(response.status, 200);
     const result = await response.json();
     for (const item of result.quarkUrls) {
-        assert.ok(Object.keys(item).every(key => ['title', 'url', 'password', 'sourceUrl', 'sourceTitle'].includes(key)));
+        assert.ok(Object.keys(item).every(key => ['title', 'url', 'password', 'passwordConflict', 'sourceUrl', 'sourceTitle'].includes(key)));
+        if ('passwordConflict' in item) {
+            assert.equal(item.passwordConflict, true);
+            assert.equal(item.password, undefined, 'conflicted evidence must never expose a chosen password');
+        }
     }
     return result.quarkUrls.map(({ url, password }) => ({ url, ...(password ? { password } : {}) }));
 }

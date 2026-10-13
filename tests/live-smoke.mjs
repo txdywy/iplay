@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { URLSearchParams } from 'node:url';
 
 // Explicit opt-in only: this performs public read-only requests, not mocked CI tests.
@@ -14,16 +14,18 @@ async function fetchLive(url, options = {}) {
 
 async function getApi(path, expectedStatus = 200) {
     const response = await fetchLive(new URL(path, api), { headers: { Origin: new URL(site).origin } });
-    assert.equal(response.status, expectedStatus, `${path}: unexpected HTTP status`);
+    if (expectedStatus !== null) assert.equal(response.status, expectedStatus, `${path}: unexpected HTTP status`);
     assert.equal(response.headers.get('access-control-allow-origin'), new URL(site).origin, `${path}: CORS`);
     assert.equal(response.headers.get('x-iplay-version'), release, `${path}: deployed Worker version differs`);
     const data = await response.json();
     return { response, data };
 }
 
-for (const path of ['index.html', 'js/main.js', 'js/api.js', 'js/match.js', 'js/scorer.js', 'js/format.js', 'js/quark.js', 'js/seasons.js', 'js/release.js', 'css/output.css', 'VERSION']) {
+const frontendModules = (await readdir(new URL('../js/', import.meta.url)))
+    .filter(name => name.endsWith('.js')).sort().map(name => `js/${name}`);
+for (const path of ['index.html', ...frontendModules, 'css/output.css', 'VERSION']) {
     const url = new URL(path, site);
-    url.searchParams.set('release', release);
+    url.searchParams.set('v', release);
     const response = await fetchLive(url);
     assert.equal(response.status, 200, path);
     assert.equal(await response.text(), await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), `${path}: deployed asset differs from local release`);
@@ -76,8 +78,7 @@ results.push({ check: 'invalid-input-and-cors-denial', status: 'passed' });
 // These services are optional. Report their real availability without confusing
 // an upstream outage with a failed release of the main TMDB functionality.
 for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&type=movie&year=2019', '/api/resource?q=流浪地球']) {
-    const response = await fetchLive(new URL(path, api));
-    const data = await response.json();
+    const { response, data } = await getApi(path, null);
     assert.ok(data && typeof data === 'object');
     if (path.startsWith('/api/resource') && process.env.LIVE_REQUIRE_WPZY === '1') {
         assert.equal(response.status, 200, 'WPZY resource API unavailable');

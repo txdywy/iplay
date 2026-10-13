@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.14] - 2026-10-13
+
+### Fixed
+
+- Partial HTTP 200 resource retries reconcile independent page snapshots: temporarily failed pages retain links, successful pages replace stale evidence, and restricted or expired-login pages drop old shares. Password conflicts and URL-bound priority survive alternating provider failures; displayed shares remain capped at 100.
+- Resource queries wait for TMDB details to settle and include the canonical title, year and selected identity in their state key. Corrected detail retries cannot reuse resources from an older title.
+- Canonical detail posters replace candidate images; repainting the same failed image no longer cancels a pending verified fallback. Failed URLs are tracked to avoid repeating broken-image loops.
+- Wikipedia separates article names from media and release-year evidence, preserving films with novel/comic words or years in their titles while rejecting wrong adaptations, disambiguation and remake years.
+- Recommendation scoring uses a compatible own-property check while retaining protection against inherited genre keys.
+
+### Added
+
+- Executable resource-state regressions, browser race/retry checks and Worker/runtime coverage for page evidence and Wikipedia identity boundaries.
+- Live release validation discovers all frontend modules and checks version/CORS on optional API responses. Source-only Node coverage and browser support documentation now state their actual verification scope.
+- Tailwind scans only production HTML/JavaScript, keeping test fixtures and review documents out of generated styles.
+- A comprehensive review record and synchronized API, architecture and deployment instructions. Resource v11 and Wiki v4 cache namespaces exclude earlier response contracts.
+
 ## [1.0.13] - 2026-10-11
 
 ### Fixed

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 
 const browserWs = process.env.BROWSER_WS;
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173/';
+const canonicalPoster = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const fallbackPoster = 'data:image/gif;base64,R0lGODlhAQABAIAAAP8AAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 if (!browserWs) {
     throw new Error('BROWSER_WS is required; connect this script to an isolated Chrome page.');
@@ -74,6 +76,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             headers: { 'Content-Type': 'application/json' }
         });
         const poster = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+        const canonicalPoster = ${JSON.stringify(canonicalPoster)};
+        const fallbackPoster = ${JSON.stringify(fallbackPoster)};
         const candidate = (title, id) => ({
             id,
             mediaType: 'movie',
@@ -123,14 +127,16 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Retry Detail Movie': 107,
                     'Unsafe Poster Movie': 108,
                     'Identity Movie': 110,
-                    'Changing Metadata Movie': 111
+                    'Changing Metadata Movie': 111,
+                    'Updated Poster Movie': 112,
+                    'Slow Broken Poster Movie': 113,
+                    'Retry Canonical Movie': 114,
+                    'Fast Broken Poster Movie': 115
                 };
                 if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
-                const candidatePoster = query === 'Broken Poster Movie'
-                    ? 'https://images.example/broken-poster.jpg'
-                    : query === 'Unsafe Poster Movie'
+                const candidatePoster = query === 'Unsafe Poster Movie'
                         ? 'javascript:alert(1)'
                         : query === 'Identity Movie' ? null : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
@@ -310,14 +316,18 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     109: 'Canonical Movie',
                     110: 'Identity Movie',
                     111: 'Canonical Renamed Movie',
+                    112: 'Updated Poster Movie',
+                    113: 'Slow Broken Poster Movie',
+                    114: 'Recovered Canonical Movie',
+                    115: 'Fast Broken Poster Movie',
                     200: 'Actor Movie',
                     201: 'Smoke Series'
                 };
                 const title = titles[id] || 'Smoke Movie';
-                if (id === 106 || id === 109 || id === 111) {
+                if (id === 106 || id === 109 || id === 111 || id === 112 || id === 113 || id === 115) {
                     await new Promise(resolve => setTimeout(resolve, 450));
                 }
-                if (id === 107) {
+                if (id === 107 || id === 114) {
                     window.__smoke.detailAttempts[id] = (window.__smoke.detailAttempts[id] || 0) + 1;
                     if (window.__smoke.detailAttempts[id] === 1) return json({ error: 'temporary detail outage' }, 503);
                 }
@@ -325,7 +335,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const response = json({
                     ...candidate(title, id),
                     year: id === 111 ? '2025' : '2024',
-                    poster: id === 110 ? null : poster,
+                    poster: id === 110 ? null : id === 112 ? canonicalPoster : poster,
                     genres: ['Drama'],
                     runtime: 120,
                     status: 'Released',
@@ -356,6 +366,25 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/omdb') return json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
+                if (window.__smoke.resourceMode === 'canonical-retry') return json({
+                    resources: [{ title: url.searchParams.get('q'), url: 'https://resource.example/' + (url.searchParams.get('q') === 'Retry Canonical Movie' ? 'old' : 'canonical') }],
+                    wpzysResources: [], quarkUrls: []
+                });
+                if (window.__smoke.resourceMode === 'alternating') {
+                    const first = window.__smoke.resourceCalls === 1;
+                    const sourceUrl = first ? 'https://by669.com/retained' : 'https://wpzy.org/thread-302.htm';
+                    const links = Array.from({ length: first ? 8 : 1 }, (_, index) => ({ title: first ? 'Retained Quark' : 'Recovered Quark', url: 'https://pan.quark.cn/s/' + (first ? 'retained' + (index ? '-' + index : '') : 'recovered'), password: first ? 'keep' : 'new1', passwordRank: 1, sourceUrl }));
+                    return json({
+                        partial: true,
+                        resourceMeta: {
+                            partial: true, providers: { by669: first ? 'ok' : 'failed', wpzys: first ? 'failed' : 'ok' }, failedPages: 0,
+                            pages: [{ url: sourceUrl, source: first ? 'by669' : 'wpzys', status: 'ok', quarkUrls: links }]
+                        },
+                        resources: first ? [{ title: 'Retained source', url: 'https://by669.com/retained', source: 'by669' }] : [],
+                        wpzysResources: first ? [] : [{ title: 'Recovered source', url: 'https://wpzy.org/thread-302.htm', source: 'wpzys' }],
+                        quarkUrls: links
+                    });
+                }
                 if (window.__smoke.resourceMode === 'recovery') {
                     if (window.__smoke.resourceCalls === 2) {
                         await new Promise(resolve => setTimeout(resolve, 350));
@@ -404,6 +433,10 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             }
             if (url.pathname === '/api/poster') {
                 window.__smoke.posterCalls += 1;
+                if (url.searchParams.get('title') === 'Slow Broken Poster Movie') {
+                    await new Promise(resolve => setTimeout(resolve, 650));
+                    return json({ tmdb: true, tmdbId: 113, mediaType: 'movie', poster: fallbackPoster });
+                }
                 if (url.searchParams.get('title') === 'Identity Movie') return json({
                     tmdb: true, tmdbId: new URL(location.href).searchParams.get('poster-mismatch') === 'imdb' ? 110 : 202,
                     mediaType: 'movie', poster: 'https://images.example/wrong.jpg',
@@ -413,7 +446,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     tmdb: true, tmdbId: 104, mediaType: 'movie', poster,
                     omdb: { omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster }
                 });
-                return json({ tmdb: true, tmdbId: Number(url.searchParams.get('id') || 105), mediaType: 'movie', poster: 'https://images.example/fallback-poster.jpg' });
+                return json({ tmdb: true, tmdbId: Number(url.searchParams.get('id') || 105), mediaType: 'movie', poster: fallbackPoster });
             }
             return json({});
         };
@@ -606,7 +639,7 @@ async function runBrokenPosterFlow() {
     await assertSearchReady('Broken Poster Movie');
     await evaluate("document.querySelector('#showCover')?.dispatchEvent(new Event('error'))");
     await waitFor('window.__smoke.posterCalls === 1');
-    await waitFor("document.querySelector('#showCover')?.getAttribute('src') === 'https://images.example/fallback-poster.jpg'");
+    await waitFor(`document.querySelector('#showCover')?.getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
     const calls = await evaluate('window.__smoke.calls');
     const params = new URL(calls.find(call => call.startsWith('/api/poster?')), baseUrl).searchParams;
     assert.equal(params.get('id'), '105');
@@ -881,6 +914,9 @@ async function runCanonicalEnrichmentFlow() {
     await search('Changing Metadata Movie');
     await assertSearchReady('Changing Metadata Movie');
     assert.equal(await evaluate('window.__smoke.detailResolved'), 0, 'search metadata remains immediately visible');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'early resource visibility must wait for the confirmed title');
     assert.equal(await evaluate("window.__smoke.calls.some(call => ['/api/wiki/', '/api/douban/', '/api/omdb', '/api/poster'].some(path => call.startsWith(path)))"), false,
         'identity-sensitive enrichment waits for canonical details');
     await assertSearchReady('Canonical Renamed Movie');
@@ -897,11 +933,86 @@ async function runCanonicalEnrichmentFlow() {
     assert.equal(new URL((await evaluate("window.__smoke.calls.find(call => call.includes('/api/poster?'))")), baseUrl).searchParams.get('title'), 'Canonical Renamed Movie');
     assert.equal(await evaluate("document.body.textContent.includes('旧片同名作品简介。')"), false);
     assert.equal(await evaluate("document.body.textContent.includes('详情确认后的新版作品简介。')"), true);
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Renamed Movie');
+    await evaluate("window.__smoke.resourceCalls || document.querySelector('#resourcesSection button')?.click()");
+    await waitFor('window.__smoke.resourceCalls === 1');
+    const resourceCalls = (await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource?'))")).map(call => new URL(call, baseUrl));
+    assert.deepEqual(resourceCalls.map(url => url.searchParams.get('q')), ['Canonical Renamed Movie']);
+}
+
+async function runAlternatingResourceRetryFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'alternating'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#resourcesNotice button') && window.__smoke.resourceCalls === 1");
+    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.textContent.startsWith('显示更多')).click()");
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 8);
+    await evaluate("document.querySelector('#resourcesNotice button').click()");
+    await waitFor("window.__smoke.resourceCalls === 2 && document.querySelector('#resourcesStatus').getAttribute('aria-busy') === 'false'");
+    assert.equal(await evaluate("document.querySelector('#resourceList a')?.getAttribute('href')"), 'https://by669.com/retained');
+    assert.equal(await evaluate("document.querySelector('#wpzysResourceList a')?.getAttribute('href')"), 'https://wpzy.org/thread-302.htm');
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 9, 'partial completion preserves the expanded list');
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/recovered\"]') !== null"), true);
+    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.closest('li')?.textContent.includes('Retained Quark'))?.click()");
+    await waitFor("window.__smoke.copied === 'keep'");
+}
+
+async function runCanonicalDetailRetryResourceFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'canonical-retry'");
+    await search('Retry Canonical Movie');
+    await assertSearchReady('Retry Canonical Movie');
+    await waitFor("document.querySelector('#dataNotice button')?.textContent.includes('重试详情')");
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#resourceList a')?.getAttribute('href') === 'https://resource.example/old'");
+    await evaluate("document.querySelector('#dataNotice button').click()");
+    await assertSearchReady('Recovered Canonical Movie');
+    await evaluate("window.__smoke.resourceCalls > 1 || document.querySelector('#resourcesSection button')?.click()");
+    await waitFor("document.querySelector('#resourceList a')?.getAttribute('href') === 'https://resource.example/canonical'");
+    const queries = (await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource?'))")).map(call => new URL(call, baseUrl).searchParams.get('q'));
+    assert.deepEqual(queries, ['Retry Canonical Movie', 'Recovered Canonical Movie']);
+    assert.equal(await evaluate("document.querySelector('#resourceList a[href=\"https://resource.example/old\"]') === null"), true);
+}
+
+async function runUpdatedPosterFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Updated Poster Movie');
+    await assertSearchReady('Updated Poster Movie');
+    await waitFor('window.__smoke.detailResolved === 1');
+    await waitFor("document.querySelector('#searchStatus').textContent.includes('详情已加载')");
+    assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src')"), canonicalPoster, 'confirmed detail poster must replace the search candidate poster');
+}
+
+async function runPosterFallbackDetailRaceFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Slow Broken Poster Movie');
+    await assertSearchReady('Slow Broken Poster Movie');
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
+    await waitFor('window.__smoke.posterCalls === 1');
+    await waitFor('window.__smoke.detailResolved === 1');
+    await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+    assert.equal(await evaluate('window.__smoke.posterCalls'), 1, 'detail repaint must not discard an in-flight verified fallback');
+    await command('Page.navigate', { url: baseUrl });
+    await search('Fast Broken Poster Movie');
+    await assertSearchReady('Fast Broken Poster Movie');
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
+    await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+    assert.equal(await evaluate('window.__smoke.detailResolved'), 0);
+    await waitFor('window.__smoke.detailResolved === 1');
+    assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src')"), fallbackPoster, 'detail repaint must keep an already-verified fallback for the failed primary image');
 }
 
 try {
     await runSharedIdentityValidationFlow();
     await runCanonicalEnrichmentFlow();
+    await runAlternatingResourceRetryFlow();
+    await runCanonicalDetailRetryResourceFlow();
+    await runUpdatedPosterFlow();
+    await runPosterFallbackDetailRaceFlow();
     await runResourceRetryPreservationFlow();
     await runActorIdentityRetryFlow(false);
     await runActorIdentityRetryFlow(true);
@@ -930,7 +1041,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['shared-identity-validation', 'canonical-enrichment', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

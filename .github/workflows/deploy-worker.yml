@@ -1,8 +1,8 @@
 name: Deploy Cloudflare Worker (manual)
 
 on:
-  # Production deploys currently run from a trusted local machine using the
-  # local Wrangler OAuth session. Keep this workflow available for a future
+  # Production deploys run through Cloudflare Workers Builds on main.
+  # Local Wrangler OAuth is the fallback. Keep this workflow for a future
   # GitHub-secrets setup, but do not run it on every main push while those
   # secrets are intentionally absent.
   workflow_dispatch:

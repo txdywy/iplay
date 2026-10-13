@@ -23,6 +23,11 @@ let wpzyMode = 'public';
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
 let wikiRemakeYear = '2005';
+const wikiIdentityCases = {
+    '小说家的电影': { description: '2024年漫画改编电影', extract: '《小说家的电影》是一部2024年电影，改编自同名小说。' },
+    '2001太空漫游': { description: '1968年电影', extract: '《2001太空漫游》是一部1968年电影。' },
+    'Runtime Adaptation': { description: '根据2024年小说改编的2005年电影', extract: '《Runtime Adaptation》是根据2024年小说改编的2005年电影。' }
+};
 const ratelimits = {
     API_RATE_LIMITER: { namespace_id: '1001', simple: { limit: 60, period: 60 } },
     RESOURCE_RATE_LIMITER: { namespace_id: '1002', simple: { limit: 10, period: 60 } }
@@ -56,6 +61,7 @@ async function upstream(request) {
         await new Promise(resolve => setTimeout(resolve, 30));
         return url.pathname === '/api/discussions'
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
+            : wpzyMode === 'conflict' ? new Response('https://pan.quark.cn/s/runtime-shared?pwd=AAAA')
             : new Response('<p>链接：https://pan.quark.cn/s/runtime42 提取码：abcd</p>'
                 + '<p>链接：<a href="https://pan.quark.cn/s/runtime-formatted">夸克资源</a><b>提取码：</b><span>e5F6</span></p>'
                 + '<p>夸克：https://pan.quark.cn/s/runtime-public 百度：https://pan.baidu.com/s/foreign?pwd=6868 提取码：6868</p>');
@@ -71,6 +77,7 @@ async function upstream(request) {
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
         if (wpzyMode === 'detail-maintenance') return new Response('<title>Service unavailable</title><h1>Maintenance in progress</h1>');
+        if (wpzyMode === 'conflict') return new Response('https://pan.quark.cn/s/runtime-shared?pwd=BBBB');
         if (wpzyMode === 'pairing') return new Response('<p>链接：https://pan.quark.cn/s/wpzy-private 提取码：w7P8</p>'
             + '<p>夸克：https://pan.quark.cn/s/wpzy-public 百度：https://pan.baidu.com/s/wpzy-foreign 提取码：6868</p>');
         return new Response(wpzyMode === 'restricted'
@@ -81,6 +88,10 @@ async function upstream(request) {
         return new Response('<strong property="v:average">8.5</strong><span property="v:votes">12345</span><span property="v:genre">喜剧</span><span property="v:summary">A complete runtime synopsis.</span>');
     }
     if (url.hostname === 'zh.wikipedia.org') {
+        const title = url.pathname.includes('/summary/') ? decodeURIComponent(url.pathname.split('/summary/')[1]) : url.searchParams.get('srsearch');
+        if (wikiIdentityCases[title]) return url.pathname.includes('/summary/')
+            ? Response.json({ title, ...wikiIdentityCases[title] })
+            : Response.json({ query: { search: [{ title }] } });
         if (url.pathname.endsWith('/summary/Runtime%20Remake')) {
             return Response.json({ title: 'Runtime Remake', description: '电影', extract: `Runtime Remake（Mr. Bean）是一部${wikiRemakeYear}年上映的电影。` });
         }
@@ -160,6 +171,9 @@ try {
             assert.ok(publicShare);
             assert.equal(publicShare.password, undefined, 'Baidu password must not leak into a Quark share');
             assert.ok(data.quarkUrls.every(item => Object.keys(item).every(key => !key.startsWith('_'))));
+            assert.equal(data.resourceMeta.pages.length, 2);
+            assert.ok(data.resourceMeta.pages.every(page => page.status === 'ok' && Array.isArray(page.quarkUrls)));
+            assert.equal(data.resourceMeta.pages.find(page => page.source === 'by669')?.quarkUrls[0]?.passwordRank, 1);
             assert.equal(data.wpzysResources[0]?.url, 'https://wpzy.org/thread-100.htm');
             assert.ok(data.quarkUrls.some(item => item.url === 'https://pan.quark.cn/s/runtime-wpzy'));
             assert.ok(!JSON.stringify(data).includes('runtime-wpzy-secret'));
@@ -177,6 +191,9 @@ try {
     assert.equal(restrictedData.wpzysResources.length, 1);
     assert.equal(restrictedData.quarkUrls.length, 3);
     assert.ok(restrictedData.quarkUrls.every(item => item.sourceUrl.startsWith('https://by669.org/')));
+    const restrictedPage = restrictedData.resourceMeta.pages.find(page => page.source === 'wpzys');
+    assert.equal(restrictedPage.status, 'restricted');
+    assert.equal(restrictedPage.quarkUrls, undefined);
     checks.push('authenticated-wpzy-and-restricted-posts');
 
     wpzyMode = 'pairing';
@@ -191,6 +208,24 @@ try {
     assert.ok(wpzyPublic);
     assert.equal(wpzyPublic.password, undefined);
     checks.push('authenticated-wpzy-quark-password-pairing');
+
+    wpzyMode = 'conflict';
+    for (const refresh of ['&refresh=1', '']) {
+        const conflict = await request(`/api/resource?q=Runtime%20Movie${refresh}`, `runtime-conflict-${refresh ? 'cold' : 'cached'}`);
+        assert.equal(conflict.status, 200);
+        const data = await conflict.json();
+        const shared = data.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/runtime-shared');
+        assert.equal(shared?.passwordConflict, true);
+        assert.equal(shared?.password, undefined);
+        const by669Evidence = data.resourceMeta.pages.find(page => page.source === 'by669').quarkUrls[0];
+        const wpzyEvidence = data.resourceMeta.pages.find(page => page.source === 'wpzys').quarkUrls[0];
+        assert.equal(by669Evidence.password, 'AAAA', 'global conflict reconciliation must not mutate page evidence');
+        assert.equal(wpzyEvidence.password, 'BBBB');
+        assert.equal(by669Evidence.passwordRank, 2);
+        assert.equal(wpzyEvidence.passwordRank, 2);
+        assert.ok(data.resourceMeta.pages.every(page => page.quarkUrls.every(item => Object.keys(item).every(key => !key.startsWith('_')))));
+    }
+    checks.push('resource-page-password-evidence-and-cache-serialization');
 
     wpzyMode = 'login';
     const expired = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-expired');
@@ -259,6 +294,17 @@ try {
     assert.equal(matchingRemake.status, 200, 'a wrong-year summary must not poison the native cache');
     assert.ok((await matchingRemake.json()).extract.includes('2024'));
     checks.push('wiki-introduction-year-validation-and-recovery');
+
+    for (const [title, year] of [['小说家的电影', '2024'], ['2001太空漫游', '1968'], ['Runtime Adaptation', '2005']]) {
+        const response = await request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=${year}`, `runtime-wiki-identity-${year}`);
+        assert.equal(response.status, 200, title);
+        assert.equal((await response.json()).title, title);
+    }
+    const wrongAdaptation = await request('/api/wiki/zh?q=Runtime%20Adaptation&type=movie&year=2024', 'runtime-wiki-adaptation-wrong-year');
+    assert.equal(wrongAdaptation.status, 404);
+    assert.equal(wrongAdaptation.headers.get('cache-control'), 'no-store');
+    await wrongAdaptation.json();
+    checks.push('wiki-title-words-and-adapted-source-year-isolation');
 
     const limited = await probeNativeRateLimit(ip => request('/not-found', ip), {
         limit: ratelimits.API_RATE_LIMITER.simple.limit,

@@ -307,10 +307,10 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 - 首次请求：从上游 API 获取，响应时间较长
 - 重复请求：从缓存读取，响应时间显著缩短
 - 缓存 TTL：TMDB / 豆瓣 / OMDb / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
-- 资源搜索使用 `resource-search-v10-cache.local` 命名空间并包含内部登录态指纹；更换或撤销 WPZY Secret 不复用旧 Worker 缓存。提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
+- 资源搜索使用 `resource-search-v11-cache.local` 命名空间并包含内部登录态指纹；更换或撤销 WPZY Secret 不复用旧 Worker 缓存。页面状态与独立分享证据支持跨次重试；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
 - `tests/wpzy-access.test.js` 覆盖站点 Cookie 白名单、同源与跨提供方跳转、登录失效、回复/VIP 限制、别名归一化、只读路径和账号缓存隔离；测试使用虚构 Cookie，不需要真实登录态
 - 海报聚合使用 `poster-v4-cache.local` 命名空间；已配置来源部分失败时的可用结果只缓存 900 秒
-- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v3-cache.local`，并将媒体类型和年份纳入缓存键。前端资源和 Wiki 请求携带发布版本，隔离旧浏览器缓存。
+- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v4-cache.local`，并将媒体类型和年份纳入缓存键。前端资源和 Wiki 请求携带发布版本，隔离旧浏览器缓存。
 - `tests/review-regressions.test.js` 验证缺失/畸形人物作品、媒体演职员与外部 ID 数据不写入缓存、旧缓存重取及 Wikipedia 首句年份冲突；`test:runtime` 在真实 workerd 中验证这些失败不会阻止上游恢复。
 
 ---
@@ -319,12 +319,14 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 
 ### 浏览器兼容性
 
-| 浏览器 | 最低版本 | 测试重点 |
+| 浏览器 | 目标版本 | 测试重点 |
 |--------|----------|----------|
-| Chrome | 90+ | 主要开发浏览器，功能完整性 |
-| Safari | 14+ | iOS 移动端、Backdrop Filter |
-| Firefox | 88+ | Fetch API、AbortController |
-| Edge | 90+ | Chromium 内核，与 Chrome 一致 |
+| Chrome | 111+ | 隔离 Chrome 自动回归覆盖功能与移动/桌面布局 |
+| Safari | 16.4+ | iOS、Backdrop Filter，需真实设备人工验证 |
+| Firefox | 128+ | Fetch API、AbortController，需人工验证 |
+| Edge | 111+ | Chromium 内核，需人工验证 |
+
+目标版本依据 [Tailwind CSS v4 浏览器要求](https://tailwindcss.com/docs/compatibility#browser-support)，不代表已在每个最低版本完成测试。CI 使用安装的 Chrome 执行自动回归；Safari、Firefox 与 Edge 的验证状态需在实际测试后记录。
 
 ### 性能测试
 

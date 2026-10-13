@@ -44,6 +44,7 @@ iplay/
 ├── js/
 │   ├── main.js             # 前端主逻辑：搜索、渲染、详情展示
 │   ├── api.js              # API 客户端封装（TMDB/Douban/Wiki/OMDb/Resource/Poster）
+│   ├── resources.js        # 按页面合并资源快照与密码证据的纯状态逻辑
 │   ├── match.js             # TMDB 候选排序与歧义确认规则
 │   ├── seasons.js           # 剧集季数与每季集数格式化
 │   ├── quark.js            # 夸克链接与提取码复制文本格式化
@@ -74,13 +75,14 @@ iplay/
    npm run wrangler -- secret put OMDB_API_KEY
    ```
    然后按提示粘贴对应的密钥值。
-7. 当前 Worker 使用本机 Wrangler 配置部署，不依赖 GitHub Actions Secrets：
+7. 首次配置或自动发布故障时，可使用本机 Wrangler OAuth 部署：
    ```bash
    npm run deploy:worker:dry-run
    npm run deploy:worker -- --message "本次变更说明"
    ```
    首次使用前运行 `npm run wrangler -- login`，并确认本机账号具备 Worker 部署权限。命令会读取 `wrangler.toml`，使用 `--keep-vars` 保留 Cloudflare Dashboard 中已有的变量和密钥。
-8. `.github/workflows/deploy-worker.yml` 暂时保留为手动工作流，不会随 `main` 推送自动运行；如果未来改为 GitHub Actions 部署，需要在仓库 **Settings** -> **Secrets and variables** -> **Actions** 中配置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
+8. 本仓库生产 Worker 已连接 Cloudflare Workers Builds：功能分支构建预览，合并到 `main` 后自动部署 Worker；GitHub Pages 独立发布前端。自托管时在 Worker **Settings → Build** 连接仓库并确认生产分支。两个发布均完成后运行 `npm run test:live`；详见 [部署指南](./docs/DEPLOYMENT.md)。
+9. `.github/workflows/deploy-worker.yml` 保留为手动工作流；若未来改为 GitHub Actions 部署，需配置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
 
 ### 2. 部署前端 (GitHub Pages)
 1. Fork 本仓库。
@@ -132,7 +134,7 @@ const PREFERENCE_WEIGHTS = {
 |------|------|
 | `npm run build` | 使用 Tailwind CSS CLI 构建生产样式 (`css/output.css`) |
 | `npm run lint` | 使用 ESLint 检查项目 JavaScript 代码规范 |
-| `npm run test:coverage` | 使用 Node.js 内置测试运行器生成覆盖率报告 |
+| `npm run test:coverage` | 仅统计 Node.js 测试实际加载的 `js/` 和 `worker/` 源码；DOM 交互另由浏览器测试验证 |
 | `npm test` | 依次运行 Node.js 测试、lint 和生产构建 |
 | `npm run test:runtime` | 在真实 workerd 中验证生产 bindings、缓存、并发响应流、HTMLRewriter 和限流；上游使用本地 mock |
 | `npm run test:browser:ci` | 自动启动隔离 Chrome，验证移动端和桌面交互 |

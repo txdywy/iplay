@@ -96,7 +96,7 @@ export function calculateRecommendationScore(data = {}) {
 
     if (safeGenres.length > 0) {
         safeGenres.forEach(genre => {
-            const pref = Object.hasOwn(PREFERENCE_WEIGHTS, genre) ? PREFERENCE_WEIGHTS[genre] : null;
+            const pref = Object.prototype.hasOwnProperty.call(PREFERENCE_WEIGHTS, genre) ? PREFERENCE_WEIGHTS[genre] : null;
             if (pref) {
                 preferenceScore += pref.score * 2.5;
                 if (pref.score > 0) {

@@ -1,12 +1,12 @@
 {
   "name": "iplay",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "private": true,
   "description": "一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
     "lint": "eslint .",
     "test": "node --test && npm run lint && npm run build",
-    "test:coverage": "node --test --experimental-test-coverage",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='js/**' --test-coverage-include='worker/**'",
     "test:browser": "node tests/browser-smoke.mjs",
     "test:browser:ci": "node tests/browser-smoke-runner.mjs",
     "test:runtime": "node tests/worker-runtime.mjs",

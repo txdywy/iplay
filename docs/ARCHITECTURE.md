@@ -7,7 +7,7 @@
 iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV recommendation web application with a "dark cinema" retro aesthetic. The system aggregates data from multiple public sources (TMDB, Douban, OMDb, Wikipedia, and resource sites) to provide personalized viewing recommendations. It follows a serverless, zero-cost architecture: a static frontend hosted on GitHub Pages paired with a Cloudflare Worker acting as a CORS-bypass proxy and data aggregator at the edge.
 
 **Primary inputs:** User search queries (Chinese or English movie/TV titles or actor names).
-**Primary outputs:** Aggregated detail pages with ratings, plot summaries, cast info, resource links, and a personalized AI recommendation score; actor queries also return grouped filmography results.
+**Primary outputs:** Aggregated detail pages with ratings, plot summaries, cast info, resource links, and a personalized rule-based recommendation score; actor queries also return grouped filmography results.
 
 ---
 
@@ -93,7 +93,7 @@ User submits query from search form
 
 ### 2. Detail Page Flow
 
-After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It renders search metadata immediately, then uses the detail response's canonical title, media type and year for Douban, Wiki and OMDb enrichment. If details fail, normal search retains its candidate metadata and retry action; unconfirmed shared links wait for a successful detail retry. Resource scanning starts when its section approaches the viewport or the user requests it:
+After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It renders search metadata immediately, then uses the detail response's canonical title, media type and year for Douban, Wiki, OMDb and resource queries. If details fail, normal search retains its candidate metadata and retry action; unconfirmed shared links wait for a successful detail retry. After details settle, resource scanning starts when its section approaches the viewport or the user requests it. Resource snapshots are keyed by the selected work and query identity; retries replace successful pages and retain temporarily failed pages, then reconcile duplicate share passwords from their page evidence:
 
 ```
 User submits a search
@@ -111,7 +111,7 @@ User submits a search
    Detail    Search   Summary  by IMDb  (deferred)
    API       +Detail   API     ID       Search
      |          ^        ^       ^
-     +----------+--------+-------+  -- use canonical detail metadata
+     +----------+--------+-------+---------+  -- use canonical detail metadata
         |        |        |        |        |
         v        v        v        v        v
 +-------+--------+--------+--------+--------+
@@ -127,7 +127,7 @@ User submits a search
 |               |     1. Show skeleton/loading
 |               |     2. Render poster + basic info (or fallback)
 |               |     3. Render ratings (TMDB, Douban, IMDb, RT)
-|               |     4. Render AI score + analysis
+|               |     4. Render rule-based score + analysis
 |               |     5. Render wiki summary + resource-ready states
 |               |     6. Keep partial results visible and expose retry actions
 +---------------+
@@ -376,7 +376,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
   - TMDB/Douban/OMDb/Wiki: 24 hours (`max-age=86400`)
   - Complete resources: 12 hours (`max-age=43200`); provider/detail-page partial results: 15 minutes
   - Complete poster aggregation: 24 hours; configured-source partial results: 15 minutes
-- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v10-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v3-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching; resource and Wiki client requests carry the release version to isolate browser caches.
+- Cache keys use synthetic local URLs (for example `https://douban-search-cache.local/`, `https://resource-search-v11-cache.local/`, and `https://poster-v4-cache.local/`) to avoid polluting external cache namespaces. Poster keys include selected TMDB ID/type and IMDb ID. OMDb and typed Wikipedia summaries use `omdb-v3-cache.local` and `wiki-zh-v4-cache.local` to exclude old inaccurate entries. Explicit resource/poster retries bypass browser HTTP caching; resource and Wiki client requests carry the release version to isolate browser caches.
 - Media payloads requested with credits and external IDs must include cast/crew arrays and an external-ID object before caching. Person payloads requested with combined credits must include a cast array. Malformed cached payloads are evicted and refetched; genuinely empty arrays remain valid. Wikipedia checks known years in both title/description and the opening sentence before replacing the selected work's overview.
 - Resource completion keeps existing links and expanded lists usable during loading and after failure. Selected-actor retries retain the person ID, and shared detail links reject invalid explicit media types before issuing API requests.
 - The Worker limits each client IP to 60 requests per 60-second window and bounds its in-memory limiter map; `OPTIONS` preflight does not consume quota. Deployed Workers set `ENVIRONMENT=production`, require distributed rate-limit bindings, and fail closed with `503` if those bindings are unavailable.
