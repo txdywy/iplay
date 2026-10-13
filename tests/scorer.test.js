@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 
 const { calculateRecommendationScore, getRecommendationLabel } = await import('../js/scorer.js');
 
@@ -43,4 +45,13 @@ test('duplicate and prototype-like genre names cannot inflate or corrupt the sco
         calculateRecommendationScore({ ...data, genres: ['喜剧', ' 喜剧 ', 'constructor', '__proto__', null] }),
         calculateRecommendationScore(data)
     );
+});
+
+test('scoring works without Object.hasOwn and still ignores inherited genre keys', async () => {
+    const source = (await readFile(new URL('../js/scorer.js', import.meta.url), 'utf8'))
+        .replaceAll('export function ', 'function ');
+    const score = runInNewContext(`Object.hasOwn = undefined; ${source}; calculateRecommendationScore`);
+    const data = { rating: 8, votes: 1000, genres: ['剧情'], summary: 'A sufficiently detailed summary.' };
+    assert.equal(score(data).score, calculateRecommendationScore(data).score);
+    assert.equal(score({ ...data, genres: ['剧情', 'constructor', '__proto__'] }).score, score(data).score);
 });

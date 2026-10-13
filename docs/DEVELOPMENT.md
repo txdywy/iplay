@@ -25,6 +25,8 @@ npm run build
 
 `npm run build` 会把 `css/input.css` 编译为 `css/output.css`，前端页面依赖这个生成文件显示完整样式。
 
+Tailwind 仅扫描 `index.html` 和 `js/` 中的生产类名，避免测试和审查文档影响样式产物；新增页面入口时需在 `css/input.css` 注册对应 `@source`。配置依据 [Tailwind 源文件检测说明](https://tailwindcss.com/docs/detecting-classes-in-source-files#disabling-automatic-detection)。
+
 ---
 
 ## 项目结构
@@ -34,6 +36,7 @@ npm run build
 | `index.html` | 单页应用入口，负责承载整体布局与资源引用 |
 | `js/main.js` | 前端主逻辑：搜索、渐进渲染、资源状态、偏好设置 |
 | `js/api.js` | Worker API 客户端封装 |
+| `js/resources.js` | 资源页面快照合并、查询身份与密码冲突处理 |
 | `js/quark.js` | 夸克链接与提取码复制文本格式化 |
 | `js/scorer.js` | 推荐评分逻辑 |
 | `css/input.css` | Tailwind CSS 输入文件 |
@@ -110,7 +113,7 @@ npm run wrangler -- dev
 |------|------|
 | `npm run build` | 构建 Tailwind CSS 输出文件 |
 | `npm run lint` | 运行 ESLint |
-| `npm run test:coverage` | 运行 Node.js 测试并生成覆盖率报告 |
+| `npm run test:coverage` | 仅统计 Node.js 测试实际加载的 `js/` 和 `worker/` 源码覆盖率 |
 | `npm test` | 依次运行 Node.js 测试、lint 和 build |
 | `npm run test:runtime` | 用真实 workerd 验证生产限流、缓存、HTMLRewriter 和并发响应；不访问外部上游 |
 | `npm run test:browser:ci` | 自动启动隔离 Chrome 验证交互 |
@@ -122,7 +125,9 @@ npm run wrangler -- dev
 npm test
 ```
 
-测试、lint 和生产构建全部通过后，再继续提交或部署。
+继续运行 `npm run test:runtime` 和 `npm run test:browser:ci` 验证真实 Workers 运行时和浏览器行为。发布完成后运行 `npm run test:live`，逐字核对全部前端模块并检查线上 API 的版本、身份和 CORS。
+
+Node.js 覆盖率不会计入未加载的 `js/main.js`，不能将其总覆盖率视作完整前端覆盖率；DOM 交互与异步竞态由隔离 Chrome 回归验证。[覆盖率过滤参数](https://nodejs.org/download/release/v22.13.1/docs/api/cli.html#--test-coverage-include)适用于项目要求的 Node.js 版本。
 
 ---
 

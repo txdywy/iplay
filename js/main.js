@@ -1,15 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.13';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.13';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.13';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.13';
-import { RELEASE_VERSION } from './release.js?v=1.0.13';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.14';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.14';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.14';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.14';
+import { RELEASE_VERSION } from './release.js?v=1.0.14';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.13';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.13';
+} from './match.js?v=1.0.14';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.14';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.14';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -723,8 +724,14 @@ function handlePosterLoadError() {
     els.cover.setAttribute('aria-busy', 'false');
     if (failedSource === POSTER_PLACEHOLDER) return;
     if (!context || context.token !== token || context.source !== failedSource) return;
+    context.viewModel?.failedPosterUrls.add(failedSource);
 
     if (context.fallbackAttempted || !context.searchOptions || !context.viewModel) {
+        if (context.viewModel) {
+            context.viewModel.posterUrl = null;
+            context.viewModel.posterSource = 'none';
+            context.viewModel.posterFallbackPending = false;
+        }
         loadPoster(null, context.title, { ...context, fallbackAttempted: true });
         return;
     }
@@ -732,11 +739,13 @@ function handlePosterLoadError() {
     context.fallbackAttempted = true;
     setEnrichmentStatus(els.omdbStatus, '海报加载失败，正在查找备用海报…', true);
     const { viewModel, searchId, loadId, searchOptions } = context;
+    viewModel.posterFallbackPending = true;
 
     const identity = selectedPosterOptions(context.candidate, viewModel, searchOptions);
     void PosterAPI.getPoster(context.enrichmentQuery || context.title, context.year, identity, { refresh: true })
         .then(result => {
             if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
+            viewModel.posterFallbackPending = false;
             const posterResult = matchSelectedPosterResult(result, identity);
             const fallbackPoster = pickPosterFallback(posterResult, failedSource);
             if (fallbackPoster) {
@@ -744,6 +753,7 @@ function handlePosterLoadError() {
                     viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
                 }
                 viewModel.posterUrl = fallbackPoster;
+                viewModel.posterSource = 'fallback';
                 loadPoster(fallbackPoster, viewModel.title, { ...context, fallbackAttempted: true });
                 renderTmdbProfile(viewModel);
                 setEnrichmentStatus(els.omdbStatus, posterResult?.omdb ? '已补充 OMDb 数据并更换海报' : '已找到备用海报');
@@ -756,6 +766,7 @@ function handlePosterLoadError() {
         .catch(error => {
             if (error?.name === 'AbortError') return;
             if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
+            viewModel.posterFallbackPending = false;
             loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
             setEnrichmentStatus(els.omdbStatus, '备用海报暂时不可用');
             console.debug('Broken poster fallback skipped:', error);
@@ -778,7 +789,11 @@ function loadPoster(posterUrl, title = '', context = {}) {
             ? previous.fallbackAttempted
             : false
     );
-    const token = ++posterLoadToken;
+    // Repainting canonical metadata must not cancel a pending fallback for the
+    // same image in the same selected-media session.
+    const token = previous?.loadKey === loadKey && previous.source === nextSource
+        ? previous.token
+        : ++posterLoadToken;
     activePosterContext = {
         ...context,
         title,
@@ -906,6 +921,9 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
             candidate?.poster,
             posterResult && !posterResult.tmdb ? posterResult.poster : null
         ),
+        posterSource: detail ? 'detail' : 'candidate',
+        failedPosterUrls: new Set(),
+        posterFallbackPending: false,
         omdbProfile,
         overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : source.summary ? 'TMDB' : 'NO DATA'
     };
@@ -1226,6 +1244,7 @@ function renderLinkCards(container, items, {
     detailText, sourceText, actionLabel, onAction, limit, initialLimit = 6
 }) {
     if (!container) return;
+    const wasExpanded = container.dataset.expanded === 'true';
     clearNode(container);
 
     const safeItems = Array.isArray(items)
@@ -1235,6 +1254,7 @@ function renderLinkCards(container, items, {
         : [];
 
     if (safeItems.length === 0) {
+        delete container.dataset.expanded;
         const li = document.createElement('li');
         li.className = 'p-4 text-sm font-mono text-cinema-400';
         li.textContent = emptyLabel;
@@ -1246,6 +1266,7 @@ function renderLinkCards(container, items, {
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
     const renderVisibleItems = (visibleLimit, restoreControlFocus = false) => {
+        container.dataset.expanded = String(visibleLimit > firstPageSize);
         clearNode(container);
         const frag = document.createDocumentFragment();
         safeItems.slice(0, visibleLimit).forEach(item => {
@@ -1358,7 +1379,7 @@ function renderLinkCards(container, items, {
         }
     };
 
-    renderVisibleItems(firstPageSize);
+    renderVisibleItems(wasExpanded ? maxItems : firstPageSize);
 }
 
 function renderResourceStatus(container, { title, detail, iconName, iconClass, progressClass, isLoading = true, actionLabel = '', onAction = null }) {
@@ -1892,10 +1913,6 @@ function createCandidateRequestOptions(searchOptions = {}) {
     return { ...searchOptions, signal: controller.signal };
 }
 
-function resourceCandidateKey(candidate) {
-    return `${candidate?.mediaType || candidate?.type || 'media'}:${candidate?.id || candidate?.title || candidate?.originalTitle || ''}`;
-}
-
 function cancelResourceLoadSchedule() {
     const cleanup = resourceScheduleCleanup;
     resourceScheduleCleanup = null;
@@ -1906,7 +1923,7 @@ function beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh
     if (!isActiveSearch(searchId, loadId) || resourceLoadStarted) return;
     resourceLoadStarted = true;
     cancelResourceLoadSchedule();
-    if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+    if (resourceResultState?.queryKey === resourceQueryKey(candidate)) {
         setResourceStatus('正在补全资源，已保留可用结果…', true);
     } else {
         renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
@@ -1937,7 +1954,7 @@ function renderResourceResult(resourceResult, onRetry) {
 
 function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     cancelResourceLoadSchedule();
-    if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+    if (resourceResultState?.queryKey === resourceQueryKey(candidate)) {
         resourceLoadStarted = true;
         // Detail retries rotate the load ID and abort signal. Keep the data,
         // but bind its retry controls to this request rather than the old one.
@@ -1945,6 +1962,9 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
         return;
     }
     resourceLoadStarted = false;
+    for (const container of [els.resourceList, els.wpzysResourceList, els.quarkUrlList]) {
+        if (container) delete container.dataset.expanded;
+    }
 
     const title = candidate.title || candidate.originalTitle || '当前影视';
     const start = () => beginResourceLoad(candidate, searchId, searchOptions, loadId);
@@ -1983,20 +2003,22 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
 
 async function loadResources(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
     if (!isActiveSearch(searchId, loadId)) return;
+    const query = candidate.title || candidate.originalTitle;
+    const queryKey = resourceQueryKey(candidate);
 
     try {
-        const resourceResult = await ResourceAPI.search(candidate.title || candidate.originalTitle, searchOptions, { refresh });
+        const resourceResult = await ResourceAPI.search(query, searchOptions, { refresh });
         if (!resourceResult) throw new Error('资源服务返回了空结果');
-        if (!isActiveSearch(searchId, loadId)) return;
+        if (!isActiveSearch(searchId, loadId) || resourceQueryKey(candidate) !== queryKey) return;
         resourceResultState = {
-            candidateKey: resourceCandidateKey(candidate),
-            result: resourceResult
+            ...mergeResourceState(resourceResultState?.queryKey === queryKey ? resourceResultState : null, resourceResult),
+            queryKey
         };
-        renderResourceResult(resourceResult, createResourceRetry(candidate, searchId, searchOptions, loadId));
+        renderResourceResult(resourceResultState.result, createResourceRetry(candidate, searchId, searchOptions, loadId));
     } catch (error) {
         if (error?.name === 'AbortError') return;
-        if (!isActiveSearch(searchId, loadId)) return;
-        if (resourceResultState?.candidateKey === resourceCandidateKey(candidate)) {
+        if (!isActiveSearch(searchId, loadId) || resourceQueryKey(candidate) !== queryKey) return;
+        if (resourceResultState?.queryKey === queryKey) {
             setResourceStatus('资源补全失败，已保留可用结果，可重试');
         } else {
             renderResourceErrorStates(createResourceRetry(candidate, searchId, searchOptions, loadId));
@@ -2024,6 +2046,7 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
         const addedPoster = !viewModel.posterUrl && safePoster;
         if (addedPoster) {
             viewModel.posterUrl = safePoster;
+            viewModel.posterSource = 'fallback';
             loadPoster(safePoster, viewModel.title, posterContext);
         }
         renderTmdbProfile(viewModel);
@@ -2053,6 +2076,7 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
             const safePoster = toSafeImageUrl(omdbProfile.poster);
             if (!viewModel.posterUrl && safePoster) {
                 viewModel.posterUrl = safePoster;
+                viewModel.posterSource = 'fallback';
                 loadPoster(safePoster, viewModel.title, createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId));
             }
             renderTmdbProfile(viewModel);
@@ -2120,10 +2144,10 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
 }
 
 function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId, detailPromise = Promise.resolve()) {
-    scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
     void detailPromise
         .then(() => {
             if (isActiveSearch(searchId, loadId)) {
+                scheduleResourceLoad(candidate, searchId, searchOptions, loadId);
                 startMetadataEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId);
             }
         })
@@ -2167,7 +2191,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
     renderViewModel(viewModel, posterContext);
-    if (deferEnrichments) {
+    if (!isRetry || !resourceResultState) {
         setResourceStatus('等待详情确认后扫描资源');
         renderResourceList([]);
         renderWpzysResourceList([]);
@@ -2187,10 +2211,23 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             if (!isActiveSearch(searchId, loadId)) return null;
 
             const existingPoster = viewModel.posterUrl;
+            const existingPosterSource = viewModel.posterSource;
+            const failedPosterUrls = viewModel.failedPosterUrls;
+            const posterFallbackPending = viewModel.posterFallbackPending;
             const existingOmdbProfile = viewModel.omdbProfile;
             const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
             Object.assign(viewModel, detailViewModel);
-            if (existingPoster) viewModel.posterUrl = existingPoster;
+            viewModel.failedPosterUrls = failedPosterUrls;
+            viewModel.posterFallbackPending = posterFallbackPending;
+            const detailPoster = toSafeImageUrl(tmdbDetail.poster);
+            if (existingPoster && (existingPosterSource === 'fallback' || posterFallbackPending)
+                && (!detailPoster || failedPosterUrls.has(detailPoster))) {
+                viewModel.posterUrl = existingPoster;
+                viewModel.posterSource = existingPosterSource;
+            } else if (failedPosterUrls.has(viewModel.posterUrl)) {
+                viewModel.posterUrl = null;
+            }
+            if (viewModel.posterUrl !== existingPoster) viewModel.posterFallbackPending = false;
             if (existingOmdbProfile) viewModel.omdbProfile = existingOmdbProfile;
             Object.assign(selectedCandidate, {
                 title: tmdbDetail.title,
@@ -2200,8 +2237,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             });
             posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
             posterContext.year = tmdbDetail.year || '';
+            pushDetailHistory(selectedCandidate, { replace: true });
             if (deferEnrichments) {
-                pushDetailHistory(selectedCandidate, { replace: true });
                 if (els.input.value === query) els.input.value = viewModel.title;
             }
             renderViewModel(viewModel, posterContext, { isUpdate: true });

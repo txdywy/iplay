@@ -492,6 +492,154 @@ test('typed Wiki queries reject novel-only results instead of replacing the seri
     assert.equal(ctx.writes.length, 0);
 });
 
+test('Wiki treats novel and comic words inside film titles as names instead of media types', async t => {
+    let title = '';
+    let summaryCalls = 0;
+    const ctx = mockUpstreams(t, async input => {
+        if (new URL(input).pathname.includes('/summary/')) {
+            summaryCalls += 1;
+            return Response.json({ title, description: '2024年电影', extract: `《${title}》是一部2024年上映的电影。` });
+        }
+        return Response.json({ query: { search: [{ title }] } });
+    });
+    for (title of ['小说家的电影', '漫画威龙', '电视之王']) {
+        const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=2024`), {}, ctx);
+        assert.equal(response.status, 200, title);
+        assert.equal((await response.json()).title, title);
+    }
+    assert.equal(summaryCalls, 3);
+});
+
+test('Wiki classifies adaptations by their own medium and keeps explicit novel suffixes isolated', async t => {
+    let title = 'Shared Work';
+    let description = '2024年上映的漫画改编电影';
+    let extract = '《Shared Work》是一部2024年电影，改编自同名小说。';
+    const summaries = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname.includes('/summary/')) {
+            summaries.push(decodeURIComponent(url.pathname.split('/summary/')[1]));
+            return Response.json({ title, description, extract });
+        }
+        return Response.json({ query: { search: [{ title }] } });
+    });
+    for (description of ['2024年上映的漫画改编电影', 'film based on a novel', 'television film', '']) {
+        const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2024'), {}, ctx);
+        assert.equal(response.status, 200, description);
+    }
+    title = 'Shared Work (novel)';
+    description = 'novel adapted into a television series';
+    extract = 'Shared Work is a novel adapted into a television series.';
+    const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=tv'), {}, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(summaries.length, 4, 'explicit novel disambiguator must be rejected before summary fetch');
+    title = 'Shared Work';
+    description = '根据电视剧改编的小说';
+    extract = '《Shared Work》是一部小说。';
+    const novel = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=tv'), {}, ctx);
+    assert.equal(novel.status, 404, 'the source television medium does not turn a novel into a series');
+});
+
+test('Wiki lead classification ignores the article title when no description is present', async t => {
+    const title = '电视剧故事';
+    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
+        ? Response.json({ title, extract: `${title}是一部2024年电影，讲述某部小说中的人物。故事讲述漫画家的经历。` })
+        : Response.json({ query: { search: [{ title }] } }));
+    const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=2024`), {}, ctx);
+    assert.equal(response.status, 200);
+});
+
+test('Wiki summaries cannot override an explicit non-media title suffix with a contradictory description', async t => {
+    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
+        ? Response.json({ title: 'Shared Work (小说)', description: '2024年电影', extract: '《Shared Work》是一部2024年电影。' })
+        : Response.json({ query: { search: [{ title: 'Shared Work' }] } }));
+    const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2024'), {}, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('Wiki distinguishes release-year evidence from numbers in titles and adapted source years', async t => {
+    let summary = { title: '2001太空漫游', description: '1968年电影', extract: '《2001太空漫游》是一部1968年上映的电影。' };
+    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
+        ? Response.json(summary)
+        : Response.json({ query: { search: [{ title: summary.title }] } }));
+    let response = await worker.fetch(request('/api/wiki/zh?q=2001太空漫游&type=movie&year=1968'), {}, ctx);
+    assert.equal(response.status, 200, 'numbers that are part of a title are not release years');
+    summary = { title: 'Shared Adaptation', description: '2024年电影', extract: '《Shared Adaptation》是一部电影，改编自1934年出版的同名小说。' };
+    response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Adaptation&type=movie&year=2024'), {}, ctx);
+    assert.equal(response.status, 200, 'a source novel year is not a contradictory film release year');
+    summary = { title: 'Shared Adaptation (2005年电影)', description: '电影', extract: '《Shared Adaptation》是一部电影。' };
+    response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Adaptation&type=movie&year=2024'), {}, ctx);
+    assert.equal(response.status, 404, 'an explicit disambiguator year still rejects the wrong remake');
+    summary = { title: 'Shared Adaptation', description: '电影', extract: '《Shared Adaptation》是一部电影，由某导演执导，于2005年上映。' };
+    response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Adaptation&type=movie&year=2024'), {}, ctx);
+    assert.equal(response.status, 404, 'release years in a later lead clause still reject the wrong remake');
+    for (const evidence of ['根据2024年小说改编的2005年电影', '基于2024年小说改编的2005年电影', '改编自2024年小说的2005年电影', 'based on a 2024 novel and is a 2005 film']) {
+        summary = { title: 'Shared Adaptation', description: evidence, extract: `《Shared Adaptation》是${evidence}。` };
+        response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Adaptation&type=movie&year=2024'), {}, ctx);
+        assert.equal(response.status, 404, evidence);
+        response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Adaptation&type=movie&year=2005'), {}, ctx);
+        assert.equal(response.status, 200, evidence);
+    }
+});
+
+test('resource page snapshots preserve independent password evidence and scan outcomes', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/api/discussions') return Response.json({ data: [
+            { id: 'password-a', attributes: { title: 'Snapshot 夸克 A' } },
+            { id: 'password-b', attributes: { title: 'Snapshot 夸克 B' } },
+            { id: 'failed', attributes: { title: 'Snapshot 夸克 failed' } },
+            { id: 'empty', attributes: { title: 'Snapshot 夸克 empty' } }
+        ] });
+        if (url.pathname === '/search.htm') return new Response('<li data-href="thread-123.htm"><a href="thread-123.htm">Snapshot 夸克</a></li>');
+        if (url.pathname === '/d/password-a') return new Response('https://pan.quark.cn/s/shared?pwd=AAAA');
+        if (url.pathname === '/d/password-b') return new Response('https://pan.quark.cn/s/shared?pwd=BBBB');
+        if (url.pathname === '/d/failed') return new Response('Failure', { status: 503 });
+        if (url.pathname === '/thread-123.htm') return new Response('回复后查看');
+        if (url.pathname === '/d/empty') return new Response('No links in this post');
+        throw new Error(`Unexpected input: ${url.pathname}`);
+    });
+    const response = await worker.fetch(request('/api/resource?q=Snapshot'), {}, ctx);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.equal(data.partial, true);
+    assert.equal(data.quarkUrls[0].password, undefined);
+    assert.equal(data.quarkUrls[0].passwordConflict, true);
+    const pages = new Map(data.resourceMeta.pages.map(page => [page.url, page]));
+    const first = pages.get('https://by669.org/d/password-a');
+    const second = pages.get('https://by669.org/d/password-b');
+    assert.equal(first.status, 'ok');
+    assert.equal(first.source, 'by669');
+    assert.equal(first.quarkUrls[0].password, 'AAAA');
+    assert.equal(first.quarkUrls[0].passwordRank, 2);
+    assert.equal(second.quarkUrls[0].password, 'BBBB');
+    assert.equal(second.quarkUrls[0].passwordRank, 2);
+    assert.equal(pages.get('https://by669.org/d/failed').status, 'failed');
+    assert.equal(pages.get('https://wpzy.org/thread-123.htm').status, 'restricted');
+    assert.deepEqual(pages.get('https://by669.org/d/empty').quarkUrls, []);
+});
+
+test('resource metadata marks all unselected search pages as unattempted', async t => {
+    let detailCalls = 0;
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/api/discussions') return Response.json({ data: Array.from({ length: 15 }, (_, id) => ({
+            id: `limited-${id}`, attributes: { title: `Limited 夸克 ${id}` }
+        })) });
+        if (url.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        detailCalls += 1;
+        return new Response('No links in this post');
+    });
+    const response = await worker.fetch(request('/api/resource?q=Limited'), {}, ctx);
+    const data = await response.json();
+    assert.equal(detailCalls, 12);
+    assert.equal(data.resourceMeta.pages.length, 15);
+    assert.equal(data.resourceMeta.pages.filter(page => page.status === 'ok').length, 12);
+    assert.equal(data.resourceMeta.pages.filter(page => page.status === 'unattempted').length, 3);
+    assert.ok(data.resourceMeta.pages.filter(page => page.status === 'unattempted').every(page => !('quarkUrls' in page)));
+});
+
 test('Wiki summaries reject a different remake year stated only in the introduction', async t => {
     let summary = { title: 'Shared Title', description: '电影', extract: 'Shared Title是一部2005年上映的电影。' };
     const ctx = mockUpstreams(t, async url => new URL(url).pathname.includes('/summary/')

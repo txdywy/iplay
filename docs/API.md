@@ -399,7 +399,11 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
 
-提取码按相邻链接、段落/行与资源卡片范围配对，不跨其他网盘链接或独立卡片、页脚取码。支持链接前后文本、HTML 行内格式以及 URL 的密码查询/Hash 参数；URL 自带密码优先于附近文字，去重后保留该密码的实际来源。相同优先级的密码相互矛盾时省略 `password`、仍保留链接，不猜测归属；内部配对优先级不会暴露在 API 中。单页 25 个的上限按去重后的夸克链接计算，重复 HTML/JSON 表达与其他网盘提取码不占此配额。
+提取码按相邻链接、段落/行与资源卡片范围配对，不跨其他网盘链接或独立卡片、页脚取码。支持链接前后文本、HTML 行内格式以及 URL 的密码查询/Hash 参数；URL 自带密码优先于附近文字，去重后保留该密码的实际来源。相同优先级的密码相互矛盾时省略 `password` 并返回 `passwordConflict: true`，仍保留链接，不猜测归属。单页 25 个的上限按去重后的夸克链接计算，重复 HTML/JSON 表达与其他网盘提取码不占此配额。
+
+`resourceMeta.pages` 为每个搜索结果提供独立扫描证据：`{url, source, status, quarkUrls?}`。`status` 为 `ok`、`failed`、`restricted`、`login_required` 或 `unattempted`；只有 `ok` 页包含该页的 `quarkUrls`（成功但无直链时为空数组）。页内链接额外携带 `passwordRank`（文本密码为 1、URL 密码为 2）与可选的 `passwordConflict`，用于跨次重试重新对账；顶层去重后的 `quarkUrls` 不暴露 rank。
+
+前端按作品与查询身份保存页面快照：成功页替换旧证据，临时失败和未扫描页保留旧证据；成功搜索移除已消失的帖子，受限或登录失效的页面移除旧分享。各页证据重新去重后最多展示 100 个分享，避免部分 HTTP 200 覆盖既有结果或复活旧冲突密码。
 
 `resourceMeta.providerIssues.wpzys` 可为 `login_required` 或 `upstream_unavailable`，用于区分登录维护和一般上游故障。`restrictedPages` 与 `loginRequiredPages` 分别记录回复/VIP 受限、详情页要求重新登录的数量，均计入 `failedPages` 并使结果为部分完成。受限内容不会提取链接，但原帖卡片仍可访问；客户端不应把登录页当作空搜索结果，也不应通过重复重试解锁受限内容。
 
@@ -548,7 +552,7 @@ GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 
 可选参数 `type` 为 `movie` 或 `tv`，`year` 为四位年份。
 
-年份校验会同时检查标题/描述和中文简介首句：标题/描述或首句提供了年份，却没有匹配所选年份时，返回 `404` 并保留 TMDB 简介。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
+类型与年份校验使用消歧义后缀、摘要描述和中文简介首句中的作品身份信息，不把片名中的“小说/漫画/电视”或数字当作类型/发行年份，也不把改编原著的类型和年份当作电影自身信息。可靠年份证据与所选年份冲突时返回 `404` 并保留 TMDB 简介；同名小说和消歧义页仍被拒绝。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
 
 **Example Request：**
 
@@ -583,14 +587,14 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v10-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v11-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
 | `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v3-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v4-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
 
-详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v10 缓存排除了此前错误的链接/密码关联，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v3 缓存排除了此前漏检首句年份的摘要。
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v11 缓存要求页面扫描证据，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v4 缓存使用修正后的作品类型与年份校验。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 

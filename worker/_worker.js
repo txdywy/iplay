@@ -2449,6 +2449,7 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
     let restrictedPages = 0;
     let loginRequiredPages = 0;
     let attemptedPages = 0;
+    const pages = resources.map(entry => ({ url: entry.url, source: entry.source, status: "unattempted" }));
 
     for (let index = 0; index < maxPages; index += batchSize) {
         if (isDeadlineExpired(deadline) || quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) break;
@@ -2464,13 +2465,21 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             ))
         );
 
-        for (const group of quarkUrlGroups) {
+        for (const [batchIndex, group] of quarkUrlGroups.entries()) {
+            const page = pages[index + batchIndex];
             if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
                 failedPages += 1;
                 if (group.reason?.resourceIssue === "access_restricted") restrictedPages += 1;
                 if (group.reason?.resourceIssue === "login_required") loginRequiredPages += 1;
+                page.status = group.reason?.resourceIssue === "access_restricted" ? "restricted"
+                    : group.reason?.resourceIssue === "login_required" ? "login_required" : "failed";
                 continue;
             }
+
+            page.status = "ok";
+            // Keep each page's evidence independent of the global reconciliation:
+            // refreshes must be able to replace one page while retaining failed ones.
+            page.quarkUrls = group.value.map(item => serializeQuarkEntry(item, { includeRank: true }));
 
             for (const item of group.value) {
                 if (!item.url) continue;
@@ -2486,20 +2495,28 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
                 // The cap limits new results, not reconciliation of duplicates
                 // from pages already fetched in this batch.
                 if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) continue;
-                quarkUrlsByUrl.set(item.url, item);
-                quarkUrls.push(item);
+                const entry = { ...item };
+                quarkUrlsByUrl.set(item.url, entry);
+                quarkUrls.push(entry);
             }
         }
     }
 
     return {
-        quarkUrls: quarkUrls.map(({ title, url, password, sourceUrl, sourceTitle }) => ({
-            title, url, ...(password ? { password } : {}), sourceUrl, sourceTitle
-        })),
+        quarkUrls: quarkUrls.map(item => serializeQuarkEntry(item)),
+        pages,
         attemptedPages,
         failedPages,
         restrictedPages,
         loginRequiredPages
+    };
+}
+
+function serializeQuarkEntry({ title, url, password, sourceUrl, sourceTitle, _passwordRank, _passwordConflict }, { includeRank = false } = {}) {
+    return {
+        title, url, ...(password && !_passwordConflict ? { password } : {}), sourceUrl, sourceTitle,
+        ...(_passwordConflict ? { passwordConflict: true } : {}),
+        ...(includeRank && _passwordRank ? { passwordRank: _passwordRank } : {})
     };
 }
 
@@ -2540,7 +2557,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v10-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v11-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2563,6 +2580,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
         const wpzysResources = wpzysResult.status === "fulfilled" ? wpzysResult.value : [];
         const detailResources = selectResourceDetails(resources, wpzysResources);
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
+        const scannedPages = new Map(detailResult.pages.map(page => [page.url, page]));
 
         const isPartial = by669Result.status === "rejected"
             || wpzysResult.status === "rejected"
@@ -2586,7 +2604,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
                 attemptedPages: detailResult.attemptedPages,
                 failedPages: detailResult.failedPages,
                 restrictedPages: detailResult.restrictedPages,
-                loginRequiredPages: detailResult.loginRequiredPages
+                loginRequiredPages: detailResult.loginRequiredPages,
+                pages: [...resources, ...wpzysResources].map(entry => scannedPages.get(entry.url)
+                    || { url: entry.url, source: entry.source, status: "unattempted" })
             }
         }, isPartial ? 900 : 43200);
     } catch (e) {
@@ -2943,11 +2963,62 @@ async function getEnglishTitleFromWiki(zhTitle, deadline = null) {
     return langlinks.length > 0 ? langlinks[0]["*"] || null : null;
 }
 
+function getWikiIdentityEvidence(text) {
+    // Quoted source titles and later adaptation clauses do not identify a work's
+    // own medium or release year.
+    let evidence = String(text || "").replace(/《[^》]*》|「[^」]*」|“[^”]*”/gu, "");
+    const adaptation = /改[編编](?:自|成|[為为])|取材自|根[據据]|基[于於]|\bbased on\b|\badapted (?:from|into|to|for)\b|\badaptation of\b/iu.exec(evidence);
+    if (adaptation && /電視|电视|劇集|剧集|影集|電影|电影|小說|小说|漫畫|漫画|\b(?:television|series|films?|movies?|novels?|manga|comics?)\b/iu.test(evidence.slice(0, adaptation.index))) {
+        evidence = evidence.slice(0, adaptation.index);
+    } else if (adaptation) {
+        // A leading source clause can contain a different year and medium:
+        // "根据2024年小说改编的2005年电影" identifies the 2005 film.
+        const sourceAndWork = evidence.slice(adaptation.index);
+        const sourceClause = sourceAndWork.match(/^(?:根[據据]|基[于於])[^，,。;；]*?改[編编](?:而成)?的|^(?:改[編编]自|取材自)[^，,。;；]*?的|^\bbased on\b[^,，;；]*?\band\s+(?:is|was)\s+(?:(?:an?|the)\s+)?|^\bbased on\b[^,，;；]*[,，;；]\s*/iu);
+        if (sourceClause) evidence = evidence.slice(0, adaptation.index) + sourceAndWork.slice(sourceClause[0].length);
+    }
+    return evidence;
+}
+
 function getWikiKind(text) {
-    if (/(?:小說|小说|novel|漫畫|漫画|消歧義|消歧义|disambiguation)/iu.test(text)) return "other";
-    if (/(?:電視|电视|劇集|剧集|影集|television|tv series)/iu.test(text)) return "tv";
-    if (/(?:電影|电影|film|movie)/iu.test(text)) return "movie";
+    // This function receives type evidence, never an unqualified article name.
+    const evidence = getWikiIdentityEvidence(text);
+    if (/(?:消歧義|消歧义|\bdisambiguation\b)/iu.test(evidence)) return "other";
+    let kind = null;
+    for (const clause of evidence.split(/[，,。;；]/u)) {
+        const matches = Array.from(clause.matchAll(/電視|电视|劇集|剧集|影集|\btelevision\b|\btv series\b|電影|电影|\bfilms?\b|\bmovies?\b|小說(?!家)|小说(?!家)|漫畫(?!家)|漫画(?!家)|\bnovels?\b|\bmanga\b|\bcomics?\b/giu));
+        if (matches.length) {
+            kind = matches.at(-1)[0];
+            break;
+        }
+    }
+    // A source medium can precede the work's own noun: "漫画改编电影",
+    // "television film", or "根据电视剧改编的小说".
+    if (/(?:電視|电视|劇集|剧集|影集|\btelevision\b|\btv series\b)/iu.test(kind || "")) return "tv";
+    if (/(?:電影|电影|\bfilms?\b|\bmovies?\b)/iu.test(kind || "")) return "movie";
+    if (kind) return "other";
     return null;
+}
+
+function getWikiTitleKind(title) {
+    // Wikipedia disambiguators are explicit identity evidence. Words inside
+    // titles such as "小说家的电影" or "电视之王" are not.
+    const suffix = getWikiTitleDisambiguator(title);
+    return suffix ? getWikiKind(suffix) : null;
+}
+
+function getWikiTitleDisambiguator(title) {
+    return String(title || "").match(/[(（]([^()（）]*)[)）]\s*$/u)?.[1] || "";
+}
+
+function getWikiIntroEvidence(intro, title) {
+    let evidence = intro;
+    for (const name of [title, title.replace(/\s*[(（][^()（）]*[)）]\s*$/u, "").trim()]) {
+        if (name) evidence = evidence.replace(name, "");
+    }
+    // Original-language names often appear in parentheses before the predicate.
+    evidence = evidence.replace(/^\s*(?:《》|「」|["“”])*\s*[(（][^()（）]*[)）]\s*/u, "");
+    return getWikiIdentityEvidence(evidence);
 }
 
 function wikiTitleMatches(query, title) {
@@ -2976,9 +3047,10 @@ async function searchZhWikiTitle(query, deadline = null, { mediaType = null, yea
 
     if (!Array.isArray(searchData?.query?.search)) throw createHttpError("Wiki returned an invalid search response", 502);
     const candidates = searchData.query.search
-        .filter(item => isObject(item) && wikiTitleMatches(query, item.title) && wikiYearMatches(year, item.title))
-        .filter(item => !mediaType || !getWikiKind(item.title) || getWikiKind(item.title) === mediaType);
-    if (mediaType) candidates.sort((a, b) => Number(getWikiKind(b.title) === mediaType) - Number(getWikiKind(a.title) === mediaType));
+        .filter(item => isObject(item) && wikiTitleMatches(query, item.title)
+            && wikiYearMatches(year, getWikiTitleDisambiguator(item.title)))
+        .filter(item => !mediaType || !getWikiTitleKind(item.title) || getWikiTitleKind(item.title) === mediaType);
+    if (mediaType) candidates.sort((a, b) => Number(getWikiTitleKind(b.title) === mediaType) - Number(getWikiTitleKind(a.title) === mediaType));
     return candidates[0]?.title || null;
 }
 
@@ -2994,7 +3066,7 @@ async function handleWikiZh(query, ctx, options = {}) {
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
 
-    const cacheKey = new Request(`https://wiki-zh-v3-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
+    const cacheKey = new Request(`https://wiki-zh-v4-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -3026,14 +3098,18 @@ async function handleWikiZh(query, ctx, options = {}) {
         // Latin titles such as "Mr. Bean" can contain periods inside the
         // Chinese lead sentence; keep its media/year evidence intact.
         const intro = summaryData.extract.split(/[。!?！？\r\n]/u)[0];
-        const summaryKind = getWikiKind(summaryData.title)
-            || getWikiKind(summaryData.description || "")
-            || getWikiKind(intro);
+        const introEvidence = getWikiIntroEvidence(intro, summaryData.title);
+        const descriptionEvidence = getWikiIdentityEvidence(summaryData.description);
+        const titleKind = getWikiTitleKind(summaryData.title);
+        const summaryKind = getWikiKind(summaryData.description || "")
+            || getWikiKind(introEvidence)
+            || titleKind;
         if (summaryData.type === "disambiguation"
             || !summaryData.extract.trim()
             || !wikiTitleMatches(query, summaryData.title)
-            || !wikiYearMatches(year, `${summaryData.title} ${summaryData.description || ""}`)
-            || !wikiYearMatches(year, intro)
+            || !wikiYearMatches(year, `${getWikiTitleDisambiguator(summaryData.title)} ${descriptionEvidence}`)
+            || !wikiYearMatches(year, introEvidence)
+            || (mediaType && titleKind && titleKind !== mediaType)
             || (mediaType && summaryKind !== mediaType)) {
             return jsonResponse({ error: "No matching media summary on zh.wikipedia" }, 404);
         }

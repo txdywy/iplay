@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { RELEASE_VERSION } from '../js/release.js';
 
 const indexHtml = await readFile(new URL('../index.html', import.meta.url), 'utf8');
@@ -8,6 +8,10 @@ const mainJs = await readFile(new URL('../js/main.js', import.meta.url), 'utf8')
 const versionFile = (await readFile(new URL('../VERSION', import.meta.url), 'utf8')).trim();
 const packageInfo = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const lockInfo = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+const jsDirectory = new URL('../js/', import.meta.url);
+const moduleSources = await Promise.all((await readdir(jsDirectory))
+    .filter(name => name.endsWith('.js'))
+    .map(async name => ({ name, source: await readFile(new URL(name, jsDirectory), 'utf8') })));
 
 test('static shell keeps project-site assets relative and exposes recovery regions', () => {
     assert.match(indexHtml, /href="\.\/favicon\.ico"/);
@@ -34,9 +38,14 @@ test('release versions and cache-busted static imports stay consistent', () => {
     assert.equal(lockInfo.packages[''].version, versionFile);
     assert.ok(indexHtml.includes(`./css/output.css?v=${versionFile}`));
     assert.ok(indexHtml.includes(`./js/main.js?v=${versionFile}`));
-    const moduleImports = [...mainJs.matchAll(/from '\.\/[^']+'/g)].map(match => match[0]);
-    assert.equal(moduleImports.length, 7);
-    assert.ok(moduleImports.every(value => value.endsWith(`?v=${versionFile}'`)));
+    const moduleNames = new Set(moduleSources.map(module => module.name));
+    for (const { name, source } of moduleSources) {
+        const imports = [...source.matchAll(/\b(?:from|import)\s*['"](\.\/[^'"]+)['"]/g)].map(match => match[1]);
+        for (const imported of imports) {
+            assert.ok(imported.endsWith(`?v=${versionFile}`), `${name}: ${imported} must use the release version`);
+            assert.ok(moduleNames.has(imported.split('?')[0].slice(2)), `${name}: ${imported} must resolve to a shipped module`);
+        }
+    }
 });
 
 test('inline decorative icons are hidden from screen readers and external icon fonts are absent', () => {
