@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.14';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.14';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.14';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.14';
-import { RELEASE_VERSION } from './release.js?v=1.0.14';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.15';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.15';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.15';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.15';
+import { RELEASE_VERSION } from './release.js?v=1.0.15';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.14';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.14';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.14';
+} from './match.js?v=1.0.15';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.15';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.15';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1241,7 +1241,7 @@ function pickSafeImageUrl(...values) {
 
 function renderLinkCards(container, items, {
     emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
-    detailText, sourceText, actionLabel, onAction, limit, initialLimit = 6
+    detailText, sourceText, actionLabel, onAction, initialLimit = 6
 }) {
     if (!container) return;
     const wasExpanded = container.dataset.expanded === 'true';
@@ -1262,7 +1262,7 @@ function renderLinkCards(container, items, {
         return;
     }
 
-    const maxItems = Number.isFinite(Number(limit)) ? Math.min(Number(limit), safeItems.length) : safeItems.length;
+    const maxItems = safeItems.length;
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
     const renderVisibleItems = (visibleLimit, restoreControlFocus = false) => {
@@ -1550,7 +1550,6 @@ function renderResourceList(resources) {
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
-        limit: 12,
         initialLimit: 6
     });
 }
@@ -1575,7 +1574,6 @@ function renderWpzysResourceList(resources, meta = {}) {
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
-        limit: 12,
         initialLimit: 6
     });
 }
@@ -1594,7 +1592,6 @@ function renderQuarkUrls(quarkUrls) {
         sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
-        limit: 50,
         initialLimit: 6
     });
 }
@@ -1778,6 +1775,7 @@ let currentCandidateAbortCleanup = null;
 let currentCandidateLoadId = 0;
 let currentActorPageController = null;
 let actorResultState = null;
+let activeDetailState = null;
 let lastSearchQuery = '';
 let searchRetryAction = null;
 
@@ -2086,11 +2084,13 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
             void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
             return;
         }
-        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
+        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据'
+            : viewModel.omdbProfile ? '本次未能更新，已保留已有 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
     }).catch(error => {
         if (error?.name === 'AbortError') return;
         if (isActiveSearch(searchId, loadId)) {
-            if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, '暂无 IMDb / OMDb 补充数据');
+            if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile
+                ? '本次未能更新，已保留已有 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
             else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
         }
         console.debug('OMDb enrichment skipped:', error);
@@ -2133,10 +2133,12 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
                 source: 'tmdb'
             }, 'TMDB', true);
         }
-        setEnrichmentStatus(els.wikiStatus, hasWiki ? '已补充中文 Wikipedia 简介' : '暂无中文 Wikipedia 补充');
+        setEnrichmentStatus(els.wikiStatus, hasWiki ? '已补充中文 Wikipedia 简介'
+            : viewModel.overviewSource === 'ZH.WIKIPEDIA' ? '本次未能更新，已保留已有中文 Wikipedia 简介' : '暂无中文 Wikipedia 补充');
     }).catch(error => {
         if (error?.name === 'AbortError') return;
-        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.wikiStatus, '暂无中文 Wikipedia 补充');
+        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.wikiStatus, viewModel.overviewSource === 'ZH.WIKIPEDIA'
+            ? '本次未能更新，已保留已有中文 Wikipedia 简介' : '暂无中文 Wikipedia 补充');
         console.debug('Wiki enrichment skipped:', error);
     });
 
@@ -2159,18 +2161,23 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
 async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push', deferEnrichments = false } = {}) {
     if (!isActiveSearch(searchId)) return;
 
+    const requestedType = candidate?.mediaType || candidate?.type || null;
+    const retained = isRetry && activeDetailState?.searchId === searchId
+        && Number(activeDetailState.candidate.id) === Number(candidate.id)
+        && (!requestedType || requestedType === activeDetailState.candidate.mediaType)
+        ? activeDetailState : null;
     cancelResourceLoadSchedule();
     const loadId = ++currentCandidateLoadId;
     const candidateOptions = createCandidateRequestOptions(searchOptions);
     resourceLoadStarted = false;
-    if (!isRetry) resourceResultState = null;
+    if (!retained) resourceResultState = null;
     const selectedCandidate = {
-        ...candidate,
-        mediaType: candidate?.mediaType || candidate?.type || null
+        ...(retained?.candidate || candidate),
+        mediaType: retained?.candidate.mediaType || requestedType
     };
     if (!isRetry && historyMode === 'push') pushDetailHistory(selectedCandidate);
     setSearching(true);
-    resetRatingBoxes();
+    if (!retained) resetRatingBoxes();
     setEnrichmentStatus(els.wikiStatus, '等待详情确认后补充简介');
     setEnrichmentStatus(els.omdbStatus, '等待详情确认后补充数据');
     hideCandidatePicker();
@@ -2187,10 +2194,19 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         showToast('正在加载影视详情…');
     }
 
-    const viewModel = buildTmdbViewModel(selectedCandidate, null, null, null);
+    const viewModel = retained?.viewModel || buildTmdbViewModel(selectedCandidate, null, null, null);
+    viewModel.candidate = selectedCandidate;
+    // The previous load's abort signal also cancels any pending poster lookup.
+    // Keep usable images, but do not retain an abandoned broken-image request.
+    if (retained && viewModel.posterFallbackPending) {
+        viewModel.posterFallbackPending = false;
+        if (viewModel.failedPosterUrls.has(viewModel.posterUrl)) viewModel.posterUrl = null;
+    }
+    activeDetailState = { searchId, candidate: selectedCandidate, viewModel };
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
     renderViewModel(viewModel, posterContext);
+    renderBackupDoubanRating(viewModel.doubanRating);
     if (!isRetry || !resourceResultState) {
         setResourceStatus('等待详情确认后扫描资源');
         renderResourceList([]);
@@ -2215,6 +2231,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             const failedPosterUrls = viewModel.failedPosterUrls;
             const posterFallbackPending = viewModel.posterFallbackPending;
             const existingOmdbProfile = viewModel.omdbProfile;
+            const previousQueryKey = resourceQueryKey(selectedCandidate);
+            const previousSynopsis = { summary: viewModel.summary, source: viewModel.overviewSource };
             const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
             Object.assign(viewModel, detailViewModel);
             viewModel.failedPosterUrls = failedPosterUrls;
@@ -2228,13 +2246,24 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                 viewModel.posterUrl = null;
             }
             if (viewModel.posterUrl !== existingPoster) viewModel.posterFallbackPending = false;
-            if (existingOmdbProfile) viewModel.omdbProfile = existingOmdbProfile;
+            if (existingOmdbProfile && (!tmdbDetail.imdbId || existingOmdbProfile.imdbId === tmdbDetail.imdbId)) {
+                viewModel.omdbProfile = existingOmdbProfile;
+            }
             Object.assign(selectedCandidate, {
                 title: tmdbDetail.title,
                 originalTitle: tmdbDetail.originalTitle,
                 mediaType: tmdbDetail.mediaType,
                 year: tmdbDetail.year
             });
+            if (previousQueryKey === resourceQueryKey(selectedCandidate)) {
+                if (previousSynopsis.source === 'ZH.WIKIPEDIA') {
+                    viewModel.summary = previousSynopsis.summary;
+                    viewModel.overviewSource = previousSynopsis.source;
+                }
+            } else {
+                delete viewModel.doubanRating;
+            }
+            renderBackupDoubanRating(viewModel.doubanRating);
             posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
             posterContext.year = tmdbDetail.year || '';
             pushDetailHistory(selectedCandidate, { replace: true });
@@ -2257,9 +2286,10 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                     title: 'TMDB 详情暂时不可用',
                     detail: deferEnrichments
                         ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
-                        : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
+                        : retained ? '详情更新失败，已保留当前资料、简介和补充评分，可稍后重试。'
+                            : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
                     actionLabel: '重试详情',
-                    onAction: () => loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments }),
+                    onAction: () => loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments }),
                     tone: 'error'
                 });
             }
@@ -2272,6 +2302,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
 }
 
 function beginSearchSession(query) {
+    activeDetailState = null;
     lastSearchQuery = query;
     searchRetryAction = null;
     cancelResourceLoadSchedule();
@@ -2301,6 +2332,7 @@ function beginSearchSession(query) {
 async function handleSearch({ historyMode = 'push' } = {}) {
     const query = els.input.value.trim();
     if (!query) {
+        activeDetailState = null;
         currentSearchId += 1;
         currentAbortController?.abort();
         abortCandidateRequests();
@@ -2453,6 +2485,7 @@ if (els.actorLoadMore) {
 }
 
 function resetInitialView() {
+    activeDetailState = null;
     currentSearchId += 1;
     currentAbortController?.abort();
     abortCandidateRequests();

@@ -23,6 +23,10 @@ async function getApi(path, expectedStatus = 200) {
 
 const frontendModules = (await readdir(new URL('../js/', import.meta.url)))
     .filter(name => name.endsWith('.js')).sort().map(name => `js/${name}`);
+const homepage = await fetchLive(new URL(site));
+assert.equal(homepage.status, 200, 'unversioned homepage');
+assert.equal(await homepage.text(), await readFile(new URL('../index.html', import.meta.url), 'utf8'), 'unversioned homepage: deployed entry differs');
+results.push({ check: 'unversioned-homepage', status: 'exact-release-match' });
 for (const path of ['index.html', ...frontendModules, 'css/output.css', 'VERSION']) {
     const url = new URL(path, site);
     url.searchParams.set('v', release);
@@ -32,13 +36,14 @@ for (const path of ['index.html', ...frontendModules, 'css/output.css', 'VERSION
     results.push({ check: path, status: 'exact-release-match' });
 }
 
-for (const query of ['流浪地球', 'The Matrix', 'The Truman Show']) {
+for (const query of ['流浪地球', 'The Matrix', 'The Truman Show', 'The Truman Show 1998', 'The Truman Show 1998 movie']) {
     const { data } = await getApi(`/api/tmdb/search?q=${encodeURIComponent(query)}`);
     assert.ok(data.results?.length > 0, `${query}: no results`);
     assert.ok(data.searchMeta?.matchScore >= 0.72, `${query}: unreliable match`);
-    if (query === 'The Truman Show') {
+    if (query.startsWith('The Truman Show')) {
         assert.ok(data.results.some(item => item.id === 37165 && item.mediaType === 'movie'));
-        assert.equal(data.searchMeta.mediaType, null, 'literal Show must not impose a TV filter');
+        assert.equal(data.searchMeta.mediaType, query.endsWith('movie') ? 'movie' : null, 'only type words outside the literal title may impose a type');
+        if (query.includes('1998')) assert.equal(data.searchMeta.year, '1998');
     }
     results.push({ check: `search:${query}`, status: 'passed', count: data.results.length });
 }
@@ -74,6 +79,13 @@ const denied = await fetchLive(new URL('/not-found', api), { headers: { Origin: 
 assert.equal(denied.status, 404);
 assert.equal(denied.headers.get('access-control-allow-origin'), null);
 results.push({ check: 'invalid-input-and-cors-denial', status: 'passed' });
+
+for (const path of ['/api/tmdb/detail?id=603&type=', '/api/tmdb/person?id=&q=Tom%20Hanks', '/api/omdb?imdb=&title=The%20Matrix']) {
+    const { response, data } = await getApi(path, 400);
+    assert.ok(data.error);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+}
+results.push({ check: 'explicit-blank-identities-fail-closed', status: 'passed' });
 
 // These services are optional. Report their real availability without confusing
 // an upstream outage with a failed release of the main TMDB functionality.

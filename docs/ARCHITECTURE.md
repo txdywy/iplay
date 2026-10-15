@@ -95,6 +95,8 @@ User submits query from search form
 
 After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It renders search metadata immediately, then uses the detail response's canonical title, media type and year for Douban, Wiki, OMDb and resource queries. If details fail, normal search retains its candidate metadata and retry action; unconfirmed shared links wait for a successful detail retry. After details settle, resource scanning starts when its section approaches the viewport or the user requests it. Resource snapshots are keyed by the selected work and query identity; retries replace successful pages and retain temporarily failed pages, then reconcile duplicate share passwords from their page evidence:
 
+Detail retries retain the active work's view model while rotating its request generation and abort signal. A matching canonical title/type/year preserves verified Wiki and Douban enrichment; changed metadata clears those values, while a changed IMDb ID clears the previous OMDb profile. New searches and navigation reset the retained detail state. Resource lists render six entries initially and expose every bounded API result on expansion.
+
 ```
 User submits a search
         |
