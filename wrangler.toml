@@ -1,6 +1,9 @@
 name = "iplay"
 main = "worker/_worker.js"
 compatibility_date = "2024-04-23"
+# Workers Builds invokes `wrangler deploy` directly. Preserve optional dashboard
+# variables there as well as in the explicit CLI fallback deployment script.
+keep_vars = true
 
 [observability]
 enabled = true

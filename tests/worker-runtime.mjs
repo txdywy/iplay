@@ -148,6 +148,24 @@ try {
     assert.equal(literalTitleData.searchMeta.mediaType, null);
     checks.push('literal-title-over-inferred-type');
 
+    for (const query of ['The Truman Show 1998', 'The Truman Show 1998 movie']) {
+        const response = await request(`/api/tmdb/search?q=${encodeURIComponent(query)}`, 'runtime-year-qualified-title');
+        assert.equal(response.status, 200);
+        const data = await response.json();
+        assert.equal(data.results[0]?.id, 41);
+        assert.equal(data.results[0]?.mediaType, 'movie');
+        assert.equal(data.searchMeta.year, '1998');
+    }
+    checks.push('year-qualified-literal-title-and-type-hints');
+
+    for (const path of ['/api/tmdb/detail?id=101&type=', '/api/tmdb/person?id=&q=Runtime%20Actor', '/api/omdb?imdb=&title=Runtime%20Movie']) {
+        const response = await request(path, 'runtime-explicit-empty-identity');
+        assert.equal(response.status, 400, path);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        await response.json();
+    }
+    checks.push('explicit-empty-identity-rejected-without-fallback');
+
     for (const mediaType of ['tv', 'movie', 'tv']) {
         const poster = await request(`/api/poster?title=Shared%20Title&id=101&type=${mediaType}`);
         const posterData = await poster.json();

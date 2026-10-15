@@ -141,8 +141,8 @@ export default {
             }
 
             if (path === "/api/omdb") {
-                const imdbId = url.searchParams.get("imdb") || url.searchParams.get("i");
-                if (imdbId) {
+                const imdbId = url.searchParams.has("imdb") ? url.searchParams.get("imdb") : url.searchParams.get("i");
+                if (imdbId !== null) {
                     return withCors(await handleOmdbById(imdbId, env, ctx), request, env);
                 }
                 return withCors(await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request, env);
@@ -238,8 +238,8 @@ function validateImdbId(value) {
 }
 
 function validateMediaType(value) {
+    if (value === null || value === undefined) return { value: "movie" };
     const text = typeof value === "string" ? value.trim().toLowerCase() : "";
-    if (!text) return { value: "movie" };
     if (text !== "movie" && text !== "tv") {
         return { error: jsonResponse({ error: "Invalid media type" }, 400) };
     }
@@ -1044,17 +1044,18 @@ function extractSearchYear(text) {
     return { value: match[1], match: match[1] };
 }
 
-const SEARCH_NOISE_PATTERN = /(?:\b(?:2160p|1080p|720p|480p|4k|8k|web[- .]?(?:dl|rip)|blu?ray|brrip|dvdrip|hdtv|x26[45]|hevc|hdr10?|dolby(?:vision|atmos)?|proper|repack|movie|film|tv|series|show)\b|中字|双语|字幕|全集|完结|无删减|高清|高码|电影|电视剧|剧集|连续剧)/giu;
+const SEARCH_RELEASE_NOISE_PATTERN = /(?:\b(?:2160p|1080p|720p|480p|4k|8k|web[- .]?(?:dl|rip)|blu?ray|brrip|dvdrip|hdtv|x26[45]|hevc|hdr10?|dolby(?:vision|atmos)?|proper|repack)\b|中字|双语|字幕|全集|完结|无删减|高清|高码)/giu;
+const SEARCH_NOISE_PATTERN = new RegExp(`(?:${SEARCH_RELEASE_NOISE_PATTERN.source}|\\b(?:movie|film|tv|series|show)\\b|电影|电视剧|剧集|连续剧)`, "giu");
 
 function hasCjkText(value) {
     return /\p{Script=Han}/u.test(value);
 }
 
-function cleanSearchTitle(text, seasonMatch, yearMatch) {
+function cleanSearchTitle(text, seasonMatch, yearMatch, { keepTypeWords = false } = {}) {
     return normalizeSearchInput(text
         .replace(seasonMatch, " ")
         .replace(yearMatch, " ")
-        .replace(SEARCH_NOISE_PATTERN, " ")
+        .replace(keepTypeWords ? SEARCH_RELEASE_NOISE_PATTERN : SEARCH_NOISE_PATTERN, " ")
         .replace(/[()[\]{}【】（）]/gu, " ")
         .replace(/[._]+/gu, " ")
         .replace(/[-_:]+/gu, " ")
@@ -1071,17 +1072,19 @@ function buildSearchIntent(query) {
             ? "movie"
             : null;
     const cleanedTitle = cleanSearchTitle(originalQuery, season.match, year.match);
+    const literalTitle = cleanSearchTitle(originalQuery, season.match, year.match, { keepTypeWords: true });
     const punctuationVariant = normalizeSearchInput(cleanedTitle.replace(/[‐‑‒–—]/gu, " "));
     const aliases = cleanedTitle
         .split(/\s*(?:\/|／|\||｜)\s*/u)
         .map(value => value.trim())
         .filter(value => [...value].length >= 2);
-    const variants = uniqueSearchValues([cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
-    const matchQueries = uniqueSearchValues([cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
+    const variants = uniqueSearchValues([literalTitle, cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
+    const matchQueries = uniqueSearchValues([literalTitle, cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
 
     return {
         originalQuery,
-        normalizedQuery: variants[0] || originalQuery,
+        literalTitle,
+        normalizedQuery: cleanedTitle || originalQuery,
         variants,
         matchQueries,
         year: year.value,
@@ -1094,6 +1097,29 @@ function buildSearchIntent(query) {
 function extractImdbIdFromQuery(query) {
     const match = normalizeSearchInput(query).match(/(?:^|[^a-z0-9])(tt\d{5,12})(?:$|[^a-z0-9])/iu);
     return match ? match[1].toLowerCase() : null;
+}
+
+function getLiteralSearchEvidence(titles, intent) {
+    const original = compactSearchText(intent.originalQuery);
+    const literal = compactSearchText(intent.literalTitle);
+    let best = null;
+    for (const title of titles) {
+        const normalized = compactSearchText(title);
+        if (normalized === original) return { title: intent.originalQuery, length: normalized.length, mediaType: null, wholeQuery: true };
+        const index = literal.indexOf(normalized);
+        if (!normalized || index < 0 || (normalized.length < 3 && normalized !== literal)) continue;
+        const rest = literal.slice(0, index) + literal.slice(index + normalized.length);
+        if (rest && !/^(?:tvseries|television|series|show|tv|movies?|films?|电影|电视剧|剧集|连续剧)+$/u.test(rest)) continue;
+        const television = /tv|television|series|show|电视剧|剧集|连续剧/u.test(rest);
+        const movie = /movie|film|电影/u.test(rest);
+        if (television && movie) continue;
+        // Prefer the longest literal title before interpreting the remaining
+        // type words, e.g. "电影少女" over "少女", or "Truman Show" over "Truman".
+        if (!best || normalized.length > best.length) {
+            best = { title, length: normalized.length, mediaType: television ? "tv" : movie ? "movie" : null, wholeQuery: false };
+        }
+    }
+    return best;
 }
 
 function editSimilarity(left, right) {
@@ -1191,7 +1217,7 @@ function rankTmdbCandidates(entries, intent) {
         const mediaType = getTmdbMediaType(item, entry.mediaType);
         const key = `${mediaType}:${toSafeTmdbId(item.id)}`;
         const normalizedItem = { ...item, media_type: mediaType };
-        const scoringIntent = entry.query && !intent.matchQueries.includes(entry.query)
+        const scoringIntent = entry.strategy === "douban-alias" && entry.query && !intent.matchQueries.includes(entry.query)
             ? {
                 ...intent,
                 matchQueries: uniqueSearchValues([entry.query, ...intent.matchQueries], MAX_QUERY_LENGTH, 8)
@@ -1418,7 +1444,7 @@ function normalizePersonCandidates(rankedPeople, query) {
 }
 
 async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
-    const personId = options.personId ? validatePositiveInteger(options.personId, "id") : null;
+    const personId = options.personId !== null && options.personId !== undefined ? validatePositiveInteger(options.personId, "id") : null;
     if (personId?.error) return personId.error;
 
     if (personId) {
@@ -1611,13 +1637,22 @@ async function handleTmdbSearch(query, env, ctx) {
                 successfulAttempt = true;
                 // A literal title such as "The Truman Show" is stronger evidence
                 // than type/year words inferred from the text of that title.
-                if (path === "/search/multi" && searchQuery === intent.originalQuery && !intent.season
-                    && data.results.some(item => isValidTmdbSearchItem(item)
-                        && [getTmdbTitle(item), getTmdbOriginalTitle(item)]
-                            .some(title => compactSearchText(title) === compactSearchText(intent.originalQuery)))) {
-                    intent.mediaType = null;
-                    intent.year = null;
-                    intent.normalizedQuery = intent.originalQuery;
+                if (path === "/search/multi" && !intent.season) {
+                    const titles = data.results.filter(item => isValidTmdbSearchItem(item))
+                        .flatMap(item => [getTmdbTitle(item), getTmdbOriginalTitle(item)]);
+                    const literalMatch = getLiteralSearchEvidence(titles, intent);
+                    if (literalMatch && literalMatch.length >= (intent.literalEvidenceLength || 0)) {
+                        intent.literalEvidenceLength = literalMatch.length;
+                        intent.mediaType = literalMatch.mediaType;
+                        // A year appended to a literal title still constrains
+                        // the requested remake. Only an exact whole-title match
+                        // proves that the digits themselves belong to the name.
+                        if (literalMatch.wholeQuery) intent.year = null;
+                        intent.normalizedQuery = literalMatch.title;
+                        // A confirmed literal name supersedes lossy noise-stripped
+                        // variants, which may be the exact name of another work.
+                        intent.matchQueries = uniqueSearchValues([literalMatch.title, intent.originalQuery], MAX_QUERY_LENGTH, 8);
+                    }
                 }
                 entries.push(...getTmdbSearchEntries(data, mediaType, strategy, null, searchQuery));
             } catch (error) {
@@ -1707,7 +1742,7 @@ async function handleTmdbSearch(query, env, ctx) {
 }
 
 async function handleTmdbDetail(id, type, env, ctx) {
-    const hasExplicitType = typeof type === "string" && Boolean(type.trim());
+    const hasExplicitType = type !== null && type !== undefined;
     const idCheck = validatePositiveInteger(id);
     if (idCheck.error) return idCheck.error;
     id = idCheck.value;

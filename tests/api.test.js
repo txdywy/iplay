@@ -268,6 +268,25 @@ test('poster client sends the selected work identity without leaking it into fet
     assert.equal(requestedUrl.searchParams.get('imdb'), 'tt1111111');
 });
 
+test('clients preserve explicit empty identities so the Worker can reject them instead of broadening a lookup', async t => {
+    const urls = [];
+    t.mock.method(globalThis, 'fetch', async url => {
+        urls.push(new URL(url));
+        return Response.json({});
+    });
+    const { TmdbAPI, PosterAPI } = await import('../js/api.js');
+    await TmdbAPI.searchPerson('Selected Actor', { personId: '' });
+    await TmdbAPI.searchPerson('Selected Actor', { personId: 0 });
+    await TmdbAPI.getDetail(42, '');
+    await PosterAPI.getPoster('Selected Film', 2024, { mediaId: '', mediaType: '', imdbId: '' });
+    await TmdbAPI.getDetail(42);
+    assert.equal(urls[0].searchParams.get('id'), '');
+    assert.equal(urls[1].searchParams.get('id'), '0');
+    assert.equal(urls[2].searchParams.get('type'), '');
+    for (const name of ['id', 'type', 'imdb']) assert.equal(urls[3].searchParams.get(name), '');
+    assert.equal(urls[4].searchParams.has('type'), false, 'omitted legacy type remains omitted');
+});
+
 test('OMDb client keeps provider failures recoverable and preserves caller aborts', async t => {
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;

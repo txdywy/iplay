@@ -37,6 +37,8 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 
 当前生产 Worker 已连接本仓库，生产分支为 `main`。功能分支推送触发预览构建；PR 的 CI 通过并合并到 `main` 后，Cloudflare Workers Builds 自动构建并部署生产 Worker，GitHub Pages 独立发布前端。两个部署都完成并通过 `test:live` 后才算发布完成。不要因 GitHub Actions 中没有自动 Worker 作业而重复手动部署。
 
+`wrangler.toml` 声明 `keep_vars=true`，使 Workers Builds 的默认 `npx wrangler deploy` 同样保留 Dashboard 中额外配置的变量（例如 `CORS_ALLOWED_ORIGINS`、`CRON_REFRESH_TITLES`）。仓库 `[vars]` 声明的值仍以代码为准。仅给本机脚本加 `--keep-vars` 不能覆盖自动构建的默认命令；行为见 [Wrangler 部署说明](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy)。
+
 新建或自托管 Worker 时，需要在 Dashboard 的 **Settings → Build** 连接仓库并确认生产分支、构建命令和部署命令。分支行为见 [Cloudflare Build branches](https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/)。
 
 ### 首次配置或自动部署故障回退：Wrangler CLI

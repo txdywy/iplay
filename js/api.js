@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.14';
+import { RELEASE_VERSION } from './release.js?v=1.0.15';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -85,7 +85,7 @@ export const TmdbAPI = {
             ...requestOptions
         } = options;
         const params = [`q=${encodeURIComponent(query)}`];
-        if (personId) params.push(`id=${encodeURIComponent(personId)}`);
+        if (personId !== undefined && personId !== null) params.push(`id=${encodeURIComponent(personId)}`);
         if (offset !== undefined && offset !== null) params.push(`offset=${encodeURIComponent(offset)}`);
         if (limit !== undefined && limit !== null) params.push(`limit=${encodeURIComponent(limit)}`);
         if (mediaType) params.push(`mediaType=${encodeURIComponent(mediaType)}`);
@@ -93,7 +93,7 @@ export const TmdbAPI = {
     },
     async getDetail(id, type, options = {}) {
         let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
-        if (type) url += `&type=${encodeURIComponent(type)}`;
+        if (type !== undefined && type !== null) url += `&type=${encodeURIComponent(type)}`;
         return fetchWithTimeout(url, options);
     }
 };
@@ -168,9 +168,9 @@ export const PosterAPI = {
         try {
             const { mediaId, mediaType, imdbId, ...fetchOptions } = options;
             const identityParams = [
-                mediaId ? `&id=${encodeURIComponent(mediaId)}` : '',
-                mediaType ? `&type=${encodeURIComponent(mediaType)}` : '',
-                imdbId ? `&imdb=${encodeURIComponent(imdbId)}` : ''
+                mediaId !== undefined && mediaId !== null ? `&id=${encodeURIComponent(mediaId)}` : '',
+                mediaType !== undefined && mediaType !== null ? `&type=${encodeURIComponent(mediaType)}` : '',
+                imdbId !== undefined && imdbId !== null ? `&imdb=${encodeURIComponent(imdbId)}` : ''
             ].join('');
             const refreshParam = refresh ? '&refresh=1' : '';
             const requestOptions = refresh ? { ...fetchOptions, cache: 'no-store' } : fetchOptions;

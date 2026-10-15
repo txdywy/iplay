@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.15] - 2026-10-16
+
+### Fixed
+
+- Year-qualified titles keep media words belonging to their actual names, including `The Truman Show 1998`, `The TV Set 2006` and `电影少女2018`. Explicit years and external type hints still constrain matches; stripped shorter names cannot silently become exact aliases for unrelated works.
+- Explicit empty person IDs, detail types and IMDb IDs return validation errors before upstream requests. API clients preserve those parameters for validation; genuinely omitted legacy detail types remain supported.
+- Resource expansion exposes all returned sources and up to 100 reconciled Quark shares, removing hidden 12-source and 50-share truncation while retaining six initial entries.
+- Detail retries retain loaded enrichment during pending and failed refreshes. Successful recovery clears stale title/year-based data and mismatched IMDb profiles when canonical identity changes.
+- Automatic Workers Builds deployments preserve optional Dashboard variables through `keep_vars=true`, matching the manual CLI fallback.
+
+### Added
+
+- Public API, real workerd and browser regressions for literal title boundaries, fail-closed identity validation, complete resource visibility and enrichment retention across failed and successful retries.
+- Production smoke checks compare the unversioned homepage with the release, verify year-qualified literal searches and reject explicit empty identities. Isolated browser tests block external font requests to keep cold startup deterministic.
+- A fresh audit record and synchronized API, architecture, testing and deployment documentation.
+
 ## [1.0.14] - 2026-10-13
 
 ### Fixed
