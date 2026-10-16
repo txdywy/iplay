@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.15';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.15';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.15';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.15';
-import { RELEASE_VERSION } from './release.js?v=1.0.15';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.16';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.16';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.16';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.16';
+import { RELEASE_VERSION } from './release.js?v=1.0.16';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.15';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.15';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.15';
+} from './match.js?v=1.0.16';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.16';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.16';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1265,7 +1265,7 @@ function renderLinkCards(container, items, {
     const maxItems = safeItems.length;
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
-    const renderVisibleItems = (visibleLimit, restoreControlFocus = false) => {
+    const renderVisibleItems = (visibleLimit, focusTarget = null) => {
         container.dataset.expanded = String(visibleLimit > firstPageSize);
         clearNode(container);
         const frag = document.createDocumentFragment();
@@ -1288,6 +1288,7 @@ function renderLinkCards(container, items, {
             row.className = 'flex items-start justify-between gap-3';
 
             const content = document.createElement('div');
+            content.className = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
             const title = document.createElement('div');
             title.className = 'text-sm font-medium leading-snug text-cinema-100';
             title.textContent = titleText(item);
@@ -1355,7 +1356,12 @@ function renderLinkCards(container, items, {
             button.type = 'button';
             button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = `显示更多（剩余 ${maxItems - visibleLimit} 条）`;
-            button.addEventListener('click', () => renderVisibleItems(maxItems, true));
+            button.setAttribute('aria-expanded', 'false');
+            if (container.id) button.setAttribute('aria-controls', container.id);
+            button.addEventListener('click', () => {
+                const hadFocus = document.activeElement === button;
+                renderVisibleItems(maxItems, hadFocus ? firstPageSize : null);
+            });
             li.appendChild(button);
             frag.appendChild(li);
         } else if (visibleLimit > firstPageSize) {
@@ -1365,17 +1371,25 @@ function renderLinkCards(container, items, {
             button.type = 'button';
             button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
             button.textContent = '收起列表';
-            button.addEventListener('click', () => renderVisibleItems(firstPageSize, true));
+            button.setAttribute('aria-expanded', 'true');
+            if (container.id) button.setAttribute('aria-controls', container.id);
+            button.addEventListener('click', () => {
+                const hadFocus = document.activeElement === button;
+                renderVisibleItems(firstPageSize, hadFocus ? 'toggle' : null);
+            });
             li.appendChild(button);
             frag.appendChild(li);
         }
 
         container.appendChild(frag);
-        if (restoreControlFocus) {
-            requestAnimationFrame(() => {
-                const controls = container.querySelectorAll('button');
-                controls[controls.length - 1]?.focus({ preventScroll: true });
-            });
+        if (focusTarget !== null) {
+            // Move only a replaced control's existing focus. Keyboard and
+            // assistive-technology users continue at the first new result;
+            // unfocused pointer activation must not steal focus or scroll.
+            const target = focusTarget === 'toggle'
+                ? container.lastElementChild?.querySelector('button')
+                : container.children[focusTarget]?.querySelector('a, button');
+            target?.focus({ preventScroll: true });
         }
     };
 

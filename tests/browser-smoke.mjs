@@ -389,6 +389,14 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     wpzysResources: Array.from({ length: 20 }, (_, index) => ({ title: 'Forum ' + index, url: 'https://wpzy.org/thread-' + index + '.htm' })),
                     quarkUrls: Array.from({ length: 100 }, (_, index) => ({ title: 'Share ' + index, url: 'https://pan.quark.cn/s/large-' + index, password: 'abcd' }))
                 });
+                if (window.__smoke.resourceMode === 'long-titles') {
+                    const title = 'UnbrokenReleaseFilename'.repeat(12);
+                    return json({
+                        resources: Array.from({ length: 8 }, (_, index) => ({ title: title + index, url: 'https://by669.org/d/long-' + index })),
+                        wpzysResources: Array.from({ length: 8 }, (_, index) => ({ title: title + index, url: 'https://wpzy.org/thread-long-' + index + '.htm' })),
+                        quarkUrls: Array.from({ length: 8 }, (_, index) => ({ title: title + index, sourceTitle: title, url: 'https://pan.quark.cn/s/long-' + index, password: 'abcd' }))
+                    });
+                }
                 if (window.__smoke.resourceMode === 'canonical-retry') return json({
                     resources: [{ title: url.searchParams.get('q'), url: 'https://resource.example/' + (url.searchParams.get('q') === 'Retry Canonical Movie' ? 'old' : 'canonical') }],
                     wpzysResources: [], quarkUrls: []
@@ -1050,6 +1058,80 @@ async function runCompleteResourceVisibilityFlow() {
     await waitFor("window.__smoke.copied === 'abcd'");
 }
 
+async function runResourceKeyboardAndLongTitleFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    // This is the first cold document/module navigation; later business-state
+    // waits retain their shorter timeout and report application exceptions.
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'", 15000);
+    await evaluate("window.__smoke.resourceMode = 'long-titles'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelectorAll('#quarkUrlList a').length === 6");
+    const layout = await evaluate(`(() => {
+        const lists = ['#resourceList', '#wpzysResourceList', '#quarkUrlList'];
+        return {
+            viewport: document.documentElement.clientWidth,
+            pageWidth: document.documentElement.scrollWidth,
+            cards: lists.flatMap(selector => Array.from(document.querySelectorAll(selector + ' li a')).map(link => ({
+                right: link.getBoundingClientRect().right,
+                textRight: link.querySelector('div > div').getBoundingClientRect().right,
+                text: link.textContent
+            })))
+        };
+    })()`);
+    assert.equal(layout.viewport, 390);
+    assert.ok(layout.pageWidth <= layout.viewport + 1, `long release titles must wrap within the ${layout.viewport}px viewport (actual page width ${layout.pageWidth}px)`);
+    assert.ok(layout.cards.every(card => card.right <= layout.viewport + 1 && card.textRight <= card.right + 1));
+    assert.ok(layout.cards.every(card => card.text.includes('UnbrokenReleaseFilename'.repeat(12))), 'wrapping must preserve the complete title');
+
+    await evaluate(`(() => {
+        const button = Array.from(document.querySelectorAll('#quarkUrlList button')).find(item => item.textContent.startsWith('显示更多'));
+        button.scrollIntoView({ block: 'center' });
+        button.focus({ preventScroll: true });
+    })()`);
+    const beforeExpand = await evaluate('scrollY');
+    await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+    await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await waitFor("document.querySelectorAll('#quarkUrlList a').length === 8");
+    assert.equal(await evaluate("document.activeElement === document.querySelectorAll('#quarkUrlList a')[6]"), true,
+        'keyboard expansion must focus the first newly revealed share');
+    assert.ok(Math.abs(await evaluate('scrollY') - beforeExpand) <= 1, 'expansion must preserve the current scroll position');
+    await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    assert.equal(await evaluate("document.activeElement === document.querySelectorAll('#quarkUrlList a')[6].closest('li').querySelector('button')"), true,
+        'the next Tab must reach the new share password control in reading order');
+
+    await evaluate(`(() => {
+        const button = Array.from(document.querySelectorAll('#quarkUrlList button')).find(item => item.textContent === '收起列表');
+        button.focus({ preventScroll: true });
+    })()`);
+    await command('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+    await command('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+    await waitFor("document.querySelectorAll('#quarkUrlList a').length === 6");
+    assert.match(await evaluate('document.activeElement.textContent'), /^显示更多/u, 'collapse must return focus to the surviving expansion control');
+
+    const togglePoint = await evaluate(`(() => {
+        const button = document.activeElement;
+        button.scrollIntoView({ block: 'center' });
+        const rect = button.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, scroll: scrollY };
+    })()`);
+    await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: togglePoint.x, y: togglePoint.y, button: 'left', clickCount: 1 });
+    await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: togglePoint.x, y: togglePoint.y, button: 'left', clickCount: 1 });
+    await waitFor("document.querySelectorAll('#quarkUrlList a').length === 8");
+    assert.ok(Math.abs(await evaluate('scrollY') - togglePoint.scroll) <= 1, 'pointer expansion must not jump to the end of the list');
+    assert.notEqual(await evaluate('document.activeElement.textContent'), '收起列表');
+    await evaluate(`(() => {
+        document.querySelector('#searchInput').focus({ preventScroll: true });
+        Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.textContent === '收起列表').click();
+    })()`);
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#searchInput')"), true,
+        'an activation without control focus must preserve the existing input focus');
+    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.textContent.startsWith('显示更多')).click()");
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#searchInput')"), true);
+}
+
 async function runDetailRetryPreservesEnrichmentFlow() {
     await command('Page.navigate', { url: baseUrl });
     await search('Retained Enrichment Movie');
@@ -1089,6 +1171,7 @@ async function runDetailRetryRecoveryIdentityFlow() {
 }
 
 try {
+    await runResourceKeyboardAndLongTitleFlow();
     await runCompleteResourceVisibilityFlow();
     await runDetailRetryPreservesEnrichmentFlow();
     await runDetailRetryRecoveryIdentityFlow();
@@ -1126,7 +1209,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['complete-resource-visibility', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

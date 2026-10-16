@@ -401,6 +401,10 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 
 **实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页每批并发 6 个请求，单页最多提取 25 个链接、整次请求最多返回 100 个链接，并受约 15 秒总预算与单次请求超时约束。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`（提供方状态、选中/尝试/失败页数）；两者都失败时返回 `502` 且不缓存。
 
+分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
+
+资源响应对浏览器统一返回 `Cache-Control: no-store`，前端普通查询和重试也都使用 `cache: 'no-store'`，包括调用者传入其他缓存模式的情况。Worker 内部仍按当前登录态指纹缓存完整结果 12 小时、部分结果 15 分钟；登录态更换或撤销后，下次浏览器查询必须到达 Worker 并使用新的作用域。
+
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
 
 提取码按相邻链接、段落/行与资源卡片范围配对，不跨其他网盘链接或独立卡片、页脚取码。支持链接前后文本、HTML 行内格式以及 URL 的密码查询/Hash 参数；URL 自带密码优先于附近文字，去重后保留该密码的实际来源。相同优先级的密码相互矛盾时省略 `password` 并返回 `passwordConflict: true`，仍保留链接，不猜测归属。单页 25 个的上限按去重后的夸克链接计算，重复 HTML/JSON 表达与其他网盘提取码不占此配额。
@@ -558,6 +562,8 @@ GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 
 类型与年份校验使用消歧义后缀、摘要描述和中文简介首句中的作品身份信息，不把片名中的“小说/漫画/电视”或数字当作类型/发行年份，也不把改编原著的类型和年份当作电影自身信息。可靠年份证据与所选年份冲突时返回 `404` 并保留 TMDB 简介；同名小说和消歧义页仍被拒绝。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
 
+多年份简介优先使用明确作品定义、首映或发行年份；修复、重新上映和导演获奖年份不能覆盖原作年份。两个真正的地区发行年份仍可分别匹配。标题消歧义年份、描述和引言分别校验，后两者出现所选年份不能抵消标题中的明确冲突。
+
 **Example Request：**
 
 ```bash
@@ -584,21 +590,21 @@ curl "https://iplayw.hackx64.eu.org/api/wiki/zh?q=流浪地球&type=movie&year=2
 
 Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：普通接口每 60 秒 60 个请求，资源搜索每 60 秒 10 个请求。计数在各 Cloudflare 节点本地执行，不是全球严格总额或计费配额。未配置 binding 时仅在开发/测试环境回退到进程内计数器；production 缺少 binding 或 binding 故障时会 fail closed 返回 `503`。预检请求不计入限流。限流或限流服务不可用响应带有 `Retry-After: 60`。
 
-| 接口 | 缓存时长 | 缓存键 |
+| 接口 | Worker 内部缓存时长 | 缓存键 |
 |------|----------|--------|
 | `/api/tmdb/search` | 24h | TMDB 原始请求 URL |
 | `/api/tmdb/person` | 24h | TMDB 人物搜索与 combined credits 请求 URL |
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v11-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v12-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
 | `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v4-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v5-cache.local/?q={query}&type={type}&year={year}` |
 
-> 缓存使用 Cloudflare Worker 的 `caches.default` API。缓存命中时直接返回，不向上游发起请求。
+> 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。
 
-详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v11 缓存要求页面扫描证据，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v4 缓存使用修正后的作品类型与年份校验。
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅在 Worker 内缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v12 缓存排除旧的无长度限制条目，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v5 缓存排除多年份简介误配的旧结果。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 

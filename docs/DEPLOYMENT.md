@@ -65,7 +65,7 @@ TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `E
 
 ### GitHub Actions（暂不自动部署 Worker）
 
-`.github/workflows/deploy-worker.yml` 目前只保留手动触发入口，不会因 `main` 推送自动运行。这样可以避免仓库未配置 Cloudflare Secrets 时产生必然失败的部署任务。若未来切换到 GitHub Actions，需要配置以下仓库 Secrets：
+`.github/workflows/deploy-worker.yml` 目前只保留手动触发入口，不会因 `main` 推送自动运行，且部署 job 仅允许 `refs/heads/main`，避免误从功能分支覆盖生产。这样可以避免仓库未配置 Cloudflare Secrets 时产生必然失败的部署任务。若未来切换到 GitHub Actions，需要配置以下仓库 Secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
@@ -154,7 +154,7 @@ OMDB_API_KEY=your_omdb_key
 
 wpzy.org 当前对匿名搜索要求登录。浏览器登录不会自动传给线上 Worker；需要显式配置 `WPZY_COOKIE` Secret，格式为 `bbs_token=…; bbs_sid=…`。不要把真实值写入命令参数、文档、仓库、构建变量或日志；使用上述 Wrangler 交互输入，或受保护的标准输入。`.dev.vars` 与 `.dev.vars.*` 均已忽略。
 
-建议使用获准的专用只读账号。iPlay 的资源查询会共用此账号，并向用户展示它能读取的资源结果；登录过期或站点风控需要维护者重新登录并更新 Secret。更换或撤销 Secret 会切换内部缓存作用域，避免复用旧账号缓存；没有 Secret 时仅尝试匿名读取，并保留 By669 的可用结果。
+建议使用获准的专用只读账号。iPlay 的资源查询会共用此账号，并向用户展示它能读取的资源结果；登录过期或站点风控需要维护者重新登录并更新 Secret。更换或撤销 Secret 会切换内部缓存作用域，避免复用旧账号缓存；资源响应及客户端请求均禁止浏览器 HTTP 缓存，保证下次查询到达当前 Worker。没有 Secret 时仅尝试匿名读取，并保留 By669 的可用结果。
 
 Worker 只向 `https://wpzy.org` 的搜索和帖子路径发送两个登录 Cookie，不向 `www.wpzy.org` 或其他来源发送，且不会转发浏览器提交的 Cookie。帖子链接统一为主域名并移除查询动作，每次搜索最多读取六个 WPZY 帖子。不自动回帖、开通会员、付费或绕过验证；需要回复/VIP 的帖子仍保留原帖入口，并显示限制提示。
 

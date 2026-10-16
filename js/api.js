@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.15';
+import { RELEASE_VERSION } from './release.js?v=1.0.16';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -154,7 +154,9 @@ export const OmdbAPI = {
 export const ResourceAPI = {
     async search(query, options = {}, { refresh = false } = {}) {
         const refreshParam = refresh ? '&refresh=1' : '';
-        const requestOptions = refresh ? { ...options, cache: 'no-store' } : options;
+        // The Worker cache is scoped to its current provider credentials. Always
+        // reach it so a browser cannot reuse results from a revoked session.
+        const requestOptions = { ...options, cache: 'no-store' };
         return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${refreshParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions, RESOURCE_TIMEOUT_MS);
     }
 };

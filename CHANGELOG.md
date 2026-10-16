@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.16] - 2026-10-16
+
+### Fixed
+
+- Reject oversized resource URLs and share tokens without returning shortened identifiers, bound aggregate JSON to 2 MiB, and replace the resource cache namespace. A native Workers reproduction fell from 45.6 MB to 2.2 KB while preserving source entries.
+- Keep resource results in the credential-scoped Worker cache while prohibiting browser HTTP caching on all reads, so changed or revoked server access is consulted on the next request.
+- Wrap long resource filenames and source titles within mobile cards. Keyboard expansion reaches the first new share and its password control; collapse restores the expansion control without jumping to the list end.
+- Wiki work-year validation distinguishes original release dates from restoration, rerelease and award years, validates explicit title years independently, and keeps genuine regional release years supported. A new cache namespace excludes prior mismatches.
+
+### Improved
+
+- Native Workers tests consume the actual Wrangler entry point, compatibility target, variables and rate-limit bindings; configuration policy regressions fail before runtime startup.
+- HTTP and Chrome readiness checks bound stalled response headers and bodies, release unused bodies and detect early process exits. The optional manual production deployment job only runs on main.
+- Add resource-size, cache-isolation, year-evidence, long-title and real keyboard regressions, plus production checks for resource `no-store` headers.
+
 ## [1.0.15] - 2026-10-16
 
 ### Fixed

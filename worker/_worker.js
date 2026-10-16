@@ -287,6 +287,11 @@ const RESOURCE_DETAIL_BATCH_SIZE = 6;
 const RESOURCE_MAX_PROVIDER_RESULTS = 50;
 const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
 const RESOURCE_MAX_QUARK_URLS_TOTAL = 100;
+// Real share identifiers are short. Keep generous compatibility margins while
+// preventing one upstream URL from dominating both aggregate and page evidence.
+const RESOURCE_MAX_URL_LENGTH = 2048;
+const RESOURCE_MAX_QUARK_TOKEN_LENGTH = 128;
+const RESOURCE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const SCHEDULED_REFRESH_CONCURRENCY = 4;
 const MAX_SCHEDULED_REFRESH_TITLES = 20;
 const SEARCH_MAX_ATTEMPTS = 6;
@@ -463,9 +468,15 @@ function scheduleCachePut(ctx, cacheKey, response) {
     }
 }
 
-function cacheJson(ctx, cacheKey, data, maxAge) {
-    const response = jsonResponse(data);
-    response.headers.set("Cache-Control", `public, max-age=${maxAge}`);
+function cacheJson(ctx, cacheKey, data, maxAge, { maxBytes = null } = {}) {
+    const body = JSON.stringify(data);
+    if (maxBytes && new globalThis.TextEncoder().encode(body).byteLength > maxBytes) {
+        throw createHttpError("Aggregated response is too large", 502);
+    }
+    const response = new Response(body, { headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+        "Cache-Control": `public, max-age=${maxAge}`
+    } });
     const toCache = response.clone();
     scheduleCachePut(ctx, cacheKey, toCache);
     return response;
@@ -2054,7 +2065,7 @@ function extractQuarkPasswordFromUrl(url) {
 }
 
 function parseQuarkUrl(rawUrl) {
-    if (!rawUrl) return null;
+    if (!rawUrl || rawUrl.length > RESOURCE_MAX_URL_LENGTH) return null;
 
     const cleaned = rawUrl
         .replace(/&amp;/g, "&")
@@ -2064,15 +2075,14 @@ function parseQuarkUrl(rawUrl) {
 
     try {
         const url = new URL(absoluteUrl);
+        const token = url.pathname.match(/^\/s\/([a-z0-9_-]+)$/i)?.[1];
+        if (!token || token.length > RESOURCE_MAX_QUARK_TOKEN_LENGTH) return null;
         return {
             url: `${url.origin}${url.pathname}`,
             ...extractQuarkPasswordFromUrl(url)
         };
     } catch {
-        return {
-            url: absoluteUrl,
-            password: ""
-        };
+        return null;
     }
 }
 
@@ -2135,7 +2145,8 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
     const links = [];
     for (const match of normalizedText.matchAll(RESOURCE_LINK_PATTERN)) {
         const isQuark = /^(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\//i.test(match[0]);
-        const rawQuark = isQuark ? match[0].match(QUARK_URL_PATTERN)?.[0] : null;
+        const rawQuark = isQuark && match[0].length <= RESOURCE_MAX_URL_LENGTH
+            ? match[0].match(QUARK_URL_PATTERN)?.[0] : null;
         const parsed = rawQuark ? parseQuarkUrl(rawQuark) : null;
         links.push({
             index: match.index,
@@ -2218,9 +2229,10 @@ function stripHtml(value) {
 }
 
 function resolveResourceUrl(rawUrl, baseUrl) {
+    if (typeof rawUrl !== "string" || rawUrl.length > RESOURCE_MAX_URL_LENGTH) return "";
     try {
         const url = new URL(decodeHtmlEntities(rawUrl), baseUrl);
-        if (url.protocol !== "https:" || url.username || url.password || !RESOURCE_ALLOWED_ORIGINS.has(url.origin)) {
+        if (url.href.length > RESOURCE_MAX_URL_LENGTH || url.protocol !== "https:" || url.username || url.password || !RESOURCE_ALLOWED_ORIGINS.has(url.origin)) {
             return "";
         }
         return url.toString();
@@ -2584,7 +2596,14 @@ async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
         `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}`,
         () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession })
     );
-    return response.clone();
+    const clientResponse = response.clone();
+    // The internal cache is keyed by the server's login state. Browser caches
+    // cannot observe that scope, so never let them retain account-derived data.
+    const headers = new Headers(clientResponse.headers);
+    headers.set("Cache-Control", "no-store");
+    return new Response(clientResponse.body, {
+        status: clientResponse.status, statusText: clientResponse.statusText, headers
+    });
 }
 
 async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession } = {}) {
@@ -2592,7 +2611,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v11-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v12-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2643,7 +2662,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
                 pages: [...resources, ...wpzysResources].map(entry => scannedPages.get(entry.url)
                     || { url: entry.url, source: entry.source, status: "unattempted" })
             }
-        }, isPartial ? 900 : 43200);
+        }, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
         return errorResponse(e);
     }
@@ -3063,8 +3082,35 @@ function wikiTitleMatches(query, title) {
 }
 
 function wikiYearMatches(year, text) {
-    const years = String(text || "").match(/(?:19|20)\d{2}/g) || [];
-    return !year || years.length === 0 || years.includes(year);
+    if (!year) return true;
+    const evidence = String(text || "");
+    const matches = [...evidence.matchAll(/(?:19|20)\d{2}/g)];
+    const possibleYears = [];
+    const workYears = [];
+    const workRole = /電視|电视|劇集|剧集|影集|電影|电影|首映|上映|首播|开播|開播|播出|發行|发行|\b(?:films?|movies?|television|series|released?|premiered?)\b/iu;
+    const incidentalRole = /修[复復]|重映|重新|再次|再版|重版|再[发發]行|获奖|獲獎|入[选選]|(?:获|獲|赢|贏).{0,16}(?:奖|獎)|\b(?:restor\w*|re[- ]?(?:releas\w*|issu\w*)|awards?|oscar|academy|won)\b/iu;
+
+    for (const [index, match] of matches.entries()) {
+        // Classify the year within its own clause. A nearby later year must
+        // not make a restoration or a director's award identify the film.
+        const prefix = evidence.slice(Math.max(0, match.index - 100), match.index).split(/[，,。;；]/u).at(-1);
+        const suffix = evidence.slice(match.index + 4, Math.min(matches[index + 1]?.index ?? evidence.length, match.index + 104))
+            .split(/[，,。;；]/u)[0];
+        const roleIndex = suffix.search(workRole);
+        const incidentalIndex = suffix.search(incidentalRole);
+        const releaseBeforeYear = /(?:首映|上映|首播|开播|開播|播出|發行|发行|\b(?:released?|premiered?)\b)\s*(?:于|於|在|in|on)?\s*$/iu.test(prefix)
+            && !incidentalRole.test(prefix);
+        if (!releaseBeforeYear && incidentalIndex >= 0 && (roleIndex < 0 || incidentalIndex < roleIndex)) continue;
+        if (!releaseBeforeYear && roleIndex < 0 && incidentalRole.test(prefix)) continue;
+
+        possibleYears.push(match[0]);
+        if (roleIndex >= 0 || releaseBeforeYear) workYears.push(match[0]);
+    }
+
+    // Prefer explicit definitions/release dates. Keep multiple genuine regional
+    // release years; do not guess a single year merely from their order.
+    const years = workYears.length ? workYears : possibleYears;
+    return matches.length === 0 || years.includes(year);
 }
 
 async function searchZhWikiTitle(query, deadline = null, { mediaType = null, year = "" } = {}) {
@@ -3101,7 +3147,7 @@ async function handleWikiZh(query, ctx, options = {}) {
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
 
-    const cacheKey = new Request(`https://wiki-zh-v4-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
+    const cacheKey = new Request(`https://wiki-zh-v5-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -3142,7 +3188,8 @@ async function handleWikiZh(query, ctx, options = {}) {
         if (summaryData.type === "disambiguation"
             || !summaryData.extract.trim()
             || !wikiTitleMatches(query, summaryData.title)
-            || !wikiYearMatches(year, `${getWikiTitleDisambiguator(summaryData.title)} ${descriptionEvidence}`)
+            || !wikiYearMatches(year, getWikiTitleDisambiguator(summaryData.title))
+            || !wikiYearMatches(year, descriptionEvidence)
             || !wikiYearMatches(year, introEvidence)
             || (mediaType && titleKind && titleKind !== mediaType)
             || (mediaType && summaryKind !== mediaType)) {
