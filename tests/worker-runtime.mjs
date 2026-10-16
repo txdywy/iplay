@@ -6,19 +6,21 @@ import { RELEASE_VERSION } from '../js/release.js';
 import { probeNativeRateLimit } from './helpers/native-rate-limit.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 import { tmdbDetail } from './fixtures/tmdb.js';
+import { loadProductionRuntimeConfig } from './helpers/worker-runtime-config.js';
 
 const { Response } = globalThis;
 
 // Real workerd execution, real Cache API/HTMLRewriter/rate-limit bindings.
 // All upstream requests are intercepted, so CI uses no credentials or network.
 const root = fileURLToPath(new URL('..', import.meta.url));
-const modules = await Promise.all(['worker/_worker.js', 'js/release.js'].map(async path => ({
-    type: 'ESModule', path: fileURLToPath(new URL(`../${path}`, import.meta.url)),
-    contents: await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+const productionConfig = loadProductionRuntimeConfig(fileURLToPath(new URL('../wrangler.toml', import.meta.url)));
+const modules = await Promise.all([productionConfig.main, fileURLToPath(new URL('../js/release.js', import.meta.url))].map(async path => ({
+    type: 'ESModule', path,
+    contents: await readFile(path, 'utf8')
 })));
 const checks = [];
 const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
-const bindings = { ENVIRONMENT: 'production', TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
+const bindings = { ...productionConfig.bindings, TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
 let wpzyMode = 'public';
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
@@ -26,12 +28,11 @@ let wikiRemakeYear = '2005';
 const wikiIdentityCases = {
     '小说家的电影': { description: '2024年漫画改编电影', extract: '《小说家的电影》是一部2024年电影，改编自同名小说。' },
     '2001太空漫游': { description: '1968年电影', extract: '《2001太空漫游》是一部1968年电影。' },
-    'Runtime Adaptation': { description: '根据2024年小说改编的2005年电影', extract: '《Runtime Adaptation》是根据2024年小说改编的2005年电影。' }
+    'Runtime Adaptation': { description: '根据2024年小说改编的2005年电影', extract: '《Runtime Adaptation》是根据2024年小说改编的2005年电影。' },
+    'Runtime Restoration': { description: '美国科幻电影', extract: '《Runtime Restoration》是一部1984年上映、2021年修复重映的美国科幻电影。' },
+    'Runtime Award': { description: '美国科幻电影', extract: '《Runtime Award》是一部1984年电影，由2021年获奖的某导演执导。' }
 };
-const ratelimits = {
-    API_RATE_LIMITER: { namespace_id: '1001', simple: { limit: 60, period: 60 } },
-    RESOURCE_RATE_LIMITER: { namespace_id: '1002', simple: { limit: 10, period: 60 } }
-};
+const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
@@ -61,6 +62,7 @@ async function upstream(request) {
         await new Promise(resolve => setTimeout(resolve, 30));
         return url.pathname === '/api/discussions'
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
+            : wpzyMode === 'oversized' ? new Response(`https://pan.quark.cn/s/${'a'.repeat(1900000)}`)
             : wpzyMode === 'conflict' ? new Response('https://pan.quark.cn/s/runtime-shared?pwd=AAAA')
             : new Response('<p>链接：https://pan.quark.cn/s/runtime42 提取码：abcd</p>'
                 + '<p>链接：<a href="https://pan.quark.cn/s/runtime-formatted">夸克资源</a><b>提取码：</b><span>e5F6</span></p>'
@@ -76,6 +78,7 @@ async function upstream(request) {
             return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
+        if (wpzyMode === 'oversized') return new Response(`https://pan.quark.cn/s/${'b'.repeat(1900000)}`);
         if (wpzyMode === 'detail-maintenance') return new Response('<title>Service unavailable</title><h1>Maintenance in progress</h1>');
         if (wpzyMode === 'conflict') return new Response('https://pan.quark.cn/s/runtime-shared?pwd=BBBB');
         if (wpzyMode === 'pairing') return new Response('<p>链接：https://pan.quark.cn/s/wpzy-private 提取码：w7P8</p>'
@@ -105,7 +108,11 @@ async function upstream(request) {
     throw new Error(`Unexpected runtime-test upstream: ${url.hostname}${url.pathname}`);
 }
 
-const options = { modules, modulesRoot: root, compatibilityDate: '2024-04-23', bindings, ratelimits, outboundService: upstream };
+const options = {
+    modules, modulesRoot: root, bindings, ratelimits, outboundService: upstream,
+    compatibilityDate: productionConfig.compatibilityDate,
+    compatibilityFlags: productionConfig.compatibilityFlags
+};
 const runtime = new Miniflare(convertV4MiniflareOptions(options));
 const request = (path, ip = 'runtime-core') => runtime.dispatchFetch(`https://worker.test${path}`, {
     headers: { Origin: 'https://iplay.hackx64.eu.org', 'cf-connecting-ip': ip }
@@ -250,7 +257,7 @@ try {
     const expiredData = await expired.json();
     assert.equal(expiredData.partial, true);
     assert.equal(expiredData.resourceMeta.providerIssues.wpzys, 'login_required');
-    assert.equal(expired.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(expired.headers.get('cache-control'), 'no-store');
     checks.push('wpzy-login-expiry-fails-closed');
 
     wpzyMode = 'maintenance';
@@ -260,7 +267,7 @@ try {
     assert.equal(maintenanceData.partial, true);
     assert.equal(maintenanceData.resourceMeta.providers.wpzys, 'failed');
     assert.equal(maintenanceData.resourceMeta.providerIssues.wpzys, 'upstream_unavailable');
-    assert.equal(maintenance.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(maintenance.headers.get('cache-control'), 'no-store');
     checks.push('wpzy-maintenance-fails-closed');
 
     wpzyMode = 'detail-maintenance';
@@ -270,7 +277,7 @@ try {
     assert.equal(detailMaintenanceData.partial, true);
     assert.equal(detailMaintenanceData.resourceMeta.failedPages, 1);
     assert.equal(detailMaintenanceData.wpzysResources.length, 1);
-    assert.equal(detailMaintenance.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(detailMaintenance.headers.get('cache-control'), 'no-store');
     checks.push('detail-maintenance-keeps-source-and-short-cache');
 
     wpzyMode = 'empty';
@@ -279,8 +286,21 @@ try {
     assert.equal(emptyData.partial, false);
     assert.equal(emptyData.resourceMeta.providers.wpzys, 'ok');
     assert.deepEqual(emptyData.wpzysResources, []);
-    assert.equal(empty.headers.get('cache-control'), 'public, max-age=43200');
+    assert.equal(empty.headers.get('cache-control'), 'no-store');
     checks.push('wpzy-recognized-empty-search');
+
+    wpzyMode = 'oversized';
+    const boundedResource = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-bounded-response');
+    assert.equal(boundedResource.status, 200);
+    assert.equal(boundedResource.headers.get('cache-control'), 'no-store');
+    const boundedText = await boundedResource.text();
+    assert.ok(new globalThis.TextEncoder().encode(boundedText).byteLength < 10000, 'oversized upstream URLs must not amplify the aggregate response');
+    const boundedData = JSON.parse(boundedText);
+    assert.deepEqual(boundedData.quarkUrls, []);
+    assert.equal(boundedData.resources.length, 1);
+    assert.equal(boundedData.wpzysResources.length, 1);
+    assert.ok(boundedData.resourceMeta.pages.every(page => page.quarkUrls.length === 0));
+    checks.push('bounded-resource-response-and-preserved-sources');
     wpzyMode = 'public';
 
     const failedDetail = await request('/api/tmdb/detail?id=604&type=movie', 'runtime-safe-errors');
@@ -323,6 +343,15 @@ try {
     assert.equal(wrongAdaptation.headers.get('cache-control'), 'no-store');
     await wrongAdaptation.json();
     checks.push('wiki-title-words-and-adapted-source-year-isolation');
+
+    for (const title of ['Runtime Restoration', 'Runtime Award']) {
+        for (const [year, expectedStatus] of [['1984', 200], ['2021', 404]]) {
+            const response = await request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=${year}`, 'runtime-wiki-incidental-years');
+            assert.equal(response.status, expectedStatus, `${title}: ${year}`);
+            await response.json();
+        }
+    }
+    checks.push('wiki-restoration-and-award-year-isolation');
 
     const limited = await probeNativeRateLimit(ip => request('/not-found', ip), {
         limit: ratelimits.API_RATE_LIMITER.simple.limit,

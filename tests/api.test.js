@@ -116,7 +116,26 @@ test('resource and poster retries request fresh Worker data', async t => {
     assert.match(requestedUrls[1], /\/api\/poster\?title=retry%20me&year=2024&refresh=1$/);
     assert.equal(requestedUrls[2], requestedUrls[0]);
     assert.equal(requestedUrls[3], requestedUrls[1]);
-    assert.deepEqual(cacheModes, ['no-store', 'no-store', 'no-store', 'no-store', undefined, undefined]);
+    assert.deepEqual(cacheModes, ['no-store', 'no-store', 'no-store', 'no-store', 'no-store', undefined]);
+});
+
+test('resource requests reach the Worker after provider access changes even with an old browser cache', async t => {
+    const browserCache = new Map();
+    let accessible = true;
+    let workerRequests = 0;
+    t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+        if (options.cache !== 'no-store' && browserCache.has(url)) return Response.json(browserCache.get(url));
+        workerRequests += 1;
+        const result = { quarkUrls: accessible ? [{ url: 'https://pan.quark.cn/s/previous-session' }] : [] };
+        // Represents an HTTP entry saved by a previously deployed client.
+        browserCache.set(url, result);
+        return Response.json(result);
+    });
+    assert.equal((await ResourceAPI.search('same version')).quarkUrls.length, 1);
+    accessible = false;
+    assert.deepEqual((await ResourceAPI.search('same version')).quarkUrls, []);
+    assert.deepEqual((await ResourceAPI.search('same version', { cache: 'force-cache' })).quarkUrls, []);
+    assert.equal(workerRequests, 3, 'each request must consult current Worker access and its isolated internal cache');
 });
 
 test('API client timeout aborts a request after the documented default', async t => {

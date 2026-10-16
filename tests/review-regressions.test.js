@@ -312,7 +312,7 @@ test('HTTP 200 challenge detail pages are reported as incomplete resource scans'
     const data = await response.json();
     assert.equal(data.partial, true);
     assert.equal(data.resourceMeta.failedPages, 1);
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
 test('HTTP 200 resource detail maintenance pages stay partial and recoverable for both providers', async t => {
@@ -334,7 +334,7 @@ test('HTTP 200 resource detail maintenance pages stay partial and recoverable fo
         assert.equal(data.resourceMeta.failedPages, 1, provider);
         assert.equal(data.resources.length + data.wpzysResources.length, 1, provider);
         assert.deepEqual(data.quarkUrls, []);
-        assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+        assert.equal(response.headers.get('cache-control'), 'no-store');
     }
 });
 

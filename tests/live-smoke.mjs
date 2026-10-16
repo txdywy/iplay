@@ -103,7 +103,10 @@ for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&typ
     if (response.ok) {
         if (path.startsWith('/api/omdb')) assert.equal(data.imdbId, 'tt0133093');
         if (path.startsWith('/api/wiki')) assert.ok(typeof data.extract === 'string');
-        if (path.startsWith('/api/resource')) assert.ok(Array.isArray(data.quarkUrls) && data.resourceMeta);
+        if (path.startsWith('/api/resource')) {
+            assert.ok(Array.isArray(data.quarkUrls) && data.resourceMeta);
+            assert.equal(response.headers.get('cache-control'), 'no-store', 'resource responses must not reuse revoked provider access in browser caches');
+        }
     } else {
         assert.ok([404, 429, 502, 503, 504].includes(response.status) && data.error);
     }

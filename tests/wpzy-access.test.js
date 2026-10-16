@@ -55,19 +55,20 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     assert.equal(body.quarkUrls[0]?.sourceUrl, 'https://wpzy.org/thread-201.htm');
     assert.ok(requests.filter(request => request.url.startsWith('https://by669.org/')).every(request => request.cookie === null));
     assert.ok(requests.every(request => request.method === 'GET'));
-    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v11-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
+    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v12-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
 });
 
 test('WPZY login redirects are failures, not cached empty successes', async t => {
-    const { search, requests } = setup(t, () => new Response(null, {status:302,headers:{Location:'user-login.htm'}}));
+    const { search, requests, entries } = setup(t, () => new Response(null, {status:302,headers:{Location:'user-login.htm'}}));
     const { response, body } = await search();
     assert.equal(response.status, 200);
     assert.equal(body.partial, true);
     assert.equal(body.resourceMeta.providers.wpzys, 'failed');
     assert.equal(body.resourceMeta.providerIssues.wpzys, 'login_required');
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=900');
     assert.ok(!requests.some(request => request.url.includes('user-login')));
 });
 
@@ -79,30 +80,33 @@ test('WPZY HTTP 200 login forms are not mistaken for no matching resources', asy
 });
 
 test('WPZY HTTP 200 maintenance pages are recoverable provider failures, not healthy empty searches', async t => {
-    const { search } = setup(t, () => new Response('<html><title>网站维护</title><p>请求过于频繁，请稍后重试。</p></html>'));
+    const { search, entries } = setup(t, () => new Response('<html><title>网站维护</title><p>请求过于频繁，请稍后重试。</p></html>'));
     const { response, body } = await search();
     assert.equal(response.status, 200);
     assert.equal(body.partial, true);
     assert.equal(body.resourceMeta.providers.wpzys, 'failed');
     assert.equal(body.resourceMeta.providerIssues.wpzys, 'upstream_unavailable');
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=900');
 });
 
 test('recognized WPZY empty search results remain healthy and cacheable', async t => {
-    const { search } = setup(t, () => new Response(WPZY_EMPTY_SEARCH_HTML));
+    const { search, entries } = setup(t, () => new Response(WPZY_EMPTY_SEARCH_HTML));
     const { response, body } = await search();
     assert.equal(body.partial, false);
     assert.equal(body.resourceMeta.providers.wpzys, 'ok');
     assert.deepEqual(body.wpzysResources, []);
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=43200');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=43200');
 });
 
 test('unknown WPZY HTTP 200 documents do not qualify as empty search results', async t => {
-    const { search } = setup(t, () => new Response('<html>No matching resources</html>'));
+    const { search, entries } = setup(t, () => new Response('<html>No matching resources</html>'));
     const { response, body } = await search();
     assert.equal(body.resourceMeta.providers.wpzys, 'failed');
     assert.equal(body.partial, true);
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=900');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=900');
 });
 
 test('valid WPZY results without Quark links are not provider failures', async t => {
@@ -115,7 +119,7 @@ test('valid WPZY results without Quark links are not provider failures', async t
 
 test('a cached WPZY maintenance result can be refreshed after upstream recovery', async t => {
     let recovered = false;
-    const { search, requests } = setup(t, url => new Response(!recovered
+    const { search, requests, entries } = setup(t, url => new Response(!recovered
         ? '<title>网站维护</title>'
         : url.pathname === '/search.htm' ? thread(902) : 'https://pan.quark.cn/s/recovered'));
     assert.equal((await search()).body.partial, true);
@@ -126,7 +130,8 @@ test('a cached WPZY maintenance result can be refreshed after upstream recovery'
     const { response, body } = await search(LOGIN_COOKIE, { refresh: true });
     assert.equal(body.partial, false);
     assert.equal(body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/recovered');
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=43200');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=43200');
 });
 
 test('WPZY restricted posts retain source cards without extracting gated links', async t => {

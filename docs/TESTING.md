@@ -13,7 +13,7 @@ iPlay 目前采用轻量级测试策略：
 - **CI 测试命令**: `npm test` = `node --test && npm run lint && npm run build`
 - **单元测试框架**: Node.js 内置测试运行器（无需 Jest / Vitest）
 - **浏览器烟测**: `tests/browser-smoke.mjs`，通过 Chrome DevTools Protocol 覆盖关键页面行为
-- **原生 Workers 验证**: `npm run test:runtime`，实际运行 workerd、Cache API、HTMLRewriter 和限流 bindings；上游请求全部拦截，无需真实密钥。
+- **原生 Workers 验证**: `npm run test:runtime`，从真实 `wrangler.toml` 读取入口、变量、兼容日期/flags 和限流配置，实际运行 workerd、Cache API、HTMLRewriter 和限流 bindings；上游请求全部拦截，无需真实密钥。
 - **CI 版本矩阵**: Node.js 22 / 24，生产打包和原生运行时检查在 Node.js 22 执行。
 - **代码检查**: ESLint（flat config，`eslint.config.mjs`）
 - **覆盖率命令**: `npm run test:coverage`
@@ -46,6 +46,7 @@ iPlay 目前采用轻量级测试策略：
 | 详情重试保留 | 首次详情失败但补充评分和简介成功，再次重试并模拟补充服务失败 | 等待和失败时保留旧资料；同身份恢复后仍保留，片名/年份或 IMDb ID 改变时清除对应旧资料 |
 | 资源补全恢复 | 展开部分资源列表，模拟补全请求加载缓慢并失败 | 链接、复制密码及展开状态保留；补全按钮在请求期间禁用，失败后可继续重试 |
 | 完整资源可达 | 返回 100 个分享、两组各 20 个来源，展开三个列表 | 首屏各显示 6 项，展开后全部可访问，第 100 个分享仍能复制密码 |
+| 长资源标题与键盘 | 使用连续长文件名，在 390px 视口按 Enter 展开、Tab 前进、Space 收起 | 完整文字换行且页面不横向溢出；展开进入第一个新分享及复制按钮，收起回展开控件，滚动位置保留 |
 | 夸克资源 | 查看资源区 | 分别显示 By669、WPZY 和提取出的夸克分享链接（如有） |
 | 空状态 | 搜索无结果关键词（如乱码） | 显示"未找到相关结果"提示 |
 | 加载状态 | 搜索时观察页面 | 显示旋转加载动画和“正在连接数据源”文字 |
@@ -75,6 +76,9 @@ iPlay 目前采用轻量级测试策略：
 | `tests/quark-urls.test.js` | 夸克 URL、转义内容与提取码解析去重 |
 | `tests/worker-api.test.js` | Worker 路由、参数校验、CORS、限流、缓存与资源提供方场景 |
 | `tests/fresh-quality.test.js` | 带年份/发行标签的完整片名、最长片名与错误年份、空身份参数零上游请求、旧版缺省类型兼容 |
+| `tests/resource-bounds.test.js` | 完整 token/URL 长度限制、12 个接近体积上限页面、来源元数据上限，以及内外缓存策略分离 |
+| `tests/wiki-year-evidence.test.js` | 原作与修复/重映/获奖年份分离、独立地区发行年份、标题显式年份冲突 |
+| `tests/worker-runtime-config.test.js` | 配置变更确实传入原生运行时，绑定名称/阈值/namespace、production 与变量保留政策退化被阻断 |
 
 ```bash
 npm test
@@ -90,7 +94,7 @@ BROWSER_WS='ws://127.0.0.1:9224/devtools/page/<page-id>' npm run test:browser
 
 烟测覆盖首屏搜索、资源区进入视口后的自动启动、资源失败重试与展开列表保留、所选演员 ID 的失败恢复、分享 ID 和媒体类型校验、详情片名/年份更新后的补充查询、旧搜索请求保护，以及不支持 `IntersectionObserver` 时的定时器回退。可直接运行 `npm run test:browser:ci` 自动启动隔离 Chrome 和本地静态服务器。
 
-1.0.15 包含 37 条命名浏览器流程，新增全部资源可达、详情重试保留及恢复后的身份校验。测试拦截 API 并阻止 Google Fonts 请求，避免外部字体服务阻塞冷启动；这组检查验证应用行为，不代表已验证字体 CDN 或所有第三方服务。生产数据由 `test:live` 单独验证，可设置 `LIVE_REQUIRE_WPZY=1` 要求 WPZY 搜索成功且至少验证一个公开帖中的分享链接。
+1.0.16 包含 38 条命名浏览器流程，覆盖全部资源可达、详情重试保留及恢复后的身份校验、长资源标题与真实键盘操作。测试拦截 API 并阻止 Google Fonts 请求，避免外部字体服务阻塞冷启动；这组检查验证应用行为，不代表已验证字体 CDN 或所有第三方服务。静态服务与 Chrome 调试端口准备检查对响应头和正文都设置实际截止期限。生产数据由 `test:live` 单独验证，可设置 `LIVE_REQUIRE_WPZY=1` 要求 WPZY 搜索成功且至少验证一个公开帖中的分享链接；资源响应另需确认对外 `no-store`。
 
 下面的 Vitest 示例仅用于团队未来需要 watch 模式或更丰富 mock API 时参考；当前项目不依赖 Vitest。
 
@@ -312,11 +316,12 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 
 - 首次请求：从上游 API 获取，响应时间较长
 - 重复请求：从缓存读取，响应时间显著缩短
-- 缓存 TTL：TMDB / 豆瓣 / OMDb / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
-- 资源搜索使用 `resource-search-v11-cache.local` 命名空间并包含内部登录态指纹；更换或撤销 WPZY Secret 不复用旧 Worker 缓存。页面状态与独立分享证据支持跨次重试；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
+- Worker 内部缓存 TTL：TMDB / 豆瓣 / OMDb / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
+- 资源搜索使用 `resource-search-v12-cache.local` 命名空间并包含内部登录态指纹；更换或撤销 WPZY Secret 不复用旧 Worker 缓存。页面状态与独立分享证据支持跨次重试；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
+- 资源响应在 miss/hit/refresh 时对浏览器均为 `no-store`，同时检查内部缓存副本仍保留 43200/900 秒；客户端默认也绕过历史 HTTP 缓存，不能只检查显式重试。
 - `tests/wpzy-access.test.js` 覆盖站点 Cookie 白名单、同源与跨提供方跳转、登录失效、回复/VIP 限制、别名归一化、只读路径和账号缓存隔离；测试使用虚构 Cookie，不需要真实登录态
 - 海报聚合使用 `poster-v4-cache.local` 命名空间；已配置来源部分失败时的可用结果只缓存 900 秒
-- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v4-cache.local`，并将媒体类型和年份纳入缓存键。前端资源和 Wiki 请求携带发布版本，隔离旧浏览器缓存。
+- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v5-cache.local`，并将媒体类型和年份纳入缓存键。前端资源和 Wiki 请求携带发布版本，隔离旧浏览器缓存。
 - `tests/review-regressions.test.js` 验证缺失/畸形人物作品、媒体演职员与外部 ID 数据不写入缓存、旧缓存重取及 Wikipedia 首句年份冲突；`test:runtime` 在真实 workerd 中验证这些失败不会阻止上游恢复。
 
 ---
