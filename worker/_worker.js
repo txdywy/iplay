@@ -283,7 +283,7 @@ const RESOURCE_MAX_REDIRECTS = 1;
 const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024;
 const RESOURCE_MAX_DETAIL_PAGES = 12;
 const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
-const RESOURCE_DETAIL_BATCH_SIZE = 6;
+const RESOURCE_DETAIL_CONCURRENCY = 6;
 const RESOURCE_MAX_PROVIDER_RESULTS = 50;
 const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
 const RESOURCE_MAX_QUARK_URLS_TOTAL = 100;
@@ -2490,62 +2490,68 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
-    const batchSize = RESOURCE_DETAIL_BATCH_SIZE;
     const maxPages = Math.min(resources.length, RESOURCE_MAX_DETAIL_PAGES);
     let failedPages = 0;
     let restrictedPages = 0;
     let loginRequiredPages = 0;
     let attemptedPages = 0;
     const pages = resources.map(entry => ({ url: entry.url, source: entry.source, status: "unattempted" }));
+    const results = [];
+    const foundUrls = new Set();
+    let nextIndex = 0;
+    async function scanPages() {
+        while (nextIndex < maxPages && !isDeadlineExpired(deadline) && foundUrls.size < RESOURCE_MAX_QUARK_URLS_TOTAL) {
+            const index = nextIndex++;
+            const entry = resources[index];
+            attemptedPages++;
+            try {
+                const value = await fetchResourcePageQuarkUrls(entry.url, entry.title,
+                    entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
+                results[index] = { status: "fulfilled", value };
+                for (const item of value) if (item.url) foundUrls.add(item.url);
+            } catch (reason) {
+                results[index] = { status: "rejected", reason };
+            }
+        }
+    }
+    // Refill free connections immediately, but reconcile in source order so
+    // network timing cannot choose a different password/source or result order.
+    await Promise.all(Array.from({ length: Math.min(RESOURCE_DETAIL_CONCURRENCY, maxPages) }, scanPages));
 
-    for (let index = 0; index < maxPages; index += batchSize) {
-        if (isDeadlineExpired(deadline) || quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) break;
-        const batch = resources.slice(index, Math.min(index + batchSize, maxPages));
-        attemptedPages += batch.length;
-        const quarkUrlGroups = await Promise.allSettled(
-            batch.map(entry => fetchResourcePageQuarkUrls(
-                entry.url,
-                entry.title,
-                entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`,
-                deadline,
-                wpzySession
-            ))
-        );
+    for (const [index, group] of results.entries()) {
+        if (!group) continue;
+        const page = pages[index];
+        if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
+            failedPages += 1;
+            if (group.reason?.resourceIssue === "access_restricted") restrictedPages += 1;
+            if (group.reason?.resourceIssue === "login_required") loginRequiredPages += 1;
+            page.status = group.reason?.resourceIssue === "access_restricted" ? "restricted"
+                : group.reason?.resourceIssue === "login_required" ? "login_required" : "failed";
+            continue;
+        }
 
-        for (const [batchIndex, group] of quarkUrlGroups.entries()) {
-            const page = pages[index + batchIndex];
-            if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
-                failedPages += 1;
-                if (group.reason?.resourceIssue === "access_restricted") restrictedPages += 1;
-                if (group.reason?.resourceIssue === "login_required") loginRequiredPages += 1;
-                page.status = group.reason?.resourceIssue === "access_restricted" ? "restricted"
-                    : group.reason?.resourceIssue === "login_required" ? "login_required" : "failed";
+        page.status = "ok";
+        // Keep each page's evidence independent of the global reconciliation:
+        // refreshes must be able to replace one page while retaining failed ones.
+        page.quarkUrls = group.value.map(item => serializeQuarkEntry(item, { includeRank: true }));
+
+        for (const item of group.value) {
+            if (!item.url) continue;
+            const existing = quarkUrlsByUrl.get(item.url);
+            if (existing) {
+                if (mergeQuarkPassword(existing, item)) {
+                    existing.title = item.title;
+                    existing.sourceUrl = item.sourceUrl;
+                    existing.sourceTitle = item.sourceTitle;
+                }
                 continue;
             }
-
-            page.status = "ok";
-            // Keep each page's evidence independent of the global reconciliation:
-            // refreshes must be able to replace one page while retaining failed ones.
-            page.quarkUrls = group.value.map(item => serializeQuarkEntry(item, { includeRank: true }));
-
-            for (const item of group.value) {
-                if (!item.url) continue;
-                const existing = quarkUrlsByUrl.get(item.url);
-                if (existing) {
-                    if (mergeQuarkPassword(existing, item)) {
-                        existing.title = item.title;
-                        existing.sourceUrl = item.sourceUrl;
-                        existing.sourceTitle = item.sourceTitle;
-                    }
-                    continue;
-                }
-                // The cap limits new results, not reconciliation of duplicates
-                // from pages already fetched in this batch.
-                if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) continue;
-                const entry = { ...item };
-                quarkUrlsByUrl.set(item.url, entry);
-                quarkUrls.push(entry);
-            }
+            // The cap limits new results, not reconciliation of duplicates
+            // from pages whose requests have already started.
+            if (quarkUrls.length >= RESOURCE_MAX_QUARK_URLS_TOTAL) continue;
+            const entry = { ...item };
+            quarkUrlsByUrl.set(item.url, entry);
+            quarkUrls.push(entry);
         }
     }
 

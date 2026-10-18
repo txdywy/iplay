@@ -37,7 +37,7 @@ test('release versions and cache-busted static imports stay consistent', () => {
     assert.equal(lockInfo.version, versionFile);
     assert.equal(lockInfo.packages[''].version, versionFile);
     assert.ok(indexHtml.includes(`./css/output.css?v=${versionFile}`));
-    assert.ok(indexHtml.includes(`./js/main.js?v=${versionFile}`));
+    assert.ok(indexHtml.includes(`./assets/app.min.js?v=${versionFile}`));
     const moduleNames = new Set(moduleSources.map(module => module.name));
     for (const { name, source } of moduleSources) {
         const imports = [...source.matchAll(/\b(?:from|import)\s*['"](\.\/[^'"]+)['"]/g)].map(match => match[1]);

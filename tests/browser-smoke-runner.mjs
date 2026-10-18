@@ -93,7 +93,9 @@ const serverPort = await findAvailablePort(configuredPort('SMOKE_PORT'));
 const debugPort = await findAvailablePort(configuredPort('SMOKE_DEBUG_PORT'));
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:' + serverPort + '/';
 const profileDir = await mkdtemp(join(tmpdir(), 'iplay-browser-smoke-'));
-const server = startProcess('python3', ['-m', 'http.server', String(serverPort), '--bind', '127.0.0.1']);
+const server = startProcess('python3', ['-m', 'http.server', String(serverPort), '--bind', '127.0.0.1'], {
+    cwd: process.env.SMOKE_SITE_ROOT || root
+});
 const chrome = startProcess(chromePath, [
     '--headless=new',
     '--no-sandbox',
@@ -114,7 +116,7 @@ try {
         { child: chrome }
     );
     const page = targets.find(target => target.type === 'page' && target.webSocketDebuggerUrl);
-    smoke = startProcess(process.execPath, ['tests/browser-smoke.mjs'], {
+    smoke = startProcess(process.execPath, [process.argv[2] || 'tests/browser-smoke.mjs'], {
         env: {
             ...process.env,
             BASE_URL: baseUrl,

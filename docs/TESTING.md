@@ -17,7 +17,7 @@ iPlay 目前采用轻量级测试策略：
 - **CI 版本矩阵**: Node.js 22 / 24，生产打包和原生运行时检查在 Node.js 22 执行。
 - **代码检查**: ESLint（flat config，`eslint.config.mjs`）
 - **覆盖率命令**: `npm run test:coverage`
-- **上线验证**: `npm run test:live`，显式请求生产站点，校验无版本参数的首页及带版本的 HTML、全部 JS 模块、CSS、VERSION 与本地逐字一致，以及 Worker 发布响应头、中英文/带年份片名搜索、电影/剧集 ID、人物分页、空身份参数拒绝与 CORS。可用 `LIVE_BASE_URL` / `LIVE_API_BASE` 指向其他部署。
+- **上线验证**: `npm run test:live`，显式请求生产站点，校验无版本参数的首页及带版本的 HTML、生产单文件入口、全部源码模块、CSS、VERSION 与本地逐字一致，以及 Worker 发布响应头、中英文/带年份片名搜索、电影/剧集 ID、人物分页、空身份参数拒绝与 CORS。可用 `LIVE_BASE_URL` / `LIVE_API_BASE` 指向其他部署。
 - **可选数据源**: 上线验证会单独报告 OMDb、Wikipedia、资源服务的可用/部分失败状态；不能把这些上游的暂时失败当作核心服务成功，也不会将其混同为代码部署失败。
 
 > 现有 `tests/` 覆盖 API 客户端、推荐算法、夸克链接处理和 Worker 路由。下文提供手动回归清单以及继续扩展自动化测试的参考。
@@ -79,6 +79,7 @@ iPlay 目前采用轻量级测试策略：
 | `tests/resource-bounds.test.js` | 完整 token/URL 长度限制、12 个接近体积上限页面、来源元数据上限，以及内外缓存策略分离 |
 | `tests/wiki-year-evidence.test.js` | 原作与修复/重映/获奖年份分离、独立地区发行年份、标题显式年份冲突 |
 | `tests/worker-runtime-config.test.js` | 配置变更确实传入原生运行时，绑定名称/阈值/namespace、production 与变量保留政策退化被阻断 |
+| `tests/resource-scheduling.test.js` | 慢页不阻塞队列续发、乱序返回保持密码证据和顺序、并发/数量/截止期限保持有界 |
 
 ```bash
 npm test
@@ -95,6 +96,20 @@ BROWSER_WS='ws://127.0.0.1:9224/devtools/page/<page-id>' npm run test:browser
 烟测覆盖首屏搜索、资源区进入视口后的自动启动、资源失败重试与展开列表保留、所选演员 ID 的失败恢复、分享 ID 和媒体类型校验、详情片名/年份更新后的补充查询、旧搜索请求保护，以及不支持 `IntersectionObserver` 时的定时器回退。可直接运行 `npm run test:browser:ci` 自动启动隔离 Chrome 和本地静态服务器。
 
 1.0.16 包含 38 条命名浏览器流程，覆盖全部资源可达、详情重试保留及恢复后的身份校验、长资源标题与真实键盘操作。测试拦截 API 并阻止 Google Fonts 请求，避免外部字体服务阻塞冷启动；这组检查验证应用行为，不代表已验证字体 CDN 或所有第三方服务。静态服务与 Chrome 调试端口准备检查对响应头和正文都设置实际截止期限。生产数据由 `test:live` 单独验证，可设置 `LIVE_REQUIRE_WPZY=1` 要求 WPZY 搜索成功且至少验证一个公开帖中的分享链接；资源响应另需确认对外 `no-store`。
+
+1.0.17 继续执行上述 38 条流程，页面使用实际压缩产物；演员分页额外断言旧卡片未被替换、筛选和重试仍正确。CI 会重新生成 CSS 和单文件入口并检查无差异。
+
+### 可重复性能验证
+
+```bash
+PERF_OUTPUT=/tmp/iplay-mobile.json PERF_TRACE=/tmp/iplay-mobile-trace.json npm run test:performance
+PERF_PROFILE=desktop PERF_OUTPUT=/tmp/iplay-desktop.json npm run test:performance
+PERF_OUTPUT=/tmp/iplay-worker.json npm run test:performance:worker
+```
+
+浏览器基准使用固定 API、字体隔离、3 次冷缓存加载、288 张演员卡片、真实点击事件与 100 项资源展开。默认 390×844、300ms 延迟、96 KiB/s 下载、6 倍 CPU 降速；桌面为 1280×900、40ms、1536 KiB/s、原生 CPU。`SMOKE_SITE_ROOT` 可指向历史静态快照，复用相同测量脚本；不操作用户日常浏览器。追踪为 Chrome JSON，可导入 DevTools。
+
+资源基准模拟 12 页，其中第 1/7 页各 600ms、其余 30ms，通过公开 Worker 路由验证结果顺序、12 页完成和并发不超过 6。所有性能数值均为实验室数据；单次 Event Timing 不是现场 INP。CI 验证功能和调度约束，不把硬件相关的绝对时延当作稳定门槛。
 
 下面的 Vitest 示例仅用于团队未来需要 watch 模式或更丰富 mock API 时参考；当前项目不依赖 Vitest。
 
@@ -384,7 +399,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: git diff --exit-code -- css/output.css
+      - run: git diff --exit-code -- css/output.css assets/app.min.js
       - run: npm run deploy:worker:dry-run
       - run: npm run test:runtime
       - uses: browser-actions/setup-chrome@v1

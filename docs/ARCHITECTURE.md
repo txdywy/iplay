@@ -13,6 +13,8 @@ iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV r
 
 ## High-Level Architecture
 
+Source modules under `js/` are built by esbuild into one versioned ES module, `assets/app.min.js`. GitHub Pages serves this committed artifact alongside the generated stylesheet. CI rebuilds both and rejects drift; the browser no longer discovers eight source imports after downloading the entry module. Actor pagination appends new cards to existing TV/movie groups, preserving loaded images, listeners and DOM identity.
+
 ```
 +---------------------------------------------------+
 |                    GitHub Pages                    |

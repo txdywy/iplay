@@ -24,6 +24,7 @@ iPlay 是一款拥有独特"暗黑电影院"复古美学的前端应用，结合
 
 ### Frontend (前端)
 - **核心框架**：HTML5 + Vanilla JavaScript (ES Modules)
+- **生产 JavaScript**：esbuild 将源码合并压缩为单个 `assets/app.min.js`，减少依赖发现瀑布和传输体积
 - **视觉样式**：Tailwind CSS CLI
 - **部署平台**：[GitHub Pages](https://pages.github.com/)
 - **特点**：前端结构轻量，样式通过本地 Tailwind CLI 生成
@@ -38,6 +39,8 @@ iPlay 是一款拥有独特"暗黑电影院"复古美学的前端应用，结合
 ```
 iplay/
 ├── index.html              # 主入口页面（暗黑影院主题 UI）
+├── assets/app.min.js        # 生成并提交的生产 JavaScript，勿手工修改
+├── scripts/build-frontend.mjs # 固定版本 esbuild 构建入口
 ├── css/
 │   ├── input.css           # Tailwind 主题配置（自定义颜色/字体）
 │   └── output.css          # Tailwind CLI 构建产物（已 minify）
@@ -92,7 +95,7 @@ iplay/
        ? 'http://localhost:8787'
        : 'https://iplay-api.yourname.workers.dev';
    ```
-3. 提交修改并推送到 GitHub。
+3. 运行 `npm run build`，提交源码及 `assets/app.min.js`、`css/output.css` 后推送到 GitHub。
 4. 将你的 GitHub Pages Origin（例如 `https://yourname.github.io`）加入 Worker 的 `CORS_ALLOWED_ORIGINS`。
 5. 在 GitHub 仓库的 **Settings** -> **Pages** 中，选择 `main` 分支作为 Source 进行部署即可。
 
@@ -132,12 +135,15 @@ const PREFERENCE_WEIGHTS = {
 
 | 命令 | 说明 |
 |------|------|
-| `npm run build` | 使用 Tailwind CSS CLI 构建生产样式 (`css/output.css`) |
+| `npm run build` | 构建生产样式与单文件 JavaScript (`css/output.css`、`assets/app.min.js`) |
+| `npm run build:js` | 使用锁定的 esbuild 0.28.2 重建生产 JavaScript |
 | `npm run lint` | 使用 ESLint 检查项目 JavaScript 代码规范 |
 | `npm run test:coverage` | 仅统计 Node.js 测试实际加载的 `js/` 和 `worker/` 源码；DOM 交互另由浏览器测试验证 |
 | `npm test` | 依次运行 Node.js 测试、lint 和生产构建 |
 | `npm run test:runtime` | 在真实 workerd 中验证生产 bindings、缓存、并发响应流、HTMLRewriter 和限流；上游使用本地 mock |
 | `npm run test:browser:ci` | 自动启动隔离 Chrome，验证移动端和桌面交互 |
+| `npm run test:performance` | 测量固定 API/字体隔离条件下的加载、分页和资源展开；`PERF_PROFILE=desktop` 切换桌面环境 |
+| `npm run test:performance:worker` | 以固定上游时延测量资源调度，无真实网络或凭据 |
 | `npm run test:live` | 核对生产 HTML、全部 JS 模块、CSS、版本和真实 API；单独报告可选来源可用性 |
 | `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.149.0 运行本地 Worker 或部署命令 |
 

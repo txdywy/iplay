@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.16';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.16';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.16';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.16';
-import { RELEASE_VERSION } from './release.js?v=1.0.16';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.17';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.17';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.17';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.17';
+import { RELEASE_VERSION } from './release.js?v=1.0.17';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.16';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.16';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.16';
+} from './match.js?v=1.0.17';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.17';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.17';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -305,40 +305,51 @@ function updateActorPaginationControls() {
             : '加载更多作品';
 }
 
-function renderActorCreditList() {
+function renderActorCreditList(newCredits = null) {
     const state = actorResultState;
     if (!state || !els.actorCreditList) return;
-    clearNode(els.actorCreditList);
+    const append = Array.isArray(newCredits) && Boolean(state.renderedGroups);
+    if (!append) {
+        clearNode(els.actorCreditList);
+        state.renderedGroups = new Map();
+    }
+    const credits = append ? newCredits : state.loadedCredits;
 
     const groups = [
         { mediaType: 'tv', label: '电视剧' },
         { mediaType: 'movie', label: '电影' }
     ].filter(group => !state.mediaType || group.mediaType === state.mediaType);
-    const fragment = document.createDocumentFragment();
     groups.forEach(group => {
-        const items = state.loadedCredits.filter(credit => credit.mediaType === group.mediaType);
+        const items = credits.filter(credit => credit.mediaType === group.mediaType);
         if (items.length === 0) return;
 
-        const section = document.createElement('section');
-        section.setAttribute('aria-labelledby', `actor-${group.mediaType}-title`);
-        const heading = document.createElement('h3');
-        heading.id = `actor-${group.mediaType}-title`;
-        heading.className = 'mb-3 flex items-baseline gap-3 text-lg font-bold text-cinema-100';
-        heading.textContent = group.label;
-        const count = document.createElement('span');
-        count.className = 'font-mono text-xs font-normal tracking-widest text-cinema-400';
-        count.textContent = String(items.length).padStart(2, '0');
-        heading.appendChild(count);
-
-        const grid = document.createElement('div');
-        grid.className = 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
-        items.forEach(credit => grid.appendChild(createActorCreditCard(credit, state.query, state.searchId, state.searchOptions)));
-        section.appendChild(heading);
-        section.appendChild(grid);
-        fragment.appendChild(section);
+        let rendered = state.renderedGroups.get(group.mediaType);
+        if (!rendered) {
+            const section = document.createElement('section');
+            section.setAttribute('aria-labelledby', `actor-${group.mediaType}-title`);
+            const heading = document.createElement('h3');
+            heading.id = `actor-${group.mediaType}-title`;
+            heading.className = 'mb-3 flex items-baseline gap-3 text-lg font-bold text-cinema-100';
+            heading.textContent = group.label;
+            const count = document.createElement('span');
+            count.className = 'font-mono text-xs font-normal tracking-widest text-cinema-400';
+            heading.appendChild(count);
+            const grid = document.createElement('div');
+            grid.className = 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
+            section.append(heading, grid);
+            // A later page may introduce TV credits after a movie-only page.
+            const nextSection = group.mediaType === 'tv' ? state.renderedGroups.get('movie')?.section : null;
+            els.actorCreditList.insertBefore(section, nextSection || null);
+            rendered = { section, grid, count, size: 0 };
+            state.renderedGroups.set(group.mediaType, rendered);
+        }
+        const fragment = document.createDocumentFragment();
+        items.forEach(credit => fragment.appendChild(createActorCreditCard(credit, state.query, state.searchId, state.searchOptions)));
+        rendered.grid.appendChild(fragment);
+        rendered.size += items.length;
+        rendered.count.textContent = String(rendered.size).padStart(2, '0');
     });
 
-    els.actorCreditList.appendChild(fragment);
     if (state.loadedCredits.length === 0 && !state.loading) {
         showActorNotice(`当前筛选没有可显示的${state.mediaType === 'tv' ? '电视剧' : state.mediaType === 'movie' ? '电影' : '作品'}。`);
     }
@@ -391,7 +402,7 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
         state.counts = result?.counts || state.counts;
         state.hasMore = Boolean(result?.hasMore);
         state.loading = false;
-        renderActorCreditList();
+        renderActorCreditList(reset ? null : credits);
         updateActorFilterControls();
         updateActorPaginationControls();
         setText(els.actorMeta, `已显示 ${state.loadedCredits.length} / 共 ${state.totalResults} 部出演作品，点击作品查看完整详情`);

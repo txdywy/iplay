@@ -23,7 +23,7 @@ npm ci
 npm run build
 ```
 
-`npm run build` 会把 `css/input.css` 编译为 `css/output.css`，前端页面依赖这个生成文件显示完整样式。
+`npm run build` 生成 `css/output.css` 与 `assets/app.min.js`。浏览器执行单文件生产入口，源码仍在 `js/` 中以 ES Modules 维护；修改 JavaScript 后也必须重建，不能只刷新旧产物。构建工具 esbuild 0.28.2 原已由 Wrangler 锁定，本项目将其列为直接开发依赖，没有新增浏览器运行时依赖。
 
 Tailwind 仅扫描 `index.html` 和 `js/` 中的生产类名，避免测试和审查文档影响样式产物；新增页面入口时需在 `css/input.css` 注册对应 `@source`。配置依据 [Tailwind 源文件检测说明](https://tailwindcss.com/docs/detecting-classes-in-source-files#disabling-automatic-detection)。
 
@@ -35,6 +35,8 @@ Tailwind 仅扫描 `index.html` 和 `js/` 中的生产类名，避免测试和�
 |------|------|
 | `index.html` | 单页应用入口，负责承载整体布局与资源引用 |
 | `js/main.js` | 前端主逻辑：搜索、渐进渲染、资源状态、偏好设置 |
+| `scripts/build-frontend.mjs` | 合并、压缩前端源码，目标为浏览器 ES2022 |
+| `assets/app.min.js` | 已生成的生产入口，不手工编辑；CI 检查重建结果一致 |
 | `js/api.js` | Worker API 客户端封装 |
 | `js/resources.js` | 资源页面快照合并、查询身份与密码冲突处理 |
 | `js/quark.js` | 夸克链接与提取码复制文本格式化 |
@@ -52,7 +54,7 @@ Tailwind 仅扫描 `index.html` 和 `js/` 中的生产类名，避免测试和�
 ### 常见工作流
 
 1. 修改 `index.html`、`js/main.js`、`js/api.js` 或 `js/scorer.js`
-2. 运行 `npm run build` 重新生成样式
+2. 运行 `npm run build` 重新生成样式和 JavaScript，或仅用 `npm run build:js` 更新脚本
 3. 在浏览器中刷新页面验证交互
 4. 使用浏览器开发者工具查看网络请求与控制台日志
 
@@ -111,13 +113,16 @@ npm run wrangler -- dev
 
 | 命令 | 作用 |
 |------|------|
-| `npm run build` | 构建 Tailwind CSS 输出文件 |
+| `npm run build` | 构建生产 CSS 和 JavaScript |
+| `npm run build:js` | 单独重建前端脚本 |
 | `npm run lint` | 运行 ESLint |
 | `npm run test:coverage` | 仅统计 Node.js 测试实际加载的 `js/` 和 `worker/` 源码覆盖率 |
 | `npm test` | 依次运行 Node.js 测试、lint 和 build |
 | `npm run test:runtime` | 用真实 workerd 验证生产限流、缓存、HTMLRewriter 和并发响应；不访问外部上游 |
 | `npm run test:browser:ci` | 自动启动隔离 Chrome 验证交互 |
 | `npm run test:live` | 核对线上前后端版本、静态文件与真实 API |
+| `npm run test:performance` | 运行可重复的浏览器性能场景，输出 JSON；可设 `PERF_OUTPUT` / `PERF_TRACE` 保存结果与 Chrome 追踪 |
+| `npm run test:performance:worker` | 使用模拟上游测量资源请求调度 |
 
 ### 推荐顺序
 

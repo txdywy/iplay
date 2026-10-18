@@ -48,7 +48,7 @@ jobs:
         run: npm run wrangler -- deploy --dry-run --strict
 
       - name: Test, lint, and build before deployment
-        run: npm test && git diff --exit-code -- css/output.css
+        run: npm test && git diff --exit-code -- css/output.css assets/app.min.js
 
       - name: Validate native Workers runtime
         run: npm run test:runtime

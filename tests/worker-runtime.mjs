@@ -25,6 +25,10 @@ let wpzyMode = 'public';
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
 let wikiRemakeYear = '2005';
+let poolFirst;
+let poolSeventhStarted;
+let poolActive = 0;
+let poolPeak = 0;
 const wikiIdentityCases = {
     '小说家的电影': { description: '2024年漫画改编电影', extract: '《小说家的电影》是一部2024年电影，改编自同名小说。' },
     '2001太空漫游': { description: '1968年电影', extract: '《2001太空漫游》是一部1968年电影。' },
@@ -59,6 +63,16 @@ async function upstream(request) {
     }
     if (url.hostname === 'by669.org') {
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
+        if (wpzyMode === 'scheduling') {
+            if (url.pathname === '/api/discussions') return Response.json({ data: Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1), attributes: { title: 'Runtime Movie 夸克' } })) });
+            const page = Number(url.pathname.split('/').at(-1));
+            poolPeak = Math.max(poolPeak, ++poolActive);
+            try {
+                if (page === 1) await poolFirst;
+                if (page === 7) poolSeventhStarted(true);
+                return new Response(`https://pan.quark.cn/s/runtime-pool-${page}`);
+            } finally { poolActive--; }
+        }
         await new Promise(resolve => setTimeout(resolve, 30));
         return url.pathname === '/api/discussions'
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
@@ -74,7 +88,7 @@ async function upstream(request) {
         if (url.pathname === '/search.htm') {
             if (wpzyMode === 'login') return new Response(null, {status:302,headers:{Location:'user-login.htm'}});
             if (wpzyMode === 'maintenance') return new Response('<title>网站维护</title><p>请求过于频繁，请稍后重试</p>');
-            if (wpzyMode === 'empty') return new Response(WPZY_EMPTY_SEARCH_HTML);
+            if (wpzyMode === 'empty' || wpzyMode === 'scheduling') return new Response(WPZY_EMPTY_SEARCH_HTML);
             return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
@@ -302,6 +316,31 @@ try {
     assert.ok(boundedData.resourceMeta.pages.every(page => page.quarkUrls.length === 0));
     checks.push('bounded-resource-response-and-preserved-sources');
     wpzyMode = 'public';
+
+    let releasePoolFirst;
+    poolFirst = new Promise(resolve => { releasePoolFirst = resolve; });
+    const seventhStarted = new Promise(resolve => { poolSeventhStarted = resolve; });
+    wpzyMode = 'scheduling';
+    const poolRequest = request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-resource-pool');
+    let poolData;
+    let poolTimer;
+    try {
+        const refilled = await Promise.race([seventhStarted, new Promise(resolve => {
+            poolTimer = setTimeout(() => resolve(false), 3000);
+        })]);
+        assert.equal(refilled, true, 'native fetches must refill a free slot before the slow first page finishes');
+    } finally {
+        globalThis.clearTimeout(poolTimer);
+        releasePoolFirst();
+        const response = await poolRequest;
+        assert.equal(response.status, 200);
+        poolData = await response.json();
+        wpzyMode = 'public';
+    }
+    assert.ok(poolPeak <= 6);
+    assert.equal(poolData.resourceMeta.attemptedPages, 12);
+    assert.deepEqual(poolData.quarkUrls.map(item => item.url), Array.from({ length: 12 }, (_, i) => `https://pan.quark.cn/s/runtime-pool-${i + 1}`));
+    checks.push('refilling-resource-pool-and-deterministic-order');
 
     const failedDetail = await request('/api/tmdb/detail?id=604&type=movie', 'runtime-safe-errors');
     assert.equal(failedDetail.status, 503);
