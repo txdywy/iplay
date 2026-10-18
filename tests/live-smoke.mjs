@@ -27,11 +27,12 @@ const homepage = await fetchLive(new URL(site));
 assert.equal(homepage.status, 200, 'unversioned homepage');
 assert.equal(await homepage.text(), await readFile(new URL('../index.html', import.meta.url), 'utf8'), 'unversioned homepage: deployed entry differs');
 results.push({ check: 'unversioned-homepage', status: 'exact-release-match' });
-for (const path of ['index.html', ...frontendModules, 'css/output.css', 'VERSION']) {
+for (const path of ['index.html', 'assets/app.min.js', ...frontendModules, 'css/output.css', 'VERSION']) {
     const url = new URL(path, site);
     url.searchParams.set('v', release);
     const response = await fetchLive(url);
     assert.equal(response.status, 200, path);
+    if (path === 'assets/app.min.js') assert.match(response.headers.get('content-type') || '', /\b(?:javascript|ecmascript)\b/i, 'production entry must have a JavaScript MIME type');
     assert.equal(await response.text(), await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), `${path}: deployed asset differs from local release`);
     results.push({ check: path, status: 'exact-release-match' });
 }

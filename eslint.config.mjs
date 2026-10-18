@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 
 export default [
+  { ignores: ["assets/app.min.js"] },
   js.configs.recommended,
   {
     files: ["js/**/*.js"],

@@ -819,8 +819,15 @@ async function runActorPaginationFlow() {
     await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
     assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id]').length"), 2);
     assert.equal(await evaluate("document.querySelector('#actorLoadMore:not(.hidden)') !== null"), true);
+    await evaluate("window.__smoke.initialActorCards = Array.from(document.querySelectorAll('#actorCreditList button[data-media-id]'))");
     await evaluate("document.querySelector('#actorLoadMore')?.click()");
     await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 3");
+    assert.equal(await evaluate("window.__smoke.initialActorCards.every(card => card.isConnected && document.querySelector('#actorCreditList').contains(card))"), true,
+        'pagination must preserve existing cards, image state and listeners instead of rebuilding the whole filmography');
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#actorCreditList h3')).map(heading => heading.id)"), ['actor-tv-title', 'actor-movie-title'],
+        'a TV group introduced by a later page must still precede the existing movie group');
+    assert.equal(await evaluate("document.querySelector('#actor-tv-title span').textContent"), '01');
+    assert.equal(await evaluate("document.querySelector('#actor-movie-title span').textContent"), '02');
     assert.equal(await evaluate("document.querySelector('#actorLoadMore.hidden') !== null"), true);
 
     await evaluate("document.querySelector('#actorFilterMovie')?.click()");

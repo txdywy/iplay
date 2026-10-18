@@ -36,11 +36,11 @@ npm ci
 
 ### 本地开发流程
 
-1. **构建样式文件**：
+1. **构建前端产物**：
    ```bash
    npm run build
    ```
-   这会使用 Tailwind CSS CLI 生成 `css/output.css`。
+   这会生成 `css/output.css` 与 `assets/app.min.js`。修改 `js/` 后重新执行，提交源码和生成产物；CI 会检查两者一致，不手工修改压缩文件。
 
 2. **启动 Worker 本地开发**（使用搜索功能时需要）：
    ```bash

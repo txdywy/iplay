@@ -37,8 +37,8 @@ jobs:
       - name: Test, lint, and build
         run: npm test
 
-      - name: Verify generated CSS is committed
-        run: git diff --exit-code -- css/output.css
+      - name: Verify generated frontend assets are committed
+        run: git diff --exit-code -- css/output.css assets/app.min.js
 
       - name: Validate Worker production bundle
         if: matrix.node-version == 22

@@ -10,7 +10,7 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 
 - **前端**：GitHub Pages 静态托管
 - **后端**：Cloudflare Worker
-- **样式构建**：本地使用 Tailwind CSS CLI 生成 `css/output.css`
+- **前端构建**：生成并提交 `css/output.css` 与 `assets/app.min.js`，CI 检查重建结果一致
 - **运行时密钥**：由 Cloudflare Worker Secrets 提供
 
 ---
@@ -86,7 +86,7 @@ compatibility_date = "2024-04-23"
 
 ### 部署前准备
 
-1. 先构建样式：
+1. 先构建样式和 JavaScript：
 
 ```bash
 npm run build
@@ -207,5 +207,5 @@ Cloudflare Workers Builds 已连接此仓库：main 推送运行 Wrangler 生产
 - 合并前跑 `npm run test:browser:ci`，覆盖手机、桌面、实际评分显隐、分享恢复和降级重试。
 - Worker 变更先跑 `npm run wrangler -- dev`
 - 生产环境更新后，先验证一个中文片名，再验证一个英文片名
-- 发布时同步更新 `VERSION`、`package.json` / lockfile、`js/release.js`、`index.html` 和 `js/main.js` 中的 `?v=`；版本契约测试会检查这些入口，避免新旧模块混用。
-- GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 HTML、全部 JS 模块、CSS、VERSION 与本地发布逐字相同，Worker 的 `X-iPlay-Version` 一致且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。
+- 发布时同步更新 `VERSION`、`package.json` / lockfile、`js/release.js`、`index.html` 和 `js/` 中的 `?v=`，再运行 `npm run build` 生成对应版本的单文件入口；版本契约测试与 CI 产物检查共同防止新旧文件混用。
+- GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 HTML、`assets/app.min.js`、全部源码模块、CSS、VERSION 与本地发布逐字相同，Worker 的 `X-iPlay-Version` 一致且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。

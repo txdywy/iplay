@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.17] - 2026-10-18
+
+### Performance
+
+- Bundle and minify the frontend into one versioned ES module with locked esbuild 0.28.2, eliminating the eight-import discovery waterfall. Source modules remain editable; CI verifies committed JavaScript and CSS match a clean build.
+- Append actor filmography pages to existing groups instead of rebuilding every card. Loaded image state, listeners and card identity survive pagination; a newly introduced TV group retains its position before movies.
+- Refill resource detail requests as connections become available, with a maximum of six concurrent reads and twelve selected pages. Reconcile results in source order and retain password conflict, page evidence, result-cap and deadline behavior.
+
+### Verification
+
+- Add reproducible mobile/desktop browser benchmarks with optional Chrome traces, fixed-upstream Worker measurements, scheduler regressions and native workerd queue checks.
+- Browser regressions execute the actual production bundle and verify card preservation. Live release validation checks the generated entry as well as source modules.
+
 ## [1.0.16] - 2026-10-16
 
 ### Fixed
