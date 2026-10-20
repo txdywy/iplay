@@ -297,6 +297,7 @@ const MAX_SCHEDULED_REFRESH_TITLES = 20;
 const SEARCH_MAX_ATTEMPTS = 6;
 const SEARCH_MAX_RESULTS = 20;
 const SEARCH_MAX_ALIAS_QUERIES = 2;
+const SEARCH_SCORE_CACHE_MAX_PAIRS = 1024;
 const PERSON_DEFAULT_PAGE_SIZE = 36;
 const PERSON_MAX_PAGE_SIZE = 60;
 const SEARCH_ACCEPT_SCORE = 0.72;
@@ -1170,13 +1171,36 @@ function scoreSearchText(query, candidate) {
     return Math.min(0.9, editSimilarity(normalizedQuery, normalizedCandidate) * 0.9);
 }
 
+function createSearchTextScorer() {
+    // Re-ranking after a fallback must re-evaluate identity and intent, but
+    // the same query/title pair always has the same text score. Keep only
+    // bounded, request-owned values; raw string keys avoid joined copies of
+    // potentially long upstream titles.
+    const scores = new Map();
+    let pairCount = 0;
+    return (query, candidate) => {
+        let candidates = scores.get(query);
+        if (candidates?.has(candidate)) return candidates.get(candidate);
+        const score = scoreSearchText(query, candidate);
+        if (pairCount < SEARCH_SCORE_CACHE_MAX_PAIRS) {
+            if (!candidates) {
+                candidates = new Map();
+                scores.set(query, candidates);
+            }
+            candidates.set(candidate, score);
+            pairCount += 1;
+        }
+        return score;
+    };
+}
+
 function getSearchConfidence(score) {
     if (score >= 0.86) return "high";
     if (score >= 0.65) return "medium";
     return "low";
 }
 
-function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct") {
+function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct", scoreText = scoreSearchText) {
     if (!isValidTmdbSearchItem(item)) return null;
 
     const title = getTmdbTitle(item);
@@ -1187,7 +1211,7 @@ function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct") 
 
     for (const query of intent.matchQueries) {
         for (const [field, value] of [["title", title], ["originalTitle", originalTitle]]) {
-            const score = scoreSearchText(query, value);
+            const score = scoreText(query, value);
             if (score > bestScore) {
                 bestScore = score;
                 bestMethod = score === 1 ? `${field}-exact` : score >= 0.72 ? `${field}-contains` : `${field}-fuzzy`;
@@ -1217,7 +1241,7 @@ function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct") 
     };
 }
 
-function rankTmdbCandidates(entries, intent) {
+function rankTmdbCandidates(entries, intent, scoreText = scoreSearchText) {
     const unique = new Map();
     let sourceIndex = 0;
 
@@ -1239,7 +1263,7 @@ function rankTmdbCandidates(entries, intent) {
             mediaType,
             strategy: entry.strategy || "direct",
             sourceIndex,
-            match: entry.match || scoreTmdbCandidate(normalizedItem, scoringIntent, sourceIndex, entry.strategy || "direct")
+            match: entry.match || scoreTmdbCandidate(normalizedItem, scoringIntent, sourceIndex, entry.strategy || "direct", scoreText)
         };
         const existing = unique.get(key);
         if (!existing || candidate.match?.score > existing.match?.score) unique.set(key, candidate);
@@ -1623,6 +1647,7 @@ async function handleTmdbSearch(query, env, ctx) {
 
     try {
         const intent = buildSearchIntent(query);
+        const scoreText = createSearchTextScorer();
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
         const entries = [];
         const attempted = new Set();
@@ -1633,11 +1658,11 @@ async function handleTmdbSearch(query, env, ctx) {
 
         const runSearch = async (path, searchQuery, language, params = {}, mediaType = null, strategy = "direct") => {
             if (attempts >= SEARCH_MAX_ATTEMPTS || isDeadlineExpired(deadline) || stopFallback) {
-                return rankTmdbCandidates(entries, intent);
+                return rankTmdbCandidates(entries, intent, scoreText);
             }
 
             const attemptKey = JSON.stringify([path, searchQuery, language, params]);
-            if (attempted.has(attemptKey)) return rankTmdbCandidates(entries, intent);
+            if (attempted.has(attemptKey)) return rankTmdbCandidates(entries, intent, scoreText);
             attempted.add(attemptKey);
             attempts += 1;
 
@@ -1671,7 +1696,7 @@ async function handleTmdbSearch(query, env, ctx) {
                 stopFallback = shouldStopSearchFallback(error);
             }
 
-            return rankTmdbCandidates(entries, intent);
+            return rankTmdbCandidates(entries, intent, scoreText);
         };
 
         const isAccepted = ranked => (getTopSearchMatch(ranked)?.score || 0) >= SEARCH_ACCEPT_SCORE;
@@ -1683,7 +1708,7 @@ async function handleTmdbSearch(query, env, ctx) {
             try {
                 const data = await fetchTmdbFindByExternalId(imdbId, "zh-CN", env, ctx, { deadline });
                 successfulAttempt = true;
-                ranked = rankTmdbCandidates(getTmdbFindEntries(data), intent);
+                ranked = rankTmdbCandidates(getTmdbFindEntries(data), intent, scoreText);
                 return buildTmdbSearchResponse(ranked, intent, 1);
             } catch (error) {
                 logEvent("error", "tmdb_external_id_failed", { error: logErrorMessage(error) });
@@ -2138,17 +2163,13 @@ function mergeQuarkPassword(target, source) {
     return false;
 }
 
-function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
-    if (!text) return [];
-
-    const normalizedText = normalizeResourcePageText(text);
-    const links = [];
-    for (const match of normalizedText.matchAll(RESOURCE_LINK_PATTERN)) {
+function* iterateResourceLinks(text) {
+    for (const match of text.matchAll(RESOURCE_LINK_PATTERN)) {
         const isQuark = /^(?:https?:\/\/)?(?:pan|drive)\.quark\.cn\/s\//i.test(match[0]);
         const rawQuark = isQuark && match[0].length <= RESOURCE_MAX_URL_LENGTH
             ? match[0].match(QUARK_URL_PATTERN)?.[0] : null;
         const parsed = rawQuark ? parseQuarkUrl(rawQuark) : null;
-        links.push({
+        yield {
             index: match.index,
             end: match.index + match[0].length,
             url: parsed?.url,
@@ -2156,10 +2177,32 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
             ...(parsed?.password || parsed?._passwordConflict ? {
                 _passwordRank: 2, _passwordConflict: parsed._passwordConflict
             } : {})
-        });
+        };
     }
+}
 
-    let linkIndex = 0;
+function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
+    if (!text) return [];
+
+    const normalizedText = normalizeResourcePageText(text);
+    const links = iterateResourceLinks(normalizedText);
+    const entries = new Map();
+    const retainOccurrence = occurrence => {
+        if (!occurrence?.url) return;
+        const existing = entries.get(occurrence.url);
+        if (existing) {
+            mergeQuarkPassword(existing, occurrence);
+        } else if (entries.size < maxEntries) {
+            entries.set(occurrence.url, {
+                url: occurrence.url,
+                ...(occurrence.password ? { password: occurrence.password } : {}),
+                _passwordRank: occurrence._passwordRank,
+                _passwordConflict: occurrence._passwordConflict
+            });
+        }
+    };
+    let precedingLink = null;
+    let followingLink = links.next().value;
     for (const match of normalizedText.matchAll(QUARK_PASSWORD_PATTERN)) {
         if (!isValidQuarkPassword(match[1])) continue;
 
@@ -2167,11 +2210,16 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
         if (/(?:百度(?:网盘)?|迅雷|阿里(?:云盘|网盘)?|天翼(?:云盘)?|UC(?:网盘)?|115(?:网盘)?|123(?:云盘)?)\s*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 24), passwordIndex))) {
             continue;
         }
-        while (linkIndex < links.length && links[linkIndex].end <= passwordIndex) linkIndex += 1;
+        while (followingLink && followingLink.end <= passwordIndex) {
+            // Once another URL intervenes, future prose cannot belong to the
+            // preceding occurrence. Retain its evidence without keeping every
+            // foreign URL or duplicate share in a page-sized array.
+            retainOccurrence(precedingLink);
+            precedingLink = followingLink;
+            followingLink = links.next().value;
+        }
         // A label inside another URL's query is not prose for a nearby share.
-        if (links[linkIndex]?.index <= passwordIndex) continue;
-        const precedingLink = links[linkIndex - 1];
-        const followingLink = links[linkIndex];
+        if (followingLink?.index <= passwordIndex) continue;
         const previous = precedingLink && passwordIndex - precedingLink.end <= 160 ? precedingLink : null;
         const next = followingLink && followingLink.index - (passwordIndex + match[0].length) <= 160 ? followingLink : null;
         const textBeforeNext = next
@@ -2188,21 +2236,10 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
         if (target?.url) mergeQuarkPassword(target, { password: match[1], _passwordRank: 1 });
     }
 
-    const entries = new Map();
-    for (const occurrence of links) {
-        if (!occurrence.url) continue;
-        const existing = entries.get(occurrence.url);
-        if (!existing) {
-            if (entries.size >= maxEntries) continue;
-            entries.set(occurrence.url, {
-                url: occurrence.url,
-                ...(occurrence.password ? { password: occurrence.password } : {}),
-                _passwordRank: occurrence._passwordRank,
-                _passwordConflict: occurrence._passwordConflict
-            });
-        } else {
-            mergeQuarkPassword(existing, occurrence);
-        }
+    retainOccurrence(precedingLink);
+    while (followingLink) {
+        retainOccurrence(followingLink);
+        followingLink = links.next().value;
     }
 
     return Array.from(entries.values());

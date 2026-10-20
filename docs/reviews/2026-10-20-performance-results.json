@@ -1,0 +1,1267 @@
+{
+  "date": "2026-10-20",
+  "baselineCommit": "9a533773767ec6db4c6cd81bcd9c32a7d06c11be",
+  "release": "1.0.18",
+  "bundleBytes": {
+    "before": {
+      "raw": 75282,
+      "gzip": 22990,
+      "brotli": 19806
+    },
+    "after": {
+      "raw": 75883,
+      "gzip": 23261,
+      "brotli": 19970
+    }
+  },
+  "mobile": {
+    "before": {
+      "profile": {
+        "viewport": "390x844",
+        "latencyMs": 300,
+        "downloadKiB": 96,
+        "cpuSlowdown": 6,
+        "api": "fixtures",
+        "fonts": "blocked",
+        "browser": "Chrome/155.0.8059.85"
+      },
+      "cold": [
+        {
+          "lcp": 1412,
+          "cls": 0,
+          "ready": 1869.4000000953674,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 590.5999999046326,
+              "end": 1857,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 1284,
+          "cls": 0.0005391038455491187,
+          "ready": 1859.9000000953674,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 587.2000000476837,
+              "end": 1852.9000000953674,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 1284,
+          "cls": 0.0005391038455491187,
+          "ready": 1859.8999998569489,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 588.0999999046326,
+              "end": 1853.2999999523163,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        }
+      ],
+      "actor": {
+        "created": 288,
+        "removed": 0,
+        "cards": 288,
+        "longTasks": [
+          68
+        ],
+        "pagination": [
+          58.799999952316284,
+          36.700000047683716,
+          34.200000047683716,
+          41.59999990463257,
+          46.700000047683716,
+          86.79999995231628,
+          51.299999952316284
+        ],
+        "interaction": [
+          {
+            "name": "pointerdown",
+            "duration": 80,
+            "interactionId": 7269
+          },
+          {
+            "name": "pointerup",
+            "duration": 80,
+            "interactionId": 7269
+          },
+          {
+            "name": "click",
+            "duration": 80,
+            "interactionId": 7269
+          }
+        ]
+      },
+      "resourceExpansion": {
+        "duration": 114,
+        "nodes": 1202,
+        "width": 390
+      }
+    },
+    "after": {
+      "profile": {
+        "viewport": "390x844",
+        "latencyMs": 300,
+        "downloadKiB": 96,
+        "cpuSlowdown": 6,
+        "api": "fixtures",
+        "fonts": "blocked",
+        "browser": "Chrome/155.0.8059.85"
+      },
+      "cold": [
+        {
+          "lcp": 1336,
+          "cls": 0.0005391038455491187,
+          "ready": 1861.5,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 588.4000000953674,
+              "end": 1851.2999999523163,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 1276,
+          "cls": 0.0005391038455491187,
+          "ready": 1868,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 592.1000001430511,
+              "end": 1861.4000000953674,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 1300,
+          "cls": 0.0005391038455491187,
+          "ready": 1869.2999999523163,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 597.2000000476837,
+              "end": 1862.2999999523163,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        }
+      ],
+      "actor": {
+        "created": 288,
+        "removed": 0,
+        "cards": 288,
+        "longTasks": [],
+        "pagination": [
+          30.799999952316284,
+          32.299999952316284,
+          35.90000009536743,
+          34.200000047683716,
+          34.799999952316284,
+          54.5,
+          48.40000009536743
+        ],
+        "interaction": [
+          {
+            "name": "pointerdown",
+            "duration": 80,
+            "interactionId": 7513
+          },
+          {
+            "name": "pointerup",
+            "duration": 80,
+            "interactionId": 7513
+          },
+          {
+            "name": "click",
+            "duration": 80,
+            "interactionId": 7513
+          }
+        ]
+      },
+      "resourceExpansion": {
+        "duration": 111.40000009536743,
+        "nodes": 1202,
+        "width": 390
+      }
+    }
+  },
+  "desktop": {
+    "before": {
+      "profile": {
+        "viewport": "1280x900",
+        "latencyMs": 40,
+        "downloadKiB": 1536,
+        "cpuSlowdown": 1,
+        "api": "fixtures",
+        "fonts": "blocked",
+        "browser": "Chrome/155.0.8059.85"
+      },
+      "cold": [
+        {
+          "lcp": 164,
+          "cls": 0.000101568603515625,
+          "ready": 167.70000004768372,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 63,
+              "end": 165.70000004768372,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 156,
+          "cls": 0.000101568603515625,
+          "ready": 169.40000009536743,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 62,
+              "end": 167.70000004768372,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 164,
+          "cls": 0.000101568603515625,
+          "ready": 170.80000019073486,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.17",
+              "start": 64.90000009536743,
+              "end": 169.60000014305115,
+              "bytes": 75582
+            }
+          ],
+          "longTasks": []
+        }
+      ],
+      "actor": {
+        "created": 288,
+        "removed": 0,
+        "cards": 288,
+        "longTasks": [],
+        "pagination": [
+          31.799999952316284,
+          30.5,
+          33.59999990463257,
+          32.200000047683716,
+          33.299999952316284,
+          32.80000019073486,
+          32.69999980926514
+        ],
+        "interaction": [
+          {
+            "name": "pointerdown",
+            "duration": 64,
+            "interactionId": 9008
+          },
+          {
+            "name": "pointerup",
+            "duration": 64,
+            "interactionId": 9008
+          },
+          {
+            "name": "click",
+            "duration": 64,
+            "interactionId": 9008
+          }
+        ]
+      },
+      "resourceExpansion": {
+        "duration": 27.59999990463257,
+        "nodes": 1202,
+        "width": 1280
+      }
+    },
+    "after": {
+      "profile": {
+        "viewport": "1280x900",
+        "latencyMs": 40,
+        "downloadKiB": 1536,
+        "cpuSlowdown": 1,
+        "api": "fixtures",
+        "fonts": "blocked",
+        "browser": "Chrome/155.0.8059.85"
+      },
+      "cold": [
+        {
+          "lcp": 168,
+          "cls": 0.000101568603515625,
+          "ready": 171.29999995231628,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 61.799999952316284,
+              "end": 169.40000009536743,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 168,
+          "cls": 0.000101568603515625,
+          "ready": 172.39999985694885,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 63.59999990463257,
+              "end": 171.19999980926514,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        },
+        {
+          "lcp": 164,
+          "cls": 0.000101568603515625,
+          "ready": 175.39999985694885,
+          "js": [
+            {
+              "name": "app.min.js?v=1.0.18",
+              "start": 63.700000047683716,
+              "end": 174.09999990463257,
+              "bytes": 76183
+            }
+          ],
+          "longTasks": []
+        }
+      ],
+      "actor": {
+        "created": 288,
+        "removed": 0,
+        "cards": 288,
+        "longTasks": [],
+        "pagination": [
+          33.799999952316284,
+          32.90000009536743,
+          32.89999985694885,
+          32.40000009536743,
+          32.89999985694885,
+          32.89999985694885,
+          33.299999952316284
+        ],
+        "interaction": [
+          {
+            "name": "pointerdown",
+            "duration": 64,
+            "interactionId": 3805
+          },
+          {
+            "name": "pointerup",
+            "duration": 64,
+            "interactionId": 3805
+          },
+          {
+            "name": "click",
+            "duration": 64,
+            "interactionId": 3805
+          }
+        ]
+      },
+      "resourceExpansion": {
+        "duration": 22,
+        "nodes": 1202,
+        "width": 1280
+      }
+    }
+  },
+  "imageModel": {
+    "before": {
+      "model": "Local CDP fulfilment of real JPEG bytes; no external CDN timing claim. Three cards share one image. Cache disabled and cleared for each scenario.",
+      "encodedDataLengthNote": "CDP fulfilment may report zero encodedDataLength. fulfilledBodyBytes is the exact supplied JPEG payload model, separate from observed network accounting. naturalWidth is density-corrected by responsive image selection.",
+      "browser": "Chrome/155.0.8059.85",
+      "fonts": "blocked",
+      "imageFixtures": [
+        {
+          "width": 185,
+          "height": 278,
+          "bodyBytes": 21124,
+          "sha256": "b81f6d4a535e7ec415b754a5cee6a44c7473afc28c8741026af42159cb54bfc2",
+          "source": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        },
+        {
+          "width": 342,
+          "height": 513,
+          "bodyBytes": 69597,
+          "sha256": "b95e48e5bf32a8dd634d455e28bc90d0dcd3eec8ac63ccc376b3568e85ee84af",
+          "source": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        },
+        {
+          "width": 500,
+          "height": 750,
+          "bodyBytes": 141950,
+          "sha256": "51bdb204a9f0a7f65e9429d152e885c52016b925dba684429dae1dd88edec62f",
+          "source": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        }
+      ],
+      "scenarios": [
+        {
+          "name": "mobile-1x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 1,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 3.5211267605633805
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 3.5211267605633805
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 3.5211267605633805
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        },
+        {
+          "name": "mobile-2x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 2,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.7605633802816902
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.7605633802816902
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.7605633802816902
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        },
+        {
+          "name": "mobile-3x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 3,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        },
+        {
+          "name": "desktop-1x",
+          "width": 1280,
+          "height": 900,
+          "deviceScaleFactor": 1,
+          "mobile": false,
+          "cards": [
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 2.7423086811209187
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 2.7423086811209187
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 2.7423086811209187
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        },
+        {
+          "name": "desktop-2x",
+          "width": 1280,
+          "height": 900,
+          "deviceScaleFactor": 2,
+          "mobile": false,
+          "cards": [
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": null,
+              "sizes": null,
+              "naturalWidth": 500,
+              "naturalHeight": 750,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        }
+      ]
+    },
+    "after": {
+      "model": "Local CDP fulfilment of real JPEG bytes; no external CDN timing claim. Three cards share one image. Cache disabled and cleared for each scenario.",
+      "encodedDataLengthNote": "CDP fulfilment may report zero encodedDataLength. fulfilledBodyBytes is the exact supplied JPEG payload model, separate from observed network accounting. naturalWidth is density-corrected by responsive image selection.",
+      "browser": "Chrome/155.0.8059.85",
+      "fonts": "blocked",
+      "imageFixtures": [
+        {
+          "width": 185,
+          "height": 278,
+          "bodyBytes": 21124,
+          "sha256": "b81f6d4a535e7ec415b754a5cee6a44c7473afc28c8741026af42159cb54bfc2",
+          "source": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        },
+        {
+          "width": 342,
+          "height": 513,
+          "bodyBytes": 69597,
+          "sha256": "b95e48e5bf32a8dd634d455e28bc90d0dcd3eec8ac63ccc376b3568e85ee84af",
+          "source": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        },
+        {
+          "width": 500,
+          "height": 750,
+          "bodyBytes": 141950,
+          "sha256": "51bdb204a9f0a7f65e9429d152e885c52016b925dba684429dae1dd88edec62f",
+          "source": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+        }
+      ],
+      "scenarios": [
+        {
+          "name": "mobile-1x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 1,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 1.3028169014084507
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 1.3028169014084507
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 142,
+              "pixelCoverageRatio": 1.3028169014084507
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 21124,
+          "observedEncodedDataLength": 21261,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 21124,
+              "fixtureWidth": 185,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 21261
+            }
+          ]
+        },
+        {
+          "name": "mobile-2x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 2,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 342,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.204225352112676
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 342,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.204225352112676
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 342,
+              "requestedDevicePixels": 284,
+              "pixelCoverageRatio": 1.204225352112676
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 69597,
+          "observedEncodedDataLength": 69734,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 69597,
+              "fixtureWidth": 342,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 69734
+            }
+          ]
+        },
+        {
+          "name": "mobile-3x",
+          "width": 390,
+          "height": 844,
+          "deviceScaleFactor": 3,
+          "mobile": true,
+          "cards": [
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            },
+            {
+              "actualCardWidth": 142,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 142,
+              "naturalHeight": 213,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 426,
+              "pixelCoverageRatio": 1.1737089201877935
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        },
+        {
+          "name": "desktop-1x",
+          "width": 1280,
+          "height": 900,
+          "deviceScaleFactor": 1,
+          "mobile": false,
+          "cards": [
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 1.01465421201474
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 1.01465421201474
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 185,
+              "requestedDevicePixels": 182.328125,
+              "pixelCoverageRatio": 1.01465421201474
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 21124,
+          "observedEncodedDataLength": 21261,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 21124,
+              "fixtureWidth": 185,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 21261
+            }
+          ]
+        },
+        {
+          "name": "desktop-2x",
+          "width": 1280,
+          "height": 900,
+          "deviceScaleFactor": 2,
+          "mobile": false,
+          "cards": [
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            },
+            {
+              "actualCardWidth": 182.328125,
+              "currentSrc": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "src": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "srcset": "https://image.tmdb.org/t/p/w185/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 185w, https://image.tmdb.org/t/p/w342/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 342w, https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg 500w",
+              "sizes": "(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)",
+              "naturalWidth": 182,
+              "naturalHeight": 273,
+              "loading": "lazy",
+              "selectedBitmapWidth": 500,
+              "requestedDevicePixels": 364.65625,
+              "pixelCoverageRatio": 1.3711543405604594
+            }
+          ],
+          "imageRequestCount": 1,
+          "fulfilledBodyBytes": 141950,
+          "observedEncodedDataLength": 142088,
+          "requests": [
+            {
+              "url": "https://image.tmdb.org/t/p/w500/eMurN09rDC2qeEv3npkUbcJfIXN.jpg",
+              "fulfilledBodyBytes": 141950,
+              "fixtureWidth": 500,
+              "status": 200,
+              "mimeType": "image/jpeg",
+              "fromDiskCache": false,
+              "encodedDataLength": 142088
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "resourceParser": {
+    "before": {
+      "profile": "Node public Worker route; fixed responses, no network; heap delta is an instantaneous process sample, not peak memory or workerd CPU",
+      "node": "v26.12.0",
+      "gcBeforeEachRun": true,
+      "warmupRuns": 2,
+      "measurements": [
+        {
+          "name": "ordinary-page",
+          "foreignLinks": 40,
+          "bodyBytes": 458,
+          "runs": [
+            {
+              "durationMs": 44.097209,
+              "heapDeltaBytes": 4423232
+            },
+            {
+              "durationMs": 1.558166,
+              "heapDeltaBytes": 651144
+            },
+            {
+              "durationMs": 0.8905830000000066,
+              "heapDeltaBytes": 212768
+            },
+            {
+              "durationMs": 0.7460829999999987,
+              "heapDeltaBytes": 204768
+            },
+            {
+              "durationMs": 0.7275410000000022,
+              "heapDeltaBytes": 271512
+            },
+            {
+              "durationMs": 0.8278339999999957,
+              "heapDeltaBytes": 216640
+            },
+            {
+              "durationMs": 0.7344590000000011,
+              "heapDeltaBytes": 182792
+            },
+            {
+              "durationMs": 0.5662499999999966,
+              "heapDeltaBytes": 173976
+            },
+            {
+              "durationMs": 0.6315000000000026,
+              "heapDeltaBytes": 585440
+            }
+          ]
+        },
+        {
+          "name": "near-body-limit-foreign-links",
+          "foreignLinks": 200000,
+          "bodyBytes": 2000058,
+          "runs": [
+            {
+              "durationMs": 65.476916,
+              "heapDeltaBytes": 41141352
+            },
+            {
+              "durationMs": 50.18675000000002,
+              "heapDeltaBytes": 23390024
+            },
+            {
+              "durationMs": 37.69466600000001,
+              "heapDeltaBytes": 46111872
+            },
+            {
+              "durationMs": 34.829542000000004,
+              "heapDeltaBytes": 40185184
+            },
+            {
+              "durationMs": 46.02720800000003,
+              "heapDeltaBytes": 23788912
+            },
+            {
+              "durationMs": 35.82175000000001,
+              "heapDeltaBytes": 45870520
+            },
+            {
+              "durationMs": 33.718208000000004,
+              "heapDeltaBytes": 46200384
+            },
+            {
+              "durationMs": 49.122082999999975,
+              "heapDeltaBytes": 25906744
+            },
+            {
+              "durationMs": 33.140375000000006,
+              "heapDeltaBytes": 46138264
+            }
+          ]
+        }
+      ]
+    },
+    "after": {
+      "profile": "Node public Worker route; fixed responses, no network; heap delta is an instantaneous process sample, not peak memory or workerd CPU",
+      "node": "v26.12.0",
+      "gcBeforeEachRun": true,
+      "warmupRuns": 2,
+      "measurements": [
+        {
+          "name": "ordinary-page",
+          "foreignLinks": 40,
+          "bodyBytes": 458,
+          "runs": [
+            {
+              "durationMs": 13.099875000000011,
+              "heapDeltaBytes": 910672
+            },
+            {
+              "durationMs": 2.213041000000004,
+              "heapDeltaBytes": 660424
+            },
+            {
+              "durationMs": 0.984250000000003,
+              "heapDeltaBytes": 299408
+            },
+            {
+              "durationMs": 0.7200420000000065,
+              "heapDeltaBytes": 204560
+            },
+            {
+              "durationMs": 0.9016669999999891,
+              "heapDeltaBytes": 205008
+            },
+            {
+              "durationMs": 0.7816669999999988,
+              "heapDeltaBytes": 211360
+            },
+            {
+              "durationMs": 0.823291999999995,
+              "heapDeltaBytes": 183504
+            },
+            {
+              "durationMs": 0.707374999999999,
+              "heapDeltaBytes": 173776
+            },
+            {
+              "durationMs": 0.6524590000000074,
+              "heapDeltaBytes": 577928
+            }
+          ]
+        },
+        {
+          "name": "near-body-limit-foreign-links",
+          "foreignLinks": 200000,
+          "bodyBytes": 2000058,
+          "runs": [
+            {
+              "durationMs": 60.67554199999999,
+              "heapDeltaBytes": 29354888
+            },
+            {
+              "durationMs": 46.16008400000001,
+              "heapDeltaBytes": 12803288
+            },
+            {
+              "durationMs": 38.67629200000002,
+              "heapDeltaBytes": 8608480
+            },
+            {
+              "durationMs": 35.21362499999998,
+              "heapDeltaBytes": 8662912
+            },
+            {
+              "durationMs": 33.93000000000001,
+              "heapDeltaBytes": 8829936
+            },
+            {
+              "durationMs": 33.32491699999997,
+              "heapDeltaBytes": 8583640
+            },
+            {
+              "durationMs": 34.152041,
+              "heapDeltaBytes": 8618208
+            },
+            {
+              "durationMs": 33.18033399999996,
+              "heapDeltaBytes": 8599920
+            },
+            {
+              "durationMs": 34.46100000000001,
+              "heapDeltaBytes": 8565480
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "searchResultsFile": "2026-10-20-search-performance-results.json",
+  "parserDifferentialFile": "2026-10-20-parser-differential-results.json"
+}

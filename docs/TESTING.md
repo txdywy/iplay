@@ -99,17 +99,37 @@ BROWSER_WS='ws://127.0.0.1:9224/devtools/page/<page-id>' npm run test:browser
 
 1.0.17 继续执行上述 38 条流程，页面使用实际压缩产物；演员分页额外断言旧卡片未被替换、筛选和重试仍正确。CI 会重新生成 CSS 和单文件入口并检查无差异。
 
+1.0.18 增至 40 条流程：新增已确认无海报时省去重复查询，以及演员图片响应式选择。图片检查覆盖多组视口/DPR及增大的默认字体、实际选中候选与布局宽度、404 后清除 srcset 并显示占位图、非 TMDB 图片和不适合作为 srcset 的 URL。无图检查同时验证 OMDb 失败或身份不匹配时仍调用备用流程。返回导航流程通过真实 Enter 激活页面，并等待 URL、history 状态和可见结果，避免隐藏旧标题导致假通过，以及 Chrome 裁剪未激活历史条目造成测试串扰。
+
 ### 可重复性能验证
 
 ```bash
 PERF_OUTPUT=/tmp/iplay-mobile.json PERF_TRACE=/tmp/iplay-mobile-trace.json npm run test:performance
 PERF_PROFILE=desktop PERF_OUTPUT=/tmp/iplay-desktop.json npm run test:performance
 PERF_OUTPUT=/tmp/iplay-worker.json npm run test:performance:worker
+PERF_OUTPUT=/tmp/iplay-search.json npm run test:performance:search
+PERF_OUTPUT=/tmp/iplay-parser.json npm run test:performance:parser
+PERF_OUTPUT=/tmp/iplay-parser-diff.json node tests/resource-parser-differential.mjs
 ```
 
 浏览器基准使用固定 API、字体隔离、3 次冷缓存加载、288 张演员卡片、真实点击事件与 100 项资源展开。默认 390×844、300ms 延迟、96 KiB/s 下载、6 倍 CPU 降速；桌面为 1280×900、40ms、1536 KiB/s、原生 CPU。`SMOKE_SITE_ROOT` 可指向历史静态快照，复用相同测量脚本；不操作用户日常浏览器。追踪为 Chrome JSON，可导入 DevTools。
 
 资源基准模拟 12 页，其中第 1/7 页各 600ms、其余 30ms，通过公开 Worker 路由验证结果顺序、12 页完成和并发不超过 6。所有性能数值均为实验室数据；单次 Event Timing 不是现场 INP。CI 验证功能和调度约束，不把硬件相关的绝对时延当作稳定门槛。
+
+搜索基准默认以 `9a53377`（1.0.17）为基线，`PERF_BASE_REF` 可覆盖；它使用固定上游、15 轮交错运行与预热，核对完整响应和上游调用序列，并单独统计纯文本评分调用次数。解析基准通过公开资源路由读取普通页面及约 2MiB 的 200,000 外链页面；瞬时 heap delta 是 Node 进程样本，不是峰值内存或 workerd CPU。差分脚本仅在内存中的分析模块导出旧/新私有解析函数，以固定种子生成 30,000 页面、五种容量共 150,000 比较；不改变生产导出。
+
+演员图片字节模型需要先下载三个公开 JPEG 变体（不提交海报图片）：
+
+```bash
+mkdir -p /tmp/iplay-image-fixture
+for size in 185 342 500; do
+  curl --fail --location --output "/tmp/iplay-image-fixture/w${size}.jpg" \
+    "https://image.tmdb.org/t/p/w${size}/eMurN09rDC2qeEv3npkUbcJfIXN.jpg"
+done
+IMAGE_FIXTURE_DIR=/tmp/iplay-image-fixture PERF_OUTPUT=/tmp/iplay-images.json npm run test:performance:images
+```
+
+该模型在 Chrome 拦截器中发送真实 JPEG 字节，分别检查移动 DPR 1/2/3 与桌面 DPR 1/2，记录当前选中的位图、卡片宽度、请求数与缓存状态。三张卡共享一张图，避免把请求去重误计成收益；输入文件的尺寸和 SHA-256 均记录。`fulfilledBodyBytes` 为模型实际发送的 JPEG 载荷，独立于 CDP 的 `encodedDataLength`（拦截响应可能为 0），不代表公网 CDN 时延或所有海报的压缩比例。
 
 下面的 Vitest 示例仅用于团队未来需要 watch 模式或更丰富 mock API 时参考；当前项目不依赖 Vitest。
 

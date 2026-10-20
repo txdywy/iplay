@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.17';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.17';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.17';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.17';
-import { RELEASE_VERSION } from './release.js?v=1.0.17';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.18';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.18';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.18';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.18';
+import { RELEASE_VERSION } from './release.js?v=1.0.18';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.17';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.17';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.17';
+} from './match.js?v=1.0.18';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.18';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.18';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -224,8 +224,16 @@ function createActorCreditCard(credit, query, searchId, searchOptions) {
     image.loading = 'lazy';
     image.decoding = 'async';
     image.alt = credit.title ? `${credit.title} 海报` : '影视海报';
-    image.src = toSafeImageUrl(credit.poster) || POSTER_PLACEHOLDER;
+    const safePoster = toSafeImageUrl(credit.poster);
+    const posterSourceSet = getTmdbPosterSourceSet(safePoster, [185, 342, 500]);
+    if (posterSourceSet) {
+        image.srcset = posterSourceSet;
+        image.sizes = ACTOR_POSTER_SIZES;
+    }
+    image.src = safePoster || POSTER_PLACEHOLDER;
     image.addEventListener('error', () => {
+        image.removeAttribute('srcset');
+        image.removeAttribute('sizes');
         if (image.src !== POSTER_PLACEHOLDER) image.src = POSTER_PLACEHOLDER;
     }, { once: true });
 
@@ -669,6 +677,9 @@ const RESOURCE_OBSERVER_ROOT_MARGIN = '320px 0px';
 const RESOURCE_IDLE_TIMEOUT_MS = 1400;
 const RESOURCE_TIMER_FALLBACK_MS = 1200;
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
+// Match Tailwind's rem breakpoints, padding and gaps, including browser font
+// preferences; only the section/card borders stay in fixed pixels.
+const ACTOR_POSTER_SIZES = '(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)';
 
 let posterLoadToken = 0;
 let activePosterContext = null;
@@ -691,11 +702,13 @@ function createIcon(name, className = '') {
     return icon;
 }
 
-function getTmdbPosterSourceSet(posterUrl) {
+function getTmdbPosterSourceSet(posterUrl, widths = [300, 500]) {
     if (typeof posterUrl !== 'string') return '';
-    const match = posterUrl.match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)w500(\/[^?]+)(?:\?.*)?$/);
+    // A safe standalone URL can still contain srcset separators. Keep those
+    // sources on src alone instead of introducing additional image candidates.
+    const match = posterUrl.match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)w500(\/[^?,\s#]+)(?:\?[^,\s#]*)?$/);
     if (!match) return '';
-    return `${match[1]}w300${match[2]} 300w, ${posterUrl} 500w`;
+    return widths.map(width => `${width === 500 ? posterUrl : `${match[1]}w${width}${match[2]}`} ${width}w`).join(', ');
 }
 
 function pickPosterFallback(posterResult, failedSource) {
@@ -2106,7 +2119,14 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
         }
 
         if (!viewModel.posterUrl) {
-            void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+            // Both confirmed identities have already answered without an image.
+            // The poster endpoint would repeat those same provider lookups.
+            const confirmedNoPoster = omdbProfile?.omdb === true
+                && omdbProfile.imdbId === imdbId
+                && viewModel.detail?.imdbId === imdbId
+                && !toSafeImageUrl(viewModel.detail.poster);
+            if (confirmedNoPoster) setEnrichmentStatus(els.omdbStatus, '已补充 IMDb / OMDb 数据，暂无可用海报');
+            else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
             return;
         }
         setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据'

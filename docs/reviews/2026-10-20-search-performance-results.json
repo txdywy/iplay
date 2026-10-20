@@ -1,0 +1,92 @@
+{
+  "profile": "Node public Worker route; six sequential TMDB fallbacks, 20 results each, repeated bilingual titles; mocked network/cache",
+  "limitations": "Synthetic local Node elapsed time, including parsing/normalization/serialization; not workerd CPU, production latency or field Core Web Vitals.",
+  "baselineRef": "9a533773767ec6db4c6cd81bcd9c32a7d06c11be",
+  "nodeVersion": "v26.12.0",
+  "runs": 15,
+  "durationMs": {
+    "baseline": [
+      151.512333,
+      146.13591600000007,
+      148.85024999999996,
+      146.88858300000015,
+      145.54087500000014,
+      151.2009999999998,
+      147.46029199999998,
+      148.35437500000012,
+      147.414583,
+      145.98675000000003,
+      147.72116700000015,
+      145.99054099999967,
+      147.90612499999997,
+      146.6408339999998,
+      146.86941700000034
+    ],
+    "optimized": [
+      6.516958000000045,
+      5.986208000000033,
+      5.7507080000000315,
+      5.892791999999872,
+      6.225999999999885,
+      6.495290999999952,
+      5.880625000000009,
+      5.882041999999956,
+      5.660125000000107,
+      5.396874999999909,
+      5.5887079999997695,
+      5.151875000000018,
+      5.499416999999994,
+      6.9875419999998485,
+      5.667124999999942
+    ]
+  },
+  "medianMs": {
+    "baseline": 147.414583,
+    "optimized": 5.880625000000009
+  },
+  "textScoreCalculations": {
+    "baseline": 4241,
+    "optimized": 121
+  },
+  "verification": {
+    "identicalResponses": true,
+    "identicalUpstreamRequests": true,
+    "tmdbRequests": 6,
+    "doubanRequests": 1,
+    "responseSha256": "56ac8c2aeeb70fa3812f3d54d1db386bbb952ed2247ddcccfec266c40d3916be",
+    "resultIds": [
+      108,
+      208,
+      308,
+      408,
+      508,
+      608,
+      104,
+      204,
+      304,
+      404,
+      504,
+      604,
+      103,
+      203,
+      303,
+      403,
+      503,
+      603,
+      107,
+      207
+    ],
+    "searchMeta": {
+      "originalQuery": "这是一段非常长的影视作品查询名称用来衡量近似字符串匹配在六次回退查询以及重复候选集合情况下所需要的计算时间和重复工作占比 movie 2023 1080p | 另一个别名",
+      "normalizedQuery": "这是一段非常长的影视作品查询名称用来衡量近似字符串匹配在六次回退查询以及重复候选集合情况下所需要的计算时间和重复工作占比 | 另一个别名",
+      "year": "2023",
+      "season": null,
+      "mediaType": "movie",
+      "strategy": "direct",
+      "confidence": "medium",
+      "matchScore": 0.675,
+      "matchedBy": "title-fuzzy",
+      "attempts": 6
+    }
+  }
+}

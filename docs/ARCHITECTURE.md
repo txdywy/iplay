@@ -15,6 +15,8 @@ iPlay ("沉浸式观影指南与推荐系统") is a Chinese immersive movie/TV r
 
 Source modules under `js/` are built by esbuild into one versioned ES module, `assets/app.min.js`. GitHub Pages serves this committed artifact alongside the generated stylesheet. CI rebuilds both and rejects drift; the browser no longer discovers eight source imports after downloading the entry module. Actor pagination appends new cards to existing TV/movie groups, preserving loaded images, listeners and DOM identity.
 
+Actor cards use lazy responsive posters at w185/w342/w500 with grid-specific sizes; errors clear responsive candidates before showing the placeholder. Search fallbacks share at most 1,024 pure query/title scores within one request, while identity and ranking remain sensitive to the current intent. Resource parsing retains only adjacent URL occurrences and the bounded result map, including foreign URLs as password boundaries without a page-sized occurrence array.
+
 ```
 +---------------------------------------------------+
 |                    GitHub Pages                    |
@@ -177,6 +179,8 @@ found?      |
 ```
 
 For selected works, TMDB loads only the exact ID/type. Every OMDb profile must map back to that TMDB identity; a known IMDb ID never falls back to title/Wikipedia lookup. Verified metadata can be returned even without an image. The frontend rejects mismatched TMDB/IMDb responses and preserves already-confirmed metadata. Legacy title-only API clients retain title lookup behavior. Refresh retries bypass both browser HTTP cache and Worker cache.
+
+When canonical TMDB details and a successful OMDb profile with that same confirmed IMDb ID both contain no usable poster, the frontend finishes enrichment without repeating `/api/poster`. Failed or unconfirmed OMDb lookups and actual image load errors still use the existing fallback and refresh behavior.
 
 ---
 

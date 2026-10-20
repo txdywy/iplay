@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 
 const browserWs = process.env.BROWSER_WS;
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173/';
@@ -13,9 +14,23 @@ const socket = new globalThis.WebSocket(browserWs);
 let nextCommandId = 1;
 const pendingCommands = new Map();
 const browserExceptions = [];
+const actorPosterRequests = [];
 
 socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if (message.method === 'Fetch.requestPaused') {
+        const { requestId, request } = message.params;
+        actorPosterRequests.push(request.url);
+        const width = Number(new URL(request.url).pathname.match(/\/w(\d+)\//)?.[1]) || 500;
+        const posterBody = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width * 1.5}"><rect width="100%" height="100%" fill="#141417"/></svg>`;
+        void command('Fetch.fulfillRequest', {
+            requestId,
+            responseCode: request.url.includes('audit-actor-broken') ? 404 : 200,
+            responseHeaders: [{ name: 'Content-Type', value: 'image/svg+xml' }],
+            body: request.url.includes('audit-actor-broken') ? '' : Buffer.from(posterBody).toString('base64')
+        }).catch(error => browserExceptions.push(error.message));
+        return;
+    }
     if (message.method === 'Runtime.exceptionThrown') {
         const detail = message.params.exceptionDetails;
         browserExceptions.push(detail.exception?.description || detail.text);
@@ -64,6 +79,7 @@ async function waitFor(expression, timeoutMs = 5000) {
 await command('Page.enable');
 await command('Runtime.enable');
 await command('Network.enable');
+await command('Fetch.enable', { patterns: [{ urlPattern: 'https://image.tmdb.org/t/p/*/audit-actor-*', resourceType: 'Image' }] });
 // Font availability is external to these mocked UI regressions. Blocking it
 // keeps cold-browser readiness deterministic when Google's font CDN stalls.
 await command('Network.setBlockedURLs', { urls: ['https://fonts.googleapis.com/*', 'https://fonts.gstatic.com/*'] });
@@ -136,19 +152,33 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Slow Broken Poster Movie': 113,
                     'Retry Canonical Movie': 114,
                     'Fast Broken Poster Movie': 115,
-                    'Retained Enrichment Movie': 116
+                    'Retained Enrichment Movie': 116,
+                    'No Poster Movie': 117,
+                    'Failed OMDb Poster Movie': 118,
+                    'Unconfirmed OMDb Poster Movie': 119
                 };
-                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor'].includes(query)) {
+                window.__smoke.posterlessMode = ['No Poster Movie', 'Failed OMDb Poster Movie', 'Unconfirmed OMDb Poster Movie'].includes(query) ? query : '';
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor', 'Responsive Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
                 const candidatePoster = query === 'Unsafe Poster Movie'
                         ? 'javascript:alert(1)'
-                        : query === 'Identity Movie' ? null : poster;
+                        : window.__smoke.posterlessMode ? null : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
             if (url.pathname === '/api/tmdb/person') {
                 const query = url.searchParams.get('q') || '';
                 const selectedId = url.searchParams.get('id');
+                if (query === 'Responsive Actor') return json({
+                    person: { id: 920, name: query, matchScore: 1, profile: poster },
+                    credits: [
+                        { ...candidate('Responsive Poster Film', 320), poster: ' https://image.tmdb.org/t/p/w500/audit-actor-poster.jpg ' },
+                        candidate('External Poster Film', 321),
+                        { ...candidate('Broken Poster Film', 322), poster: 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg' },
+                        { ...candidate('Comma Poster Film', 323), poster: 'https://image.tmdb.org/t/p/w500/audit-actor-comma.jpg,https://unexpected.invalid/tracker' }
+                    ],
+                    totalResults: 4, offset: 0, limit: 36, hasMore: false, counts: { tv: 0, movie: 4 }
+                });
                 if (query === 'Medium Actor') return json({
                     person: { id: 915, name: 'Medium Actor Match', matchScore: selectedId ? 1 : 0.78, profile: poster },
                     credits: [{ ...candidate('Medium Actor Film', 315), mediaType: 'movie' }],
@@ -326,6 +356,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     114: 'Recovered Canonical Movie',
                     115: 'Fast Broken Poster Movie',
                     116: 'Retained Enrichment Movie',
+                    117: 'No Poster Movie',
+                    118: 'Failed OMDb Poster Movie',
+                    119: 'Unconfirmed OMDb Poster Movie',
                     200: 'Actor Movie',
                     201: 'Smoke Series'
                 };
@@ -347,7 +380,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const response = json({
                     ...candidate(title, id),
                     year: id === 111 || (id === 116 && window.__smoke.retentionRecovery === 'canonical') ? '2025' : '2024',
-                    poster: id === 110 ? null : id === 112 ? canonicalPoster : poster,
+                    poster: id >= 117 && id <= 119 ? null : id === 112 ? canonicalPoster : poster,
                     genres: ['Drama'],
                     runtime: 120,
                     status: 'Released',
@@ -379,9 +412,14 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
                 ? '旧片同名作品简介。'
                 : url.searchParams.get('q') === 'Canonical Renamed Movie' ? '详情确认后的新版作品简介。' : '中文烟测简介。' });
-            if (url.pathname === '/api/omdb') return window.__smoke.retentionRecovery && window.__smoke.detailAttempts[116] > 1
-                ? json({ error: 'supplement outage' }, 503)
-                : json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
+            if (url.pathname === '/api/omdb') {
+                if (window.__smoke.posterlessMode === 'Failed OMDb Poster Movie') return json({ error: 'temporary OMDb outage' }, 503);
+                if (window.__smoke.posterlessMode) return json({ omdb: true, imdb: 8.4,
+                    imdbId: window.__smoke.posterlessMode === 'Unconfirmed OMDb Poster Movie' ? 'tt7654321' : 'tt1234567', poster: null });
+                return window.__smoke.retentionRecovery && window.__smoke.detailAttempts[116] > 1
+                    ? json({ error: 'supplement outage' }, 503)
+                    : json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
+            }
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
                 if (window.__smoke.resourceMode === 'large') return json({
@@ -655,6 +693,8 @@ async function runPosterIdentityFlow(mismatch) {
     await command('Page.navigate', { url: `${baseUrl}?poster-mismatch=${mismatch}` });
     await search('Identity Movie');
     await assertSearchReady('Identity Movie');
+    await waitFor("window.__smoke.detailResolved === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') !== 'true'");
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
     await waitFor("window.__smoke.posterCalls === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') !== 'true'");
     assert.match(await evaluate("document.querySelector('#omdbFields').textContent"), /8\.4/u,
         'a same-title poster response must not overwrite the selected IMDb profile');
@@ -664,6 +704,87 @@ async function runPosterIdentityFlow(mismatch) {
     assert.equal(params.get('id'), '110');
     assert.equal(params.get('type'), 'movie');
     assert.equal(params.get('imdb'), 'tt1234567');
+}
+
+async function runConfirmedPosterAbsenceFlow() {
+    for (const title of ['No Poster Movie', 'Failed OMDb Poster Movie', 'Unconfirmed OMDb Poster Movie']) {
+        await command('Page.navigate', { url: baseUrl });
+        await search(title);
+        await assertSearchReady(title);
+        await waitFor("window.__smoke.detailResolved === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
+        const confirmedAbsent = title === 'No Poster Movie';
+        assert.equal(await evaluate('window.__smoke.posterCalls'), confirmedAbsent ? 0 : 1,
+            'only a successful profile matching the confirmed IMDb identity can eliminate the repeated poster lookup');
+        if (confirmedAbsent) {
+            assert.match(await evaluate("document.querySelector('#omdbStatus').textContent"), /已补充.*暂无可用海报/u);
+            assert.equal(await evaluate("document.querySelector('#imdbRating').textContent"), '8.4');
+            assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src').startsWith('data:image/svg+xml')"), true);
+        } else {
+            await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+        }
+    }
+}
+
+async function runActorResponsivePosterFlow() {
+    await command('Network.setCacheDisabled', { cacheDisabled: true });
+    try {
+        for (const [width, deviceScaleFactor, expectedSourceWidth, standardFontSize = 16] of [
+            [390, 1, 185], [390, 2, 342], [640, 1, 185], [768, 1, 185],
+            [1024, 1, 185], [1280, 1, 185], [1472, 1, 342], [1472, 2, 500],
+            [640, 1, 342, 20], [900, 1, 342, 20]
+        ]) {
+            // Resize an empty document so the previous page cannot start an
+            // image request for its new DPR while the next navigation begins.
+            await command('Page.navigate', { url: 'about:blank' });
+            await waitFor("location.href === 'about:blank' && document.readyState === 'complete'");
+            // Change the browser preference so media-query rem units use the
+            // same initial font size as Tailwind, rather than an HTML override.
+            await command('Page.setFontSizes', { fontSizes: { standard: standardFontSize } });
+            await command('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor, mobile: width < 768 });
+            await command('Page.navigate', { url: baseUrl });
+            const requestsBefore = actorPosterRequests.length;
+            await search('Responsive Actor');
+            await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 4");
+            await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"320\"] img').scrollIntoView({block:'center'})");
+            await waitFor("document.querySelector('#actorCreditList button[data-media-id=\"320\"] img').complete && document.querySelector('#actorCreditList button[data-media-id=\"320\"] img').naturalWidth > 0");
+            const image = await evaluate(`(() => {
+                const image = document.querySelector('#actorCreditList button[data-media-id="320"] img');
+                const external = document.querySelector('#actorCreditList button[data-media-id="321"] img');
+                const comma = document.querySelector('#actorCreditList button[data-media-id="323"] img');
+                return { currentSrc: image.currentSrc, width: image.getBoundingClientRect().width,
+                    rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), rootInlineFontSize: document.documentElement.style.fontSize,
+                    threeColumnBreakpoint: matchMedia('(min-width: 40rem)').matches,
+                    srcset: image.srcset, sizes: image.sizes, externalSrcset: external.getAttribute('srcset'), externalSizes: external.getAttribute('sizes'), commaSrcset: comma.getAttribute('srcset'), commaSizes: comma.getAttribute('sizes') };
+            })()`);
+            assert.match(image.currentSrc, new RegExp('/w' + expectedSourceWidth + '/audit-actor-poster\\.jpg$'), `${width}px DPR ${deviceScaleFactor}, browser font ${standardFontSize}px`);
+            assert.equal(image.rootFontSize, standardFontSize, 'the browser preference must change the initial font size');
+            assert.equal(image.rootInlineFontSize, '', 'the font-size regression must not be simulated by an HTML style override');
+            assert.equal(image.threeColumnBreakpoint, width >= 40 * standardFontSize);
+            assert.match(image.srcset, /185w.*342w.*500w/u);
+            assert.equal(image.externalSrcset, null, 'non-TMDB poster sources retain their original URL');
+            assert.equal(image.externalSizes, null);
+            assert.equal(image.commaSrcset, null, 'a standalone URL containing srcset separators must not introduce extra candidates');
+            assert.equal(image.commaSizes, null);
+            const declaredWidth = width >= 92 * standardFontSize ? (81.25 * standardFontSize - 14) / 6
+                : width >= 80 * standardFontSize ? (width - 10.75 * standardFontSize - 14) / 6
+                    : width >= 64 * standardFontSize ? (width - 10 * standardFontSize - 12) / 5
+                        : width >= 48 * standardFontSize ? (width - 9.25 * standardFontSize - 10) / 4
+                            : width >= 40 * standardFontSize ? (width - 7 * standardFontSize - 8) / 3
+                                : (width - 6.25 * standardFontSize - 6) / 2;
+            assert.ok(declaredWidth >= image.width - 0.02 && declaredWidth - image.width < 1,
+                `the declared image size must match the actual grid width: ${declaredWidth} vs ${image.width}`);
+            assert.equal(actorPosterRequests.slice(requestsBefore).filter(url => url.includes('/audit-actor-poster.jpg')).length, 1,
+                'setting responsive attributes before src must issue only the selected request');
+            await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').scrollIntoView({block:'center'})");
+            await waitFor("document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').getAttribute('src').startsWith('data:image/svg+xml')");
+            assert.equal(await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').hasAttribute('srcset') || document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').hasAttribute('sizes')"), false,
+                'a failed responsive image must clear all candidates before displaying the placeholder');
+        }
+    } finally {
+        await command('Page.setFontSizes', { fontSizes: { standard: 16 } });
+        await command('Network.setCacheDisabled', { cacheDisabled: false });
+        await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    }
 }
 
 async function runBrokenPosterFlow() {
@@ -706,8 +827,13 @@ async function runTimerFallbackFlow() {
 
 async function runActorFlow() {
     await command('Page.navigate', { url: baseUrl });
-    await new Promise(resolve => setTimeout(resolve, 250));
-    await search('Smoke Actor');
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    // History traversal must start from a document activated by real input;
+    // synthetic submits can be skipped by the browser's history intervention.
+    // https://chromium.googlesource.com/chromium/src/+/main/docs/history_manipulation_intervention.md
+    await evaluate("document.querySelector('#searchInput').value = 'Smoke Actor'; document.querySelector('#searchInput').focus()");
+    await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+    await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
     await waitFor("document.querySelector('#actorResultsArea:not(.hidden)')");
     assert.equal(await evaluate("document.querySelector('#actorResultsTitle')?.textContent"), 'Smoke Actor');
     assert.equal(await evaluate("document.querySelector('#actor-tv-title')?.textContent.includes('电视剧')"), true);
@@ -740,11 +866,11 @@ async function runActorFlow() {
         'direct cast navigation must finish its live loading status');
 
     await evaluate('history.back()');
-    await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
+    await waitFor("history.state?.kind === 'detail' && new URL(location.href).searchParams.get('id') === '200' && document.querySelector('#resultsArea:not(.hidden) #showTitle')?.textContent === 'Actor Movie' && document.querySelector('#searchStatus').textContent.includes('详情已加载')");
     await evaluate('history.back()');
-    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Smoke Actor'");
+    await waitFor("history.state?.kind === 'actor' && new URL(location.href).searchParams.get('actor') === 'Smoke Actor' && document.querySelector('#actorResultsArea:not(.hidden) #actorResultsTitle')?.textContent === 'Smoke Actor' && document.querySelectorAll('#actorCreditList button[data-media-id]').length === 2");
     await evaluate('history.back()');
-    await waitFor("document.querySelector('#actorResultsArea')?.classList.contains('hidden') && document.querySelector('#searchInput')?.value === ''");
+    await waitFor("history.state?.kind === 'home' && location.search === '' && document.querySelector('#actorResultsArea')?.classList.contains('hidden') && document.querySelector('#resultsArea')?.classList.contains('hidden') && document.querySelector('#searchInput')?.value === ''");
 }
 
 async function runActorCandidateFlow() {
@@ -1180,6 +1306,8 @@ async function runDetailRetryRecoveryIdentityFlow() {
 try {
     await runResourceKeyboardAndLongTitleFlow();
     await runCompleteResourceVisibilityFlow();
+    await runConfirmedPosterAbsenceFlow();
+    await runActorResponsivePosterFlow();
     await runDetailRetryPreservesEnrichmentFlow();
     await runDetailRetryRecoveryIdentityFlow();
     await runSharedIdentityValidationFlow();
@@ -1216,7 +1344,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

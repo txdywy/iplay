@@ -1,6 +1,6 @@
 {
   "name": "iplay",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "private": true,
   "description": "一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
@@ -18,7 +18,10 @@
     "build:css": "tailwindcss -i css/input.css -o css/output.css --minify",
     "build:js": "node scripts/build-frontend.mjs",
     "test:performance": "node tests/browser-smoke-runner.mjs tests/browser-performance.mjs",
-    "test:performance:worker": "node tests/worker-performance.mjs"
+    "test:performance:worker": "node tests/worker-performance.mjs",
+    "test:performance:images": "node tests/browser-smoke-runner.mjs tests/browser-image-performance.mjs",
+    "test:performance:search": "node tests/search-performance.mjs",
+    "test:performance:parser": "node --expose-gc tests/resource-parser-performance.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

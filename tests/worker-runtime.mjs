@@ -6,6 +6,7 @@ import { RELEASE_VERSION } from '../js/release.js';
 import { probeNativeRateLimit } from './helpers/native-rate-limit.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 import { tmdbDetail } from './fixtures/tmdb.js';
+import { PERFORMANCE_SEARCH_QUERY, searchPerformanceResults, searchPerformanceAlias } from './fixtures/search-performance.js';
 import { loadProductionRuntimeConfig } from './helpers/worker-runtime-config.js';
 
 const { Response } = globalThis;
@@ -29,6 +30,8 @@ let poolFirst;
 let poolSeventhStarted;
 let poolActive = 0;
 let poolPeak = 0;
+let searchScoringMode = false;
+let scoringAttempts = 0;
 const wikiIdentityCases = {
     '小说家的电影': { description: '2024年漫画改编电影', extract: '《小说家的电影》是一部2024年电影，改编自同名小说。' },
     '2001太空漫游': { description: '1968年电影', extract: '《2001太空漫游》是一部1968年电影。' },
@@ -40,6 +43,12 @@ const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (searchScoringMode && url.hostname === 'api.themoviedb.org' && /^\/3\/search\/(multi|movie|tv)$/.test(url.pathname)) {
+        return Response.json({ results: searchPerformanceResults(++scoringAttempts) });
+    }
+    if (searchScoringMode && url.hostname === 'movie.douban.com') {
+        return Response.json(searchPerformanceAlias(url.searchParams.get('q')));
+    }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/search/multi') {
         return Response.json({ results: [{ id: 41, media_type: 'movie', title: 'The Truman Show', original_title: 'The Truman Show', release_date: '1998-06-04' }] });
     }
@@ -78,6 +87,10 @@ async function upstream(request) {
             ? Response.json({ data: [{ id: '42', attributes: { title: 'Runtime Movie 夸克' } }] })
             : wpzyMode === 'oversized' ? new Response(`https://pan.quark.cn/s/${'a'.repeat(1900000)}`)
             : wpzyMode === 'conflict' ? new Response('https://pan.quark.cn/s/runtime-shared?pwd=AAAA')
+            : wpzyMode === 'foreign-links' ? new Response('https://x '.repeat(200000)
+                + '<p>提取码：a1B2 https://pan.quark.cn/s/runtime-late</p>'
+                + '<p>https://pan.baidu.com/s/foreign 提取码：bad1</p>'
+                + '<p>https://pan.quark.cn/s/runtime-public</p>')
             : new Response('<p>链接：https://pan.quark.cn/s/runtime42 提取码：abcd</p>'
                 + '<p>链接：<a href="https://pan.quark.cn/s/runtime-formatted">夸克资源</a><b>提取码：</b><span>e5F6</span></p>'
                 + '<p>夸克：https://pan.quark.cn/s/runtime-public 百度：https://pan.baidu.com/s/foreign?pwd=6868 提取码：6868</p>');
@@ -88,7 +101,7 @@ async function upstream(request) {
         if (url.pathname === '/search.htm') {
             if (wpzyMode === 'login') return new Response(null, {status:302,headers:{Location:'user-login.htm'}});
             if (wpzyMode === 'maintenance') return new Response('<title>网站维护</title><p>请求过于频繁，请稍后重试</p>');
-            if (wpzyMode === 'empty' || wpzyMode === 'scheduling') return new Response(WPZY_EMPTY_SEARCH_HTML);
+            if (['empty', 'scheduling', 'foreign-links'].includes(wpzyMode)) return new Response(WPZY_EMPTY_SEARCH_HTML);
             return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
@@ -178,6 +191,19 @@ try {
         assert.equal(data.searchMeta.year, '1998');
     }
     checks.push('year-qualified-literal-title-and-type-hints');
+
+    searchScoringMode = true;
+    try {
+        const response = await request(`/api/tmdb/search?q=${encodeURIComponent(PERFORMANCE_SEARCH_QUERY)}`, 'runtime-search-scoring');
+        assert.equal(response.status, 200);
+        const data = await response.json();
+        assert.equal(data.searchMeta.attempts, 6);
+        assert.equal(scoringAttempts, 6);
+        assert.equal(data.results.length, 20);
+        assert.ok(data.results.every(item => item.matchScore < 0.72));
+        assert.equal(data.searchMeta.year, '2023');
+    } finally { searchScoringMode = false; }
+    checks.push('bounded-request-local-search-scoring');
 
     for (const path of ['/api/tmdb/detail?id=101&type=', '/api/tmdb/person?id=&q=Runtime%20Actor', '/api/omdb?imdb=&title=Runtime%20Movie']) {
         const response = await request(path, 'runtime-explicit-empty-identity');
@@ -316,6 +342,19 @@ try {
     assert.ok(boundedData.resourceMeta.pages.every(page => page.quarkUrls.length === 0));
     checks.push('bounded-resource-response-and-preserved-sources');
     wpzyMode = 'public';
+
+    wpzyMode = 'foreign-links';
+    try {
+        const response = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-resource-foreign-links');
+        assert.equal(response.status, 200);
+        const data = await response.json();
+        const late = data.quarkUrls.find(item => item.url.endsWith('/runtime-late'));
+        assert.equal(late?.password, 'a1B2');
+        const publicShare = data.quarkUrls.find(item => item.url.endsWith('/runtime-public'));
+        assert.ok(publicShare);
+        assert.equal(publicShare.password, undefined, 'foreign password must not cross URL boundaries on a large page');
+    } finally { wpzyMode = 'public'; }
+    checks.push('streaming-resource-url-boundaries-on-near-limit-body');
 
     let releasePoolFirst;
     poolFirst = new Promise(resolve => { releasePoolFirst = resolve; });
