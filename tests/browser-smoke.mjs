@@ -728,10 +728,10 @@ async function runConfirmedPosterAbsenceFlow() {
 async function runActorResponsivePosterFlow() {
     await command('Network.setCacheDisabled', { cacheDisabled: true });
     try {
-        for (const [width, deviceScaleFactor, expectedSourceWidth, standardFontSize = 16] of [
+        for (const [width, deviceScaleFactor, expectedSourceWidth, standardFontSize = 16, scrollbarWidth = 0] of [
             [390, 1, 185], [390, 2, 342], [640, 1, 185], [768, 1, 185],
             [1024, 1, 185], [1280, 1, 185], [1472, 1, 342], [1472, 2, 500],
-            [640, 1, 342, 20], [900, 1, 342, 20]
+            [640, 1, 342, 20], [900, 1, 342, 20], [768, 1, 185, 16, 16]
         ]) {
             // Resize an empty document so the previous page cannot start an
             // image request for its new DPR while the next navigation begins.
@@ -742,6 +742,15 @@ async function runActorResponsivePosterFlow() {
             await command('Page.setFontSizes', { fontSizes: { standard: standardFontSize } });
             await command('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor, mobile: width < 768 });
             await command('Page.navigate', { url: baseUrl });
+            await waitFor("history.state?.kind === 'home'");
+            if (scrollbarWidth) {
+                await evaluate(`(() => {
+                    const style = document.createElement('style');
+                    style.textContent = 'html { overflow-y: scroll; } ::-webkit-scrollbar { width: ${scrollbarWidth}px; }';
+                    document.head.appendChild(style);
+                })()`);
+                await waitFor(`innerWidth - document.documentElement.clientWidth === ${scrollbarWidth}`);
+            }
             const requestsBefore = actorPosterRequests.length;
             await search('Responsive Actor');
             await waitFor("document.querySelectorAll('#actorCreditList button[data-media-id]').length === 4");
@@ -752,6 +761,7 @@ async function runActorResponsivePosterFlow() {
                 const external = document.querySelector('#actorCreditList button[data-media-id="321"] img');
                 const comma = document.querySelector('#actorCreditList button[data-media-id="323"] img');
                 return { currentSrc: image.currentSrc, width: image.getBoundingClientRect().width,
+                    viewportGutter: innerWidth - document.documentElement.clientWidth,
                     rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), rootInlineFontSize: document.documentElement.style.fontSize,
                     threeColumnBreakpoint: matchMedia('(min-width: 40rem)').matches,
                     srcset: image.srcset, sizes: image.sizes, externalSrcset: external.getAttribute('srcset'), externalSizes: external.getAttribute('sizes'), commaSrcset: comma.getAttribute('srcset'), commaSizes: comma.getAttribute('sizes') };
@@ -771,8 +781,15 @@ async function runActorResponsivePosterFlow() {
                         : width >= 48 * standardFontSize ? (width - 9.25 * standardFontSize - 10) / 4
                             : width >= 40 * standardFontSize ? (width - 7 * standardFontSize - 8) / 3
                                 : (width - 6.25 * standardFontSize - 6) / 2;
-            assert.ok(declaredWidth >= image.width - 0.02 && declaredWidth - image.width < 1,
-                `the declared image size must match the actual grid width: ${declaredWidth} vs ${image.width}`);
+            // vw includes classic scrollbar space; the grid uses the smaller
+            // layout viewport. Account for that measured gutter per column,
+            // including the point where the main container reaches its cap.
+            const columns = width >= 80 * standardFontSize ? 6 : width >= 64 * standardFontSize ? 5
+                : width >= 48 * standardFontSize ? 4 : width >= 40 * standardFontSize ? 3 : 2;
+            const mainCap = 92 * standardFontSize;
+            const gutterPerColumn = (Math.min(width, mainCap) - Math.min(width - image.viewportGutter, mainCap)) / columns;
+            assert.ok(declaredWidth >= image.width - 0.02 && Math.abs(declaredWidth - gutterPerColumn - image.width) < 1,
+                `the declared image size must match the actual grid after its ${image.viewportGutter}px gutter: ${declaredWidth} vs ${image.width}`);
             assert.equal(actorPosterRequests.slice(requestsBefore).filter(url => url.includes('/audit-actor-poster.jpg')).length, 1,
                 'setting responsive attributes before src must issue only the selected request');
             await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').scrollIntoView({block:'center'})");

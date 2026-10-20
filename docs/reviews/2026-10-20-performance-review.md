@@ -67,9 +67,11 @@
 - `npm test`：246/246，ESLint、CSS/JavaScript 构建通过。
 - `npm run test:coverage`：246/246，Worker 行 95.94%、分支 86.36%；Node 总计行 95.10%、分支 85.76%，不代表 DOM 覆盖率。
 - `npm run test:runtime`：30 项通过，生产兼容目标与 bindings，固定上游，无真实凭据。
-- `npm run test:browser:ci`：40 条通过，实际生产 bundle；包含 10 组演员图片视口/DPR/字体配置、失败回退与历史返回链。
+- `npm run test:browser:ci`：40 条通过，实际生产 bundle；包含 11 组演员图片视口/DPR/字体/滚动条配置、失败回退与历史返回链。
 - 严格 Worker dry-run：gzip 30.33KiB；锁定依赖 216 项，2026-10-20 audit 已知漏洞 0；diff 检查通过。
 
 全量浏览器测试暴露了旧的“隐藏标题即视为返回完成”断言，以及累计历史满后 Chrome 优先裁剪未激活条目。探针确认产品 push/replace 序列正确；测试改用真实 Enter 激活，并等待 URL/history/可见结果完成，没有重置历史或关闭浏览器保护。相关规则见 [Chromium 官方说明](https://chromium.googlesource.com/chromium/src/+/main/docs/history_manipulation_intervention.md)。
+
+2026-10-21 的 Linux CI 还发现测试未计入经典滚动条：768px 四列时，15px 滚动条让布局卡片比 `sizes` 中的 `100vw` 计算值小 3.75px。以本机强制 16px 滚动条复现原断言失败后，新增该回归配置，按实测滚动条宽度和容器上限校正预期，继续要求候选尺寸不低估卡片且校正误差小于 1px。修正后 11 组图片配置及完整 40 条浏览器流程通过；产品代码无需改变。
 
 复测命令、真实 JPEG 准备与各模型限制见 [TESTING](../TESTING.md)。PR CI 和 Cloudflare 预览成功后合并，再核对同一合并提交的 main CI、Pages、Worker 自动部署；严格线上烟测及真实首页/演员图片结果记录在 PR 发布验收中。
