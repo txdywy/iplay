@@ -1,0 +1,24 @@
+{
+  "profile": "Independent deterministic old-v17 versus current private parser differential; no network",
+  "baselineRef": "9a533773767ec6db4c6cd81bcd9c32a7d06c11be",
+  "nodeVersion": "v26.12.0",
+  "initialSeed": "0x10202026",
+  "generator": "xorshift32; URL/password/HTML/foreign-provider/escape tokens; 30000 generated pages",
+  "cases": 30000,
+  "caps": [
+    "0",
+    "1",
+    "25",
+    "100",
+    "Infinity"
+  ],
+  "comparisons": 150000,
+  "mismatches": 0,
+  "largestInputBytes": 64069,
+  "durationMs": 12652.767708000001,
+  "inputsSha256": "844642c3d783dc219e7973005e89dee4182d19b1e16d77a1b001b2d0cbd8debc",
+  "sourceSha256": {
+    "baseline": "e46183a7b89b4fb2cc9dce01e30d267fe5e66e462a3a3e71053ce74c0aee38a9",
+    "current": "08b55d0bf06cf5f395edc51c7d80cbda47469d53834dadd5135516177355eac1"
+  }
+}

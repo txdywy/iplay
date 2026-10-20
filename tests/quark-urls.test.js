@@ -53,6 +53,25 @@ test('resource search pairs each following password with its own link, not the n
     ]);
 });
 
+test('near-limit pages retain late shares and their leading passwords after many foreign URLs', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        'https://x '.repeat(200000)
+        + '<p>提取码：a1B2 https://pan.quark.cn/s/late-share</p>'
+    ]), [{ url: 'https://pan.quark.cn/s/late-share', password: 'a1B2' }]);
+});
+
+test('late duplicate evidence still reconciles after a page reaches its share cap', async t => {
+    const shares = Array.from({ length: 25 }, (_, i) => `https://pan.quark.cn/s/capped-${i}?pwd=old1`);
+    const result = await searchQuarkPages(t, [
+        shares.join('\n') + '\n' + 'https://foreign.example/download '.repeat(1000)
+        + '\nhttps://pan.quark.cn/s/excluded?pwd=skip1'
+        + '\nhttps://pan.quark.cn/s/capped-0?pwd=new2'
+    ]);
+    assert.equal(result.length, 25);
+    assert.deepEqual(result[0], { url: 'https://pan.quark.cn/s/capped-0' });
+    assert.deepEqual(result[24], { url: 'https://pan.quark.cn/s/capped-24', password: 'old1' });
+});
+
 test('resource search never attaches a Baidu share password to the preceding Quark share', async t => {
     assert.deepEqual(await searchQuarkPages(t, [
         '<p>夸克：https://pan.quark.cn/s/quark-public '
@@ -67,6 +86,17 @@ test('resource search binds a leading password inside the next paragraph to that
     ]), [
         { url: 'https://pan.quark.cn/s/no-code' },
         { url: 'https://pan.quark.cn/s/leading-code', password: 'b2C3' }
+    ]);
+});
+
+test('multiple leading codes reconcile before a future link is retained and later URL evidence can resolve it', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>提取码：a1B2 密码：c3D4 https://pan.quark.cn/s/conflicted-leading</p>'
+        + '<p>访问码：old1 https://pan.quark.cn/s/resolved-leading</p>'
+        + '<p>https://pan.quark.cn/s/resolved-leading?pwd=url7</p>'
+    ]), [
+        { url: 'https://pan.quark.cn/s/conflicted-leading' },
+        { url: 'https://pan.quark.cn/s/resolved-leading', password: 'url7' }
     ]);
 });
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.18] - 2026-10-20
+
+### Performance
+
+- Reuse pure query/title text scores across search fallbacks in a request-owned cache of at most 1,024 pairs. Re-evaluate identity, year, media type and ranking on every pass; keep the existing upstream budget and result order.
+- Select actor-card posters from TMDB w185/w342/w500 variants using the actual grid breakpoints and device pixel ratio. Keep lazy loading, non-TMDB sources and placeholder recovery after responsive image errors.
+- Scan resource URL boundaries with an iterator instead of retaining every foreign URL and duplicate share. Preserve leading/trailing password pairing, conflict resolution and evidence arriving after the result cap.
+- Skip the redundant poster lookup when canonical TMDB details and a successful matching OMDb profile have both confirmed no image. Provider failures, unconfirmed identities and failed image loads retain the existing fallback.
+
+### Verification
+
+- Add public-route search and parser benchmarks, deterministic old/new parser comparison, five image-density byte models and regressions for intent changes, cache capacity, late password evidence and image fallbacks.
+- Extend native workerd checks for repeated search scoring and near-limit foreign-link pages; browser regressions execute the generated production entry.
+
 ## [1.0.17] - 2026-10-18
 
 ### Performance

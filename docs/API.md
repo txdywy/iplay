@@ -403,6 +403,8 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 
 分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
 
+正文解析用相邻 URL 迭代器保留密码边界，避免把所有外站 URL 和重复分享保存在中间数组中。达到单页链接上限后仍继续检查已保留分享的后续密码证据；外站密码隔离和等置信度冲突规则不变。
+
 资源响应对浏览器统一返回 `Cache-Control: no-store`，前端普通查询和重试也都使用 `cache: 'no-store'`，包括调用者传入其他缓存模式的情况。Worker 内部仍按当前登录态指纹缓存完整结果 12 小时、部分结果 15 分钟；登录态更换或撤销后，下次浏览器查询必须到达 Worker 并使用新的作用域。
 
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
