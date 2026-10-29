@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.20] - 2026-10-29
+
+### Performance
+
+- A search response now carries the TMDB answer the page requests next, so the page skips one browser-to-Worker round trip (about 0.45–0.55s per request on the measured link). A confident title that opens directly embeds its detail; a weak, absent or actor-preferred title embeds the default actor lookup, including the ambiguous-name picker (`张译`). The Worker waits at most 1.5s within the search deadline. A slower lookup keeps running to warm the edge cache, and failed or degraded follow-ups are never embedded.
+- Pages stop calling `/api/omdb` for the rest of the session once the Worker answers `OMDb API not configured`. Before, every detail view sent one request that could not succeed.
+
+### Security
+
+- Update wrangler 4.149.0 → 4.155.0 and the matching miniflare 5.20261023.2-beta. This removes the high-severity undici advisories (GHSA-4qv8-2p9j-2685 and seven related) and the moderate miniflare/wrangler advisories from the development and deploy toolchain. `npm audit` reports 0 vulnerabilities; all installed packages with attestations verify.
+
+### Verification
+
+- Add Worker tests for detail and person embedding, confirmation-gap exclusion, failed, slow and degraded follow-ups, and upstream stop signals. Add client tests for single-identity reuse, copy isolation, malformed payloads and abort handling, and a browser flow that proves neither the detail nor the person request is sent. Call-budget tests now count title searches separately from the follow-up that replaces the page's request.
+- Local CPU measurement with a 231 KB actor payload: the combined search and embedded person use 2.5 ms at p50 and 4.6 ms at p90, against a 0.8 ms search and a 2.0 ms person request measured separately.
+
 ## [1.0.19] - 2026-10-29
 
 ### Fixed

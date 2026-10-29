@@ -1,6 +1,6 @@
 {
   "name": "iplay",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "private": true,
   "description": "一个懂你的追剧神器：偏好分析 · TMDB 主数据 · 夸克资源直达",
   "scripts": {
@@ -43,8 +43,8 @@
     "@tailwindcss/cli": "^4.2.4",
     "esbuild": "0.28.2",
     "eslint": "^10.2.1",
-    "miniflare": "5.20261006.1-alpha",
+    "miniflare": "5.20261023.2-beta",
     "tailwindcss": "^4.2.4",
-    "wrangler": "4.149.0"
+    "wrangler": "4.155.0"
   }
 }

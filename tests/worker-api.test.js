@@ -939,6 +939,7 @@ test('TMDB search resolves an IMDb id through the TMDB find endpoint', async t =
     };
     globalThis.fetch = async url => {
         requestedUrls.push(String(url));
+        if (new URL(url).pathname === '/3/movie/5') return Response.json(tmdbDetail({ id: 5, title: 'Exact IMDb Movie' }));
         return Response.json({
             movie_results: [{ id: 5, title: 'Exact IMDb Movie', release_date: '2020-01-01' }],
             tv_results: []
@@ -959,12 +960,14 @@ test('TMDB search resolves an IMDb id through the TMDB find endpoint', async t =
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(requestedUrls.length, 1);
+    assert.equal(requestedUrls.length, 2);
     assert.match(requestedUrls[0], /\/3\/find\/tt1234567/);
     assert.equal(body.results[0].id, 5);
     assert.equal(body.results[0].matchMethod, 'external-id');
     assert.equal(body.results[0].matchScore, 1);
     assert.equal(body.searchMeta.strategy, 'external-id');
+    assert.match(requestedUrls[1], /\/3\/movie\/5\?/, 'the single external-id match opens directly, so its detail is embedded');
+    assert.deepEqual([body.prefetched.detail.id, body.prefetched.detail.type, body.prefetched.detail.data.title], [5, 'movie', 'Exact IMDb Movie']);
 });
 
 test('TMDB search filters malformed candidates before returning normalized results', async t => {
@@ -2558,6 +2561,7 @@ test('identical TMDB work within one execution context shares its upstream fetch
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
+    let detailCalls = 0;
 
     globalThis.caches = {
         default: {
@@ -2565,7 +2569,12 @@ test('identical TMDB work within one execution context shares its upstream fetch
             put: async () => undefined
         }
     };
-    globalThis.fetch = async () => {
+    globalThis.fetch = async url => {
+        if (new URL(url).pathname === '/3/movie/654') {
+            detailCalls += 1;
+            await new Promise(resolve => globalThis.setTimeout(resolve, 20));
+            return Response.json(tmdbDetail({ id: 654, title: 'Concurrent Movie' }));
+        }
         fetchCalls += 1;
         await new Promise(resolve => globalThis.setTimeout(resolve, 20));
         return Response.json({
@@ -2597,8 +2606,11 @@ test('identical TMDB work within one execution context shares its upstream fetch
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
     assert.equal((await first.json()).results[0].id, 654);
-    assert.equal((await second.json()).results[0].id, 654);
+    const secondBody = await second.json();
+    assert.equal(secondBody.results[0].id, 654);
     assert.equal(fetchCalls, 1);
+    assert.equal(detailCalls, 1, 'the embedded detail lookup is shared as well');
+    assert.equal(secondBody.prefetched.detail.data.title, 'Concurrent Movie');
 });
 
 test('resource refresh bypasses a cached partial result', async t => {

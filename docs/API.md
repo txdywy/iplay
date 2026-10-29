@@ -136,6 +136,14 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
 
 完整成功的搜索响应对浏览器返回 `Cache-Control: public, max-age=300`；任一次 TMDB 尝试或豆瓣别名失败、因截止时间跳过回退，或接口出错时仍为 `no-store`。
 
+**预取的后续响应：** Worker 按前端的路由规则预测页面的下一个 TMDB 请求，并把该请求的完整响应附在顶层 `prefetched` 中，省去一次浏览器往返：
+
+- 前端会直接打开的标题（最佳结果 `matchConfidence: "high"`，且与第二名分差不小于 `0.08`）附带 `prefetched.detail: { id, type, data }`。`data` 与 `GET /api/tmdb/detail?id={id}&type={type}` 的响应相同。
+- 没有可靠标题（无结果、`matchScore < 0.72`，或存在 `exactPerson` 而片名不是精确匹配）时附带 `prefetched.person: { query, data }`。`data` 与 `GET /api/tmdb/person?q={query}`（默认分页）的响应相同，包括同名人物的 `personCandidates`。
+- 需要用户确认候选时不预取。Worker 在搜索截止时间内最多额外等待 1.5 秒；更慢的查找在响应后继续执行以写入边缘缓存。失败、降级或上游要求停止（401/403/429/503/504）时不附带该字段。
+
+`js/api.js` 在 5 分钟内用这些数据回答完全相同的详情或默认人物请求，每次读取返回独立副本；其他媒体类型、人物 ID、分页或筛选仍正常请求。
+
 ---
 
 ### 2. TMDB 演员作品搜索

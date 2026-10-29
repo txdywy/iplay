@@ -165,6 +165,28 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         searchMeta: { matchScore: 0.864, matchedBy: 'title-contains', exactPerson: { id: 930, name: query } }
                     });
                 }
+                if (query === 'Prefetched Movie') {
+                    // The Worker embeds the detail the page opens next.
+                    return json({
+                        results: [candidate(query, 340)],
+                        searchMeta: { matchScore: 1, matchedBy: 'title-exact' },
+                        prefetched: { detail: { id: 340, type: 'movie', data: {
+                            ...candidate('Prefetched Canonical Movie', 340), genres: ['Drama'], runtime: 118, cast: ['Smoke Actor'],
+                            castDetails: [], director: ['Smoke Director'], writer: [], imdbId: 'tt1234567', summary: 'An embedded detail.'
+                        } } }
+                    });
+                }
+                if (query === 'Prefetched Actor') {
+                    return json({
+                        results: [],
+                        searchMeta: { matchScore: 0, exactPerson: { id: 940, name: query } },
+                        prefetched: { person: { query, data: {
+                            person: { id: 940, name: query, matchScore: 1, profile: poster },
+                            credits: [candidate('Prefetched Actor Film', 341)],
+                            totalResults: 1, offset: 0, limit: 36, hasMore: false, counts: { tv: 0, movie: 1 }
+                        } } }
+                    });
+                }
                 if (query === 'Exact Title Actor') {
                     return json({
                         results: [{ ...candidate(query, 331) }],
@@ -925,6 +947,23 @@ async function runExactActorIntentFlow() {
         'an exact title keeps title intent even when an actor shares its name');
 }
 
+async function runPrefetchedFollowUpFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Prefetched Movie');
+    await assertSearchReady('Prefetched Canonical Movie');
+    await waitFor("document.querySelector('#searchStatus').textContent.includes('详情已加载')");
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/detail'))"), false,
+        'the embedded detail replaces the detail request');
+    await waitFor("window.__smoke.calls.some(call => call.startsWith('/api/wiki/zh?q=Prefetched%20Canonical%20Movie'))");
+
+    await command('Page.navigate', { url: baseUrl });
+    await search('Prefetched Actor');
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Prefetched Actor'");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"341\\\"]').length"), 1);
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/person'))"), false,
+        'the embedded person answer replaces the person request');
+}
+
 async function runActorCandidateFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -1389,6 +1428,7 @@ try {
     await runTimerFallbackFlow();
     await runActorFlow();
     await runExactActorIntentFlow();
+    await runPrefetchedFollowUpFlow();
     await runActorCandidateFlow();
     await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
@@ -1397,7 +1437,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }
