@@ -46,7 +46,7 @@ test('API clients encode queries and return JSON responses', async t => {
     const result = await TmdbAPI.search('a b');
 
     assert.deepEqual(result, { results: [{ id: 1 }] });
-    assert.match(requestedUrl, /\/api\/tmdb\/search\?q=a%20b$/);
+    assert.match(requestedUrl, new RegExp(`/api/tmdb/search\\?q=a%20b&v=${RELEASE_VERSION.replaceAll('.', '\\.')}$`));
 });
 
 test('TMDB person API encodes actor names', async t => {
@@ -63,7 +63,7 @@ test('TMDB person API encodes actor names', async t => {
     const result = await TmdbAPI.searchPerson('A B');
 
     assert.deepEqual(result, { person: { name: 'A B' }, credits: [] });
-    assert.match(requestedUrl, /\/api\/tmdb\/person\?q=A%20B$/);
+    assert.match(requestedUrl, new RegExp(`/api/tmdb/person\\?q=A%20B&v=${RELEASE_VERSION.replaceAll('.', '\\.')}$`));
 });
 
 test('TMDB person API encodes pagination, type filters, and person selection', async t => {
@@ -84,7 +84,7 @@ test('TMDB person API encodes pagination, type filters, and person selection', a
         mediaType: 'movie'
     });
 
-    assert.equal(requestedUrl, 'http://localhost:8787/api/tmdb/person?q=A%20B&id=900&offset=36&limit=60&mediaType=movie');
+    assert.equal(requestedUrl, `http://localhost:8787/api/tmdb/person?q=A%20B&id=900&offset=36&limit=60&mediaType=movie&v=${RELEASE_VERSION}`);
 });
 
 test('resource and poster retries request fresh Worker data', async t => {

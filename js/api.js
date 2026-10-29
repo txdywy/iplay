@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.18';
+import { RELEASE_VERSION } from './release.js?v=1.0.19';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -10,6 +10,9 @@ const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
 const POSTER_TIMEOUT_MS = 18000;
 const OMDB_TIMEOUT_MS = 12000;
+// Successful TMDB answers are briefly browser-cacheable. Tag them by release so
+// a new frontend never reuses a response shaped for the previous Worker.
+const RELEASE_PARAM = `v=${encodeURIComponent(RELEASE_VERSION)}`;
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -74,7 +77,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
 
 export const TmdbAPI = {
     async search(query, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}`, options);
+        return fetchWithTimeout(`${API_BASE}/api/tmdb/search?q=${encodeURIComponent(query)}&${RELEASE_PARAM}`, options);
     },
     async searchPerson(query, options = {}) {
         const {
@@ -89,12 +92,13 @@ export const TmdbAPI = {
         if (offset !== undefined && offset !== null) params.push(`offset=${encodeURIComponent(offset)}`);
         if (limit !== undefined && limit !== null) params.push(`limit=${encodeURIComponent(limit)}`);
         if (mediaType) params.push(`mediaType=${encodeURIComponent(mediaType)}`);
+        params.push(RELEASE_PARAM);
         return fetchWithTimeout(`${API_BASE}/api/tmdb/person?${params.join('&')}`, requestOptions);
     },
     async getDetail(id, type, options = {}) {
         let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
         if (type !== undefined && type !== null) url += `&type=${encodeURIComponent(type)}`;
-        return fetchWithTimeout(url, options);
+        return fetchWithTimeout(`${url}&${RELEASE_PARAM}`, options);
     }
 };
 
