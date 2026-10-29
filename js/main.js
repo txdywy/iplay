@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.18';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.18';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.18';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.18';
-import { RELEASE_VERSION } from './release.js?v=1.0.18';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.19';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.19';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.19';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.19';
+import { RELEASE_VERSION } from './release.js?v=1.0.19';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.18';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.18';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.18';
+} from './match.js?v=1.0.19';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.19';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.19';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -2407,7 +2407,11 @@ async function handleSearch({ historyMode = 'push' } = {}) {
 
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
         const titleMatchScore = toFiniteNumber(tmdbSearch?.searchMeta?.matchScore);
-        const hasReliableTitleMatch = tmdbResults.length > 0
+        // An exact actor name outranks works that merely contain it, such as
+        // documentaries or compilations; an equally exact title still wins.
+        const prefersActor = Boolean(tmdbSearch?.searchMeta?.exactPerson)
+            && !/-exact$|^external-id$/.test(String(tmdbSearch?.searchMeta?.matchedBy || ''));
+        const hasReliableTitleMatch = tmdbResults.length > 0 && !prefersActor
             && (titleMatchScore === null || titleMatchScore >= 0.72);
         let personSearch = null;
         let personSearchError = null;

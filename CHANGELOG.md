@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.19] - 2026-10-29
+
+### Fixed
+
+- Searching an actor's exact name opens the actor's filmography instead of a documentary or compilation that merely contains the name. Production examples: `周星驰` opened `周星驰合集`, `梁朝伟` opened `这一刻，梁朝伟对你说`, and `斯嘉丽·约翰逊` matched `Chris Grace: As Scarlett Johansson` through a Douban alias. The Worker reports `searchMeta.exactPerson` from the people TMDB multi-search already returns; an exact title still wins, and directors keep the previous behavior.
+- Chinese actor names with no exact title stop after one TMDB request instead of running en-US, typed and Douban alias fallbacks (`张译`: three sequential attempts and ~2.9s Worker time before the person lookup could start). Latin names keep the en-US pass that can find an exact English title.
+
+### Performance
+
+- The API preconnect now uses `crossorigin`. The frontend's anonymous CORS requests could not reuse the previous credentialed connection, so the first API call paid a full TCP/TLS handshake (about 0.6s on a measured high-latency link).
+- Complete TMDB search, person and detail responses allow 5-minute browser caching on release-tagged URLs. Back/forward navigation reuses them instead of repeating round trips; failed and degraded responses remain `no-store`.
+
+### Verification
+
+- Add Worker regressions for actor intent, fallback suppression, Latin-name preservation, non-actor exclusion and cache headers, plus a browser flow for actor-versus-title routing. The new Worker tests fail against 1.0.18.
+
 ## [1.0.18] - 2026-10-20
 
 ### Performance

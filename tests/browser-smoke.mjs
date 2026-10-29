@@ -158,6 +158,19 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Unconfirmed OMDb Poster Movie': 119
                 };
                 window.__smoke.posterlessMode = ['No Poster Movie', 'Failed OMDb Poster Movie', 'Unconfirmed OMDb Poster Movie'].includes(query) ? query : '';
+                if (query === 'Overlapping Actor') {
+                    // A documentary containing the name clears the title threshold.
+                    return json({
+                        results: [{ ...candidate('Overlapping Actor Documentary', 330), matchScore: 0.864 }],
+                        searchMeta: { matchScore: 0.864, matchedBy: 'title-contains', exactPerson: { id: 930, name: query } }
+                    });
+                }
+                if (query === 'Exact Title Actor') {
+                    return json({
+                        results: [{ ...candidate(query, 331) }],
+                        searchMeta: { matchScore: 1, matchedBy: 'title-exact', exactPerson: { id: 931, name: query } }
+                    });
+                }
                 if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor', 'Responsive Actor'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
@@ -178,6 +191,11 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         { ...candidate('Comma Poster Film', 323), poster: 'https://image.tmdb.org/t/p/w500/audit-actor-comma.jpg,https://unexpected.invalid/tracker' }
                     ],
                     totalResults: 4, offset: 0, limit: 36, hasMore: false, counts: { tv: 0, movie: 4 }
+                });
+                if (query === 'Overlapping Actor') return json({
+                    person: { id: 930, name: query, matchScore: 1, profile: poster },
+                    credits: [{ ...candidate('Overlapping Actor Film', 332), mediaType: 'movie' }],
+                    totalResults: 1, offset: 0, limit: 36, hasMore: false, counts: { tv: 0, movie: 1 }
                 });
                 if (query === 'Medium Actor') return json({
                     person: { id: 915, name: 'Medium Actor Match', matchScore: selectedId ? 1 : 0.78, profile: poster },
@@ -360,6 +378,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     118: 'Failed OMDb Poster Movie',
                     119: 'Unconfirmed OMDb Poster Movie',
                     200: 'Actor Movie',
+                    331: 'Exact Title Actor',
                     201: 'Smoke Series'
                 };
                 let title = titles[id] || 'Smoke Movie';
@@ -890,6 +909,22 @@ async function runActorFlow() {
     await waitFor("history.state?.kind === 'home' && location.search === '' && document.querySelector('#actorResultsArea')?.classList.contains('hidden') && document.querySelector('#resultsArea')?.classList.contains('hidden') && document.querySelector('#searchInput')?.value === ''");
 }
 
+async function runExactActorIntentFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Overlapping Actor');
+    await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Overlapping Actor'");
+    assert.equal(await evaluate("document.querySelectorAll('#actorCreditList button[data-media-id=\\\"332\\\"]').length"), 1);
+    assert.equal(await evaluate("document.querySelector('#resultsArea').classList.contains('hidden')"), true);
+    assert.equal(await evaluate('window.__smoke.detailCalls'), 0, 'a documentary containing an actor name must not open as the result');
+    assert.equal(await evaluate("new URL(location.href).searchParams.get('person')"), '930');
+
+    await command('Page.navigate', { url: baseUrl });
+    await search('Exact Title Actor');
+    await assertSearchReady('Exact Title Actor');
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/person'))"), false,
+        'an exact title keeps title intent even when an actor shares its name');
+}
+
 async function runActorCandidateFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -1353,6 +1388,7 @@ try {
     await runUnsafePosterFlow();
     await runTimerFallbackFlow();
     await runActorFlow();
+    await runExactActorIntentFlow();
     await runActorCandidateFlow();
     await runActorCandidateRaceFlow();
     await runActorPaginationFlow();
@@ -1361,7 +1397,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }
