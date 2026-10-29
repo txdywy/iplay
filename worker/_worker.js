@@ -302,6 +302,12 @@ const PERSON_DEFAULT_PAGE_SIZE = 36;
 const PERSON_MAX_PAGE_SIZE = 60;
 const SEARCH_ACCEPT_SCORE = 0.72;
 const SEARCH_AUTO_MATCH_SCORE = 0.56;
+// The page asks before opening a title this close to the runner-up.
+const SEARCH_CLOSE_MATCH_GAP = 0.08;
+// A search answer carries the TMDB answer the page requests next when that
+// lookup finishes within this extra wait and the search deadline.
+const SEARCH_PREFETCH_WAIT_MS = 1500;
+const SEARCH_PREFETCH_MIN_WAIT_MS = 250;
 // Complete TMDB answers are deterministic for a release-tagged client URL.
 // Let browsers reuse them briefly for history navigation; failures and
 // degraded fallbacks keep the jsonResponse default of no-store.
@@ -1339,7 +1345,7 @@ function findExactTmdbActor(results, query) {
     return best ? { id: toSafeTmdbId(best.id), name: getTmdbPersonName(best) } : null;
 }
 
-function buildTmdbSearchResponse(ranked, intent, attempts, { exactPerson = null, cacheable = false } = {}) {
+async function buildTmdbSearchResponse(ranked, intent, attempts, { exactPerson = null, cacheable = false, prefetch = null } = {}) {
     const topMatch = getTopSearchMatch(ranked);
     const results = ranked
         .filter(entry => entry.match.score >= SEARCH_AUTO_MATCH_SCORE)
@@ -1347,7 +1353,7 @@ function buildTmdbSearchResponse(ranked, intent, attempts, { exactPerson = null,
         .map(entry => normalizeTmdbItem(entry.item, entry.mediaType, entry.match))
         .filter(Boolean);
 
-    return jsonResponse({
+    const body = {
         page: 1,
         totalResults: results.length,
         results,
@@ -1364,7 +1370,49 @@ function buildTmdbSearchResponse(ranked, intent, attempts, { exactPerson = null,
             attempts,
             ...(exactPerson ? { exactPerson } : {})
         }
-    }, 200, cacheable ? TMDB_BROWSER_CACHE_HEADERS : {});
+    };
+    const prefetched = prefetch ? await prefetchTmdbFollowUp(body, prefetch) : null;
+    if (prefetched) body.prefetched = prefetched;
+    return jsonResponse(body, 200, cacheable ? TMDB_BROWSER_CACHE_HEADERS : {});
+}
+
+// Mirrors the page's routing in js/main.js and js/match.js: a confident title
+// opens its detail, anything else asks for an actor first. A mismatch only
+// leaves an unused payload; the page then makes its normal request.
+function predictTmdbFollowUp(results, searchMeta) {
+    const prefersActor = Boolean(searchMeta.exactPerson) && !/-exact$|^external-id$/.test(searchMeta.matchedBy || "");
+    if (results.length === 0 || prefersActor || searchMeta.matchScore < SEARCH_ACCEPT_SCORE) return { kind: "person" };
+    const [top, second] = results;
+    if (top.matchConfidence !== "high") return null;
+    if (second && top.matchScore - second.matchScore < SEARCH_CLOSE_MATCH_GAP) return null;
+    return { kind: "detail", id: top.id, type: top.mediaType };
+}
+
+async function prefetchTmdbFollowUp(body, { query, env, ctx, deadline }) {
+    const followUp = predictTmdbFollowUp(body.results, body.searchMeta);
+    const waitMs = Math.min(SEARCH_PREFETCH_WAIT_MS, deadline.expiresAt - Date.now());
+    if (!followUp || waitMs < SEARCH_PREFETCH_MIN_WAIT_MS) return null;
+
+    const lookup = followUp.kind === "detail"
+        ? fetchNormalizedTmdbDetail(followUp.id, [followUp.type], env, ctx)
+            .then(data => ({ detail: { id: followUp.id, type: followUp.type, data } }))
+        : buildTmdbPersonPayload(query, env, ctx, { personId: null, offset: 0, limit: PERSON_DEFAULT_PAGE_SIZE, requestedMediaType: null })
+            // Only a complete answer may stand in for the page's own request.
+            .then(({ body: data, cacheable }) => cacheable ? { person: { query, data } } : null);
+    const settled = lookup.catch(error => {
+        logEvent("warn", "tmdb_prefetch_failed", { kind: followUp.kind, error: logErrorMessage(error) });
+        return null;
+    });
+    // A slower lookup keeps running and caches its upstream answer, so the
+    // page's own request after this response can still reuse it.
+    ctx?.waitUntil?.(settled);
+    let timer;
+    const timeout = new Promise(resolve => { timer = setTimeout(resolve, waitMs, null); });
+    try {
+        return await Promise.race([settled, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 function pickBestTmdbPosterCandidate(items, title, year) {
@@ -1525,148 +1573,156 @@ async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
     const mediaTypeCheck = validatePersonMediaType(options.mediaType);
     if (mediaTypeCheck.error) return mediaTypeCheck.error;
 
-    const offset = offsetCheck.value;
-    const limit = limitCheck.value;
-    const requestedMediaType = mediaTypeCheck.value;
-
     try {
-        const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        let best = null;
-        let attempts = 0;
-        let degraded = false;
-
-        if (personId) {
-            best = {
-                person: { id: Number(personId.value) },
-                score: query ? scoreTmdbPerson(query, { id: Number(personId.value), name: query }) : 1,
-                method: query ? "name-exact" : "person-id",
-                sourceIndex: 0
-            };
-        } else {
-            const people = [];
-            const languages = ["zh-CN", "en-US"];
-            let lastError = null;
-
-            for (const language of languages) {
-                if (isDeadlineExpired(deadline)) {
-                    degraded = true;
-                    break;
-                }
-                attempts += 1;
-                try {
-                    const data = await fetchTmdbPersonSearch(query, language, env, ctx, { deadline });
-                    if (Array.isArray(data?.results)) {
-                        people.push(...data.results);
-                        if (data.results.some(person => scoreTmdbPerson(query, person) >= SEARCH_ACCEPT_SCORE)) break;
-                    }
-                } catch (error) {
-                    lastError = error;
-                    degraded = true;
-                    if (shouldStopSearchFallback(error)) break;
-                }
-            }
-
-            if (people.length === 0 && lastError) throw lastError;
-
-            const rankedPeople = people
-                .filter(person => isObject(person) && toSafeTmdbId(person.id) !== null)
-                .map((person, sourceIndex) => {
-                    const score = scoreTmdbPerson(query, person);
-                    return {
-                        person,
-                        score,
-                        method: score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy",
-                        sourceIndex
-                    };
-                })
-                .sort((left, right) => (
-                    right.score - left.score
-                    || (right.person.known_for_department === "Acting" ? 1 : 0) - (left.person.known_for_department === "Acting" ? 1 : 0)
-                    || (toFiniteMetric(right.person.popularity, 0) - toFiniteMetric(left.person.popularity, 0))
-                    || left.sourceIndex - right.sourceIndex
-                ));
-
-            const distinctPeople = [];
-            const seenPeople = new Set();
-            for (const candidate of rankedPeople) {
-                const id = toSafeTmdbId(candidate.person.id);
-                if (seenPeople.has(id)) continue;
-                seenPeople.add(id);
-                distinctPeople.push(candidate);
-            }
-
-            if (isAmbiguousTmdbPersonMatch(query, distinctPeople)) {
-                const candidates = normalizePersonCandidates(distinctPeople, query);
-                return jsonResponse({
-                    person: null,
-                    personCandidates: candidates,
-                    credits: [],
-                    totalResults: 0,
-                    offset: 0,
-                    limit,
-                    hasMore: false,
-                    counts: { tv: 0, movie: 0 },
-                    searchMeta: {
-                        query,
-                        attempts,
-                        confidence: "ambiguous",
-                        ambiguous: true,
-                        matchScore: Number((distinctPeople[0]?.score || 0).toFixed(3))
-                    }
-                }, 200, degraded ? {} : TMDB_BROWSER_CACHE_HEADERS);
-            }
-
-            best = distinctPeople[0];
-            if (!best || best.score < SEARCH_ACCEPT_SCORE) {
-                return jsonResponse({
-                    person: null,
-                    credits: [],
-                    totalResults: 0,
-                    offset: 0,
-                    limit,
-                    hasMore: false,
-                    counts: { tv: 0, movie: 0 },
-                    searchMeta: { query, attempts, confidence: "none", matchScore: 0 }
-                }, 200, degraded ? {} : TMDB_BROWSER_CACHE_HEADERS);
-            }
-        }
-
-        const selectedPersonId = toSafeTmdbId(best.person.id);
-        const personData = await fetchTmdbJson(`/person/${selectedPersonId}`, {
-            language: "zh-CN",
-            append_to_response: "combined_credits"
-        }, env, ctx, { deadline });
-        const person = normalizeTmdbPerson(personData, query, personId ? null : best);
-        const allCredits = normalizeTmdbPersonCredits(personData);
-        const filteredCredits = requestedMediaType
-            ? allCredits.filter(credit => credit.mediaType === requestedMediaType)
-            : allCredits;
-        const credits = filteredCredits.slice(offset, offset + limit);
-        const counts = {
-            tv: allCredits.filter(credit => credit.mediaType === "tv").length,
-            movie: allCredits.filter(credit => credit.mediaType === "movie").length
-        };
-
-        return jsonResponse({
-            person,
-            credits,
-            totalResults: filteredCredits.length,
-            offset,
-            limit,
-            hasMore: offset + credits.length < filteredCredits.length,
-            counts,
-            searchMeta: {
-                query,
-                attempts,
-                confidence: best.score >= 0.86 ? "high" : "medium",
-                matchScore: Number(best.score.toFixed(3)),
-                matchedBy: best.method
-            }
-        }, 200, degraded ? {} : TMDB_BROWSER_CACHE_HEADERS);
+        const { body, cacheable } = await buildTmdbPersonPayload(query, env, ctx, {
+            personId: personId ? personId.value : null,
+            offset: offsetCheck.value,
+            limit: limitCheck.value,
+            requestedMediaType: mediaTypeCheck.value
+        });
+        return jsonResponse(body, 200, cacheable ? TMDB_BROWSER_CACHE_HEADERS : {});
     } catch (error) {
         logEvent("error", "tmdb_person_failed", { error: logErrorMessage(error) });
         return errorResponse(error);
     }
+}
+
+// Takes validated inputs. `cacheable` is false when a skipped or failed lookup
+// may have hidden a better person, so browsers must ask again.
+async function buildTmdbPersonPayload(query, env, ctx, { personId, offset, limit, requestedMediaType }) {
+    const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
+    let best;
+    let attempts = 0;
+    let degraded = false;
+
+    if (personId) {
+        best = {
+            person: { id: Number(personId) },
+            score: query ? scoreTmdbPerson(query, { id: Number(personId), name: query }) : 1,
+            method: query ? "name-exact" : "person-id",
+            sourceIndex: 0
+        };
+    } else {
+        const people = [];
+        const languages = ["zh-CN", "en-US"];
+        let lastError = null;
+
+        for (const language of languages) {
+            if (isDeadlineExpired(deadline)) {
+                degraded = true;
+                break;
+            }
+            attempts += 1;
+            try {
+                const data = await fetchTmdbPersonSearch(query, language, env, ctx, { deadline });
+                if (Array.isArray(data?.results)) {
+                    people.push(...data.results);
+                    if (data.results.some(person => scoreTmdbPerson(query, person) >= SEARCH_ACCEPT_SCORE)) break;
+                }
+            } catch (error) {
+                lastError = error;
+                degraded = true;
+                if (shouldStopSearchFallback(error)) break;
+            }
+        }
+
+        if (people.length === 0 && lastError) throw lastError;
+
+        const rankedPeople = people
+            .filter(person => isObject(person) && toSafeTmdbId(person.id) !== null)
+            .map((person, sourceIndex) => {
+                const score = scoreTmdbPerson(query, person);
+                return {
+                    person,
+                    score,
+                    method: score === 1 ? "name-exact" : score >= 0.72 ? "name-contains" : "name-fuzzy",
+                    sourceIndex
+                };
+            })
+            .sort((left, right) => (
+                right.score - left.score
+                || (right.person.known_for_department === "Acting" ? 1 : 0) - (left.person.known_for_department === "Acting" ? 1 : 0)
+                || (toFiniteMetric(right.person.popularity, 0) - toFiniteMetric(left.person.popularity, 0))
+                || left.sourceIndex - right.sourceIndex
+            ));
+
+        const distinctPeople = [];
+        const seenPeople = new Set();
+        for (const candidate of rankedPeople) {
+            const id = toSafeTmdbId(candidate.person.id);
+            if (seenPeople.has(id)) continue;
+            seenPeople.add(id);
+            distinctPeople.push(candidate);
+        }
+
+        if (isAmbiguousTmdbPersonMatch(query, distinctPeople)) {
+            const candidates = normalizePersonCandidates(distinctPeople, query);
+            return { cacheable: !degraded, body: {
+                person: null,
+                personCandidates: candidates,
+                credits: [],
+                totalResults: 0,
+                offset: 0,
+                limit,
+                hasMore: false,
+                counts: { tv: 0, movie: 0 },
+                searchMeta: {
+                    query,
+                    attempts,
+                    confidence: "ambiguous",
+                    ambiguous: true,
+                    matchScore: Number((distinctPeople[0]?.score || 0).toFixed(3))
+                }
+            } };
+        }
+
+        best = distinctPeople[0];
+        if (!best || best.score < SEARCH_ACCEPT_SCORE) {
+            return { cacheable: !degraded, body: {
+                person: null,
+                credits: [],
+                totalResults: 0,
+                offset: 0,
+                limit,
+                hasMore: false,
+                counts: { tv: 0, movie: 0 },
+                searchMeta: { query, attempts, confidence: "none", matchScore: 0 }
+            } };
+        }
+    }
+
+    const selectedPersonId = toSafeTmdbId(best.person.id);
+    const personData = await fetchTmdbJson(`/person/${selectedPersonId}`, {
+        language: "zh-CN",
+        append_to_response: "combined_credits"
+    }, env, ctx, { deadline });
+    const person = normalizeTmdbPerson(personData, query, personId ? null : best);
+    const allCredits = normalizeTmdbPersonCredits(personData);
+    const filteredCredits = requestedMediaType
+        ? allCredits.filter(credit => credit.mediaType === requestedMediaType)
+        : allCredits;
+    const credits = filteredCredits.slice(offset, offset + limit);
+    const counts = {
+        tv: allCredits.filter(credit => credit.mediaType === "tv").length,
+        movie: allCredits.filter(credit => credit.mediaType === "movie").length
+    };
+
+    return { cacheable: !degraded, body: {
+        person,
+        credits,
+        totalResults: filteredCredits.length,
+        offset,
+        limit,
+        hasMore: offset + credits.length < filteredCredits.length,
+        counts,
+        searchMeta: {
+            query,
+            attempts,
+            confidence: best.score >= 0.86 ? "high" : "medium",
+            matchScore: Number(best.score.toFixed(3)),
+            matchedBy: best.method
+        }
+    } };
 }
 
 async function handleTmdbSearch(query, env, ctx) {
@@ -1744,7 +1800,7 @@ async function handleTmdbSearch(query, env, ctx) {
                 const data = await fetchTmdbFindByExternalId(imdbId, "zh-CN", env, ctx, { deadline });
                 successfulAttempt = true;
                 ranked = rankTmdbCandidates(getTmdbFindEntries(data), intent, scoreText);
-                return buildTmdbSearchResponse(ranked, intent, 1, { cacheable: true });
+                return await buildTmdbSearchResponse(ranked, intent, 1, { cacheable: true, prefetch: { query, env, ctx, deadline } });
             } catch (error) {
                 logEvent("error", "tmdb_external_id_failed", { error: logErrorMessage(error) });
                 return errorResponse(error);
@@ -1810,7 +1866,12 @@ async function handleTmdbSearch(query, env, ctx) {
             throw lastError;
         }
 
-        return buildTmdbSearchResponse(ranked, intent, attempts, { exactPerson, cacheable: !degraded });
+        return await buildTmdbSearchResponse(ranked, intent, attempts, {
+            exactPerson,
+            cacheable: !degraded,
+            // An upstream that asked us to stop would refuse the follow-up too.
+            prefetch: stopFallback ? null : { query, env, ctx, deadline }
+        });
     } catch (e) {
         logEvent("error", "tmdb_search_failed", { error: logErrorMessage(e) });
         return errorResponse(e);
@@ -1827,12 +1888,17 @@ async function handleTmdbDetail(id, type, env, ctx) {
     if (typeCheck.error) return typeCheck.error;
     type = typeCheck.value;
 
-    const apiType = type;
     // A movie id and a TV id belong to different namespaces. Only legacy
     // untyped links may probe both; an explicit type must preserve identity.
-    const attemptOrder = hasExplicitType
-        ? [apiType]
-        : ["movie", "tv"];
+    const attemptOrder = hasExplicitType ? [type] : ["movie", "tv"];
+    try {
+        return jsonResponse(await fetchNormalizedTmdbDetail(id, attemptOrder, env, ctx), 200, TMDB_BROWSER_CACHE_HEADERS);
+    } catch (error) {
+        return errorResponse(error);
+    }
+}
+
+async function fetchNormalizedTmdbDetail(id, attemptOrder, env, ctx) {
     const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
     let lastError = null;
 
@@ -1842,17 +1908,14 @@ async function handleTmdbDetail(id, type, env, ctx) {
                 language: "zh-CN",
                 append_to_response: "external_ids,credits"
             }, env, ctx, { deadline });
-
-            return jsonResponse(normalizeTmdbDetail(data, candidateType), 200, TMDB_BROWSER_CACHE_HEADERS);
+            return normalizeTmdbDetail(data, candidateType);
         } catch (e) {
             lastError = e;
-            if (e.status !== 404) {
-                return errorResponse(e);
-            }
+            if (e.status !== 404) throw e;
         }
     }
 
-    return errorResponse(lastError || createHttpError("TMDB detail not found", 404), 404);
+    throw lastError || createHttpError("TMDB detail not found", 404);
 }
 
 const DOUBAN_SEARCH_HEADERS = {

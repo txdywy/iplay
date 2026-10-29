@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.19';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.19';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.19';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.19';
-import { RELEASE_VERSION } from './release.js?v=1.0.19';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.20';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.20';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.20';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.20';
+import { RELEASE_VERSION } from './release.js?v=1.0.20';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.19';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.19';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.19';
+} from './match.js?v=1.0.20';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.20';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.20';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 

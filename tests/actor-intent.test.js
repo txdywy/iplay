@@ -32,7 +32,7 @@ const actor = (id, name, extra = {}) => ({
 const work = (id, title, extra = {}) => ({
     id, media_type: 'movie', title, original_title: title, release_date: '2023-01-01', vote_count: 10, ...extra
 });
-const tmdbSearches = calls => calls.filter(url => url.hostname === 'api.themoviedb.org' && url.pathname.startsWith('/3/search/'));
+const tmdbSearches = calls => calls.filter(url => url.hostname === 'api.themoviedb.org' && /^\/3\/search\/(?:multi|movie|tv)$/.test(url.pathname));
 
 test('a Chinese actor name is marked as actor intent and skips title-only fallbacks', async t => {
     const calls = mockUpstreams(t, url => {
@@ -54,15 +54,20 @@ test('a Chinese actor name is marked as actor intent and skips title-only fallba
     assert.equal(response.headers.get('cache-control'), BROWSER_CACHE);
 });
 
-test('a Chinese actor without matching works answers after one upstream search', async t => {
-    const calls = mockUpstreams(t, () => Response.json({ results: [actor(41, '张译')] }));
+test('a Chinese actor without matching works answers after one title search and embeds the person', async t => {
+    const calls = mockUpstreams(t, url => url.pathname === '/3/person/41'
+        ? Response.json({ id: 41, name: '张译', combined_credits: { cast: [] } })
+        : Response.json({ results: [actor(41, '张译')] }));
 
     const { body } = await call(`/api/tmdb/search?q=${encodeURIComponent('张译')}`);
 
     assert.deepEqual(body.results, []);
     assert.deepEqual(body.searchMeta.exactPerson, { id: 41, name: '张译' });
     assert.equal(body.searchMeta.attempts, 1);
-    assert.equal(calls.length, 1, 'no en-US or Douban requests are needed before the person lookup');
+    assert.deepEqual(calls.map(url => url.pathname), ['/3/search/multi', '/3/search/person', '/3/person/41'],
+        'no en-US or Douban title requests come before the person lookup');
+    assert.equal(body.prefetched.person.query, '张译');
+    assert.equal(body.prefetched.person.data.person.id, 41);
 });
 
 test('Latin actor names keep the en-US title pass that can find an exact English title', async t => {

@@ -18,6 +18,7 @@ export default [
         fetch: "readonly",
         AbortController: "readonly",
         DOMException: "readonly",
+        structuredClone: "readonly",
         location: "readonly",
         requestAnimationFrame: "readonly",
         URL: "readonly"

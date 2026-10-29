@@ -328,3 +328,72 @@ test('OMDb client keeps provider failures recoverable and preserves caller abort
     );
     assert.equal(fetchCalls, 1);
 });
+
+test('an embedded follow-up answer serves identical TMDB requests without a round trip', async t => {
+    const originalFetch = globalThis.fetch;
+    const requested = [];
+    const detail = { id: 77, mediaType: 'movie', title: 'Embedded Detail', cast: [{ name: 'A' }] };
+    const person = { person: { id: 78, name: 'Embedded Actor' }, credits: [{ id: 1 }], searchMeta: { query: 'Embedded Actor' } };
+    globalThis.fetch = async url => {
+        requested.push(new URL(url));
+        if (new URL(url).pathname === '/api/tmdb/search') {
+            return Response.json({ results: [], prefetched: { detail: { id: 77, type: 'movie', data: detail }, person: { query: 'Embedded Actor', data: person } } });
+        }
+        return Response.json({ fetched: new URL(url).pathname });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { TmdbAPI } = await import('../js/api.js');
+    const searchResult = await TmdbAPI.search('Embedded');
+    assert.equal('prefetched' in searchResult, false, 'callers only see the search answer');
+
+    const first = await TmdbAPI.getDetail(77, 'movie', { signal: new globalThis.AbortController().signal });
+    assert.deepEqual(first, detail);
+    first.cast.push({ name: 'mutated' });
+    assert.deepEqual((await TmdbAPI.getDetail(77, 'movie')).cast, [{ name: 'A' }], 'every read is an independent copy');
+    assert.deepEqual(await TmdbAPI.searchPerson('Embedded Actor'), person);
+    assert.equal(requested.length, 1, 'detail and default person reads stay local');
+
+    assert.deepEqual(await TmdbAPI.getDetail(77, 'tv'), { fetched: '/api/tmdb/detail' }, 'another media type is another identity');
+    assert.deepEqual(await TmdbAPI.searchPerson('Embedded Actor', { offset: 36, limit: 36 }), { fetched: '/api/tmdb/person' },
+        'only the default page was embedded');
+    assert.equal(requested.length, 3);
+
+    const controller = new globalThis.AbortController();
+    controller.abort();
+    await assert.rejects(TmdbAPI.getDetail(77, 'movie', { signal: controller.signal }), error => error.name === 'AbortError');
+});
+
+test('malformed embedded answers are ignored', async t => {
+    const originalFetch = globalThis.fetch;
+    const requested = [];
+    globalThis.fetch = async url => {
+        requested.push(new URL(url).pathname);
+        if (new URL(url).pathname === '/api/tmdb/search') {
+            return Response.json({ results: [], prefetched: { detail: { id: '79', type: 'movie', data: { title: 'string id' } }, person: { query: '', data: {} } } });
+        }
+        return Response.json({ fetched: true });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { TmdbAPI } = await import('../js/api.js');
+    await TmdbAPI.search('Malformed');
+    assert.deepEqual(await TmdbAPI.getDetail('79', 'movie'), { fetched: true });
+    assert.deepEqual(requested, ['/api/tmdb/search', '/api/tmdb/detail']);
+});
+
+test('OMDb stops for this page once the Worker reports it is not configured', async t => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+        fetchCalls += 1;
+        return Response.json({ error: 'OMDb API not configured' }, { status: 503 });
+    };
+    t.after(() => { globalThis.fetch = originalFetch; });
+
+    const { OmdbAPI } = await import('../js/api.js');
+    assert.equal(await OmdbAPI.getById('tt7654321'), null);
+    assert.equal(await OmdbAPI.getById('tt7654322'), null);
+    assert.equal(await OmdbAPI.search('Another Title', 2024), null);
+    assert.equal(fetchCalls, 1, 'a missing key is permanent until the Worker is redeployed');
+});
