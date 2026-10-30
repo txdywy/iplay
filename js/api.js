@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.20';
+import { RELEASE_VERSION } from './release.js?v=1.0.21';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -41,14 +41,26 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isPrefetchedPerson(value) {
+    return isPlainObject(value) && Number.isSafeInteger(value.id) && value.id > 0
+        && typeof value.name === 'string' && Boolean(value.name.trim());
+}
+
 function rememberPrefetched(prefetched) {
     if (!isPlainObject(prefetched)) return;
     const { detail, person } = prefetched;
     const entries = [];
-    if (isPlainObject(detail?.data) && Number.isSafeInteger(detail.id) && (detail.type === 'movie' || detail.type === 'tv')) {
+    if (isPlainObject(detail?.data) && Number.isSafeInteger(detail.id) && detail.id > 0
+        && (detail.type === 'movie' || detail.type === 'tv')
+        && detail.data.id === detail.id && detail.data.mediaType === detail.type
+        && typeof detail.data.title === 'string' && detail.data.title.trim()) {
         entries.push([tmdbDetailUrl(detail.id, detail.type), detail.data]);
     }
-    if (isPlainObject(person?.data) && typeof person.query === 'string' && person.query) {
+    if (isPlainObject(person?.data) && typeof person.query === 'string' && person.query.trim()
+        && Array.isArray(person.data.credits)
+        && (person.data.person === null || isPrefetchedPerson(person.data.person))
+        && (!person.data.searchMeta?.ambiguous || (Array.isArray(person.data.personCandidates)
+            && person.data.personCandidates.length > 0 && person.data.personCandidates.every(isPrefetchedPerson)))) {
         entries.push([tmdbPersonUrl(person.query), person.data]);
     }
     const expiresAt = Date.now() + PREFETCH_TTL_MS;
@@ -61,14 +73,21 @@ function rememberPrefetched(prefetched) {
     }
 }
 
-function readPrefetched(url, signal) {
+function readPrefetched(url, options = {}) {
+    if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    // A caller explicitly requesting revalidation must reach fetch. Invalidate
+    // the local answer as well so a later read cannot resurrect stale data.
+    if (['no-store', 'reload', 'no-cache'].includes(options.cache)) {
+        prefetchedResponses.delete(url);
+        return null;
+    }
+    if (options.method && options.method.toUpperCase() !== 'GET') return null;
     const entry = prefetchedResponses.get(url);
     if (!entry) return null;
     if (entry.expiresAt <= Date.now()) {
         prefetchedResponses.delete(url);
         return null;
     }
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     // Callers extend credit lists in place; each read gets its own copy.
     return structuredClone(entry.data);
 }
@@ -156,11 +175,11 @@ export const TmdbAPI = {
             ...requestOptions
         } = options;
         const url = tmdbPersonUrl(query, { personId, offset, limit, mediaType });
-        return readPrefetched(url, requestOptions.signal) || fetchWithTimeout(url, requestOptions);
+        return readPrefetched(url, requestOptions) || fetchWithTimeout(url, requestOptions);
     },
     async getDetail(id, type, options = {}) {
         const url = tmdbDetailUrl(id, type);
-        return readPrefetched(url, options.signal) || fetchWithTimeout(url, options);
+        return readPrefetched(url, options) || fetchWithTimeout(url, options);
     }
 };
 

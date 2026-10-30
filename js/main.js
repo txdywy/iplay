@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.20';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.20';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.20';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.20';
-import { RELEASE_VERSION } from './release.js?v=1.0.20';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.21';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.21';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.21';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.21';
+import { RELEASE_VERSION } from './release.js?v=1.0.21';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.20';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.20';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.20';
+} from './match.js?v=1.0.21';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.21';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.21';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -2105,8 +2105,11 @@ function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, se
     }
 
     setEnrichmentStatus(els.omdbStatus, '正在补充 IMDb / OMDb 数据…', true);
-    OmdbAPI.getById(imdbId, searchOptions).then(omdbProfile => {
+    OmdbAPI.getById(imdbId, searchOptions).then(result => {
         if (!isActiveSearch(searchId, loadId)) return;
+        // The direct profile path must enforce the same IMDb identity boundary
+        // as the poster fallback before attaching ratings or an image.
+        const omdbProfile = result?.imdbId === imdbId ? result : null;
         if (omdbProfile) {
             viewModel.omdbProfile = omdbProfile;
             const safePoster = toSafeImageUrl(omdbProfile.poster);
@@ -2276,6 +2279,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             const failedPosterUrls = viewModel.failedPosterUrls;
             const posterFallbackPending = viewModel.posterFallbackPending;
             const existingOmdbProfile = viewModel.omdbProfile;
+            const conflictingImdb = Boolean(tmdbDetail.imdbId && existingOmdbProfile?.imdbId
+                && existingOmdbProfile.imdbId !== tmdbDetail.imdbId);
             const previousQueryKey = resourceQueryKey(selectedCandidate);
             const previousSynopsis = { summary: viewModel.summary, source: viewModel.overviewSource };
             const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
@@ -2283,7 +2288,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             viewModel.failedPosterUrls = failedPosterUrls;
             viewModel.posterFallbackPending = posterFallbackPending;
             const detailPoster = toSafeImageUrl(tmdbDetail.poster);
-            if (existingPoster && (existingPosterSource === 'fallback' || posterFallbackPending)
+            if (existingPoster && !conflictingImdb && (existingPosterSource === 'fallback' || posterFallbackPending)
                 && (!detailPoster || failedPosterUrls.has(detailPoster))) {
                 viewModel.posterUrl = existingPoster;
                 viewModel.posterSource = existingPosterSource;

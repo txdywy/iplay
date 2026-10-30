@@ -198,7 +198,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 }
                 const candidatePoster = query === 'Unsafe Poster Movie'
                         ? 'javascript:alert(1)'
-                        : window.__smoke.posterlessMode ? null : poster;
+                        : window.__smoke.posterlessMode || (query === 'Retained Enrichment Movie' && window.__smoke.retentionPosterMode) ? null : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
             if (url.pathname === '/api/tmdb/person') {
@@ -421,7 +421,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const response = json({
                     ...candidate(title, id),
                     year: id === 111 || (id === 116 && window.__smoke.retentionRecovery === 'canonical') ? '2025' : '2024',
-                    poster: id >= 117 && id <= 119 ? null : id === 112 ? canonicalPoster : poster,
+                    poster: (id >= 117 && id <= 119) || (id === 116 && window.__smoke.retentionPosterMode) ? null : id === 112 ? canonicalPoster : poster,
                     genres: ['Drama'],
                     runtime: 120,
                     status: 'Released',
@@ -455,8 +455,11 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 : url.searchParams.get('q') === 'Canonical Renamed Movie' ? '详情确认后的新版作品简介。' : '中文烟测简介。' });
             if (url.pathname === '/api/omdb') {
                 if (window.__smoke.posterlessMode === 'Failed OMDb Poster Movie') return json({ error: 'temporary OMDb outage' }, 503);
-                if (window.__smoke.posterlessMode) return json({ omdb: true, imdb: 8.4,
-                    imdbId: window.__smoke.posterlessMode === 'Unconfirmed OMDb Poster Movie' ? 'tt7654321' : 'tt1234567', poster: null });
+                if (window.__smoke.posterlessMode) {
+                    const mismatched = window.__smoke.posterlessMode === 'Unconfirmed OMDb Poster Movie';
+                    return json({ omdb: true, imdb: mismatched ? 2.0 : 8.4,
+                        imdbId: mismatched ? 'tt7654321' : 'tt1234567', poster: mismatched ? canonicalPoster : null });
+                }
                 return window.__smoke.retentionRecovery && window.__smoke.detailAttempts[116] > 1
                     ? json({ error: 'supplement outage' }, 503)
                     : json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
@@ -543,9 +546,10 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             }
             if (url.pathname === '/api/poster') {
                 window.__smoke.posterCalls += 1;
+                if (url.searchParams.get('title') === 'Recovered Retained Movie' && window.__smoke.retentionPosterMode) return json({ error: 'supplement outage' }, 503);
                 if (url.searchParams.get('title') === 'Retained Enrichment Movie') return window.__smoke.detailAttempts[116] > 1
                     ? json({ error: 'supplement outage' }, 503)
-                    : json({ tmdb: true, tmdbId: 116, mediaType: 'movie', poster, omdb: { omdb: true, imdb: 8.4, imdbId: 'tt1234567' } });
+                    : json({ tmdb: true, tmdbId: 116, mediaType: 'movie', poster: window.__smoke.retentionPosterMode ? fallbackPoster : poster, omdb: { omdb: true, imdb: 8.4, imdbId: 'tt1234567' } });
                 if (url.searchParams.get('title') === 'Slow Broken Poster Movie') {
                     await new Promise(resolve => setTimeout(resolve, 650));
                     return json({ tmdb: true, tmdbId: 113, mediaType: 'movie', poster: fallbackPoster });
@@ -762,6 +766,11 @@ async function runConfirmedPosterAbsenceFlow() {
             assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src').startsWith('data:image/svg+xml')"), true);
         } else {
             await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+            if (title === 'Unconfirmed OMDb Poster Movie') {
+                assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), true,
+                    'a mismatched IMDb profile must not add another work\'s rating or poster');
+                assert.equal(await evaluate("document.querySelector('#omdbFields').textContent.includes('2.0/10')"), false);
+            }
         }
     }
 }
@@ -1394,6 +1403,21 @@ async function runDetailRetryRecoveryIdentityFlow() {
     }
 }
 
+async function runFallbackPosterRecoveryIdentityFlow() {
+    for (const recovery of ['same', 'canonical']) {
+        await command('Page.navigate', { url: baseUrl });
+        await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+        await evaluate('window.__smoke.retentionPosterMode = true');
+        await search('Retained Enrichment Movie');
+        await assertSearchReady('Retained Enrichment Movie');
+        await waitFor(`document.querySelector('#dataNotice button') && document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+        await evaluate(`window.__smoke.retentionRecovery = ${JSON.stringify(recovery)}; document.querySelector('#dataNotice button').click()`);
+        await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice').classList.contains('hidden') && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
+        assert.equal(await evaluate(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`), recovery === 'same',
+            'a fallback poster from a conflicting IMDb identity must not survive canonical recovery');
+    }
+}
+
 try {
     await runResourceKeyboardAndLongTitleFlow();
     await runCompleteResourceVisibilityFlow();
@@ -1401,6 +1425,7 @@ try {
     await runActorResponsivePosterFlow();
     await runDetailRetryPreservesEnrichmentFlow();
     await runDetailRetryRecoveryIdentityFlow();
+    await runFallbackPosterRecoveryIdentityFlow();
     await runSharedIdentityValidationFlow();
     await runCanonicalEnrichmentFlow();
     await runAlternatingResourceRetryFlow();
@@ -1437,7 +1462,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['fallback-poster-recovery-identity', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

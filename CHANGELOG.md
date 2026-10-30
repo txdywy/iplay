@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.21] - 2026-10-30
+
+### Security
+
+- Reject TMDB redirects before following them, preventing bearer credentials from reaching redirect destinations under the configured Workers compatibility target. Native workerd checks assert that no redirected request is sent.
+
+### Fixed
+
+- Preserve TMDB HTTP errors even when gateways return HTML or empty bodies, so authentication failures, rate limits and outages stop fallbacks, and legacy untyped details can still recover from a movie `404` to the matching TV namespace.
+- Validate embedded TMDB detail identities and person payloads before caching them. Explicit `no-store`, `reload` and `no-cache` requests bypass and invalidate memory entries.
+- Discard fallback posters after details establish a conflicting IMDb identity; retain usable images when the identity is unchanged.
+- Verify direct OMDb profiles against the requested IMDb ID before applying ratings or posters, matching the existing poster-endpoint identity checks.
+
+### Verification
+
+- Add Node, native workerd and browser regressions for these failures, including valid empty/ambiguous prefetch results, refresh invalidation, redirected credentials and poster recovery. Update deployment-tool documentation to the already locked Wrangler 4.155.0.
+
 ## [1.0.20] - 2026-10-29
 
 ### Performance
