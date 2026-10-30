@@ -404,7 +404,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
 - **Resource site dependency:** The `/api/resource` endpoint depends on By669 and WPZY availability and markup. One provider may fail without hiding the other's results; if both fail the endpoint returns `502`.
-- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v9 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
+- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v12 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
 - **OMDb configuration:** Without `OMDB_API_KEY`, OMDb enrichment is intentionally unavailable while TMDB and other sources continue to work. After the first `OMDb API not configured` answer, the page skips OMDb requests for the rest of the session.
 
 ---
@@ -435,7 +435,7 @@ iplay/
 
 ### Rationale
 
-- **Flat frontend structure:** No bundler or framework. Vanilla JS with ES Modules keeps the architecture minimal and zero-dependency for runtime.
-- **Worker as a single file:** All backend logic in one file for easy copy-paste deployment into Cloudflare Dashboard. No build step required for the Worker.
+- **Flat frontend structure:** Vanilla JS with ES Modules and no browser runtime dependencies. esbuild bundles and minifies the source into the single production entry `assets/app.min.js`.
+- **Worker entry point:** Backend logic lives in `_worker.js`, which imports the shared `js/release.js`. Wrangler packages the complete module project for deployment.
 - **Separation of concerns:** `api.js` isolates all network calls; `scorer.js` isolates the recommendation algorithm; `main.js` handles all DOM manipulation.
-- **Tailwind CLI only:** No PostCSS or complex build pipeline. A single `npm run build` command generates the CSS.
+- **Small build pipeline:** `npm run build` uses Tailwind CLI for CSS and esbuild for JavaScript; generated assets are committed and checked by CI.
