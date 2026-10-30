@@ -21,7 +21,7 @@ const modules = await Promise.all([productionConfig.main, fileURLToPath(new URL(
 })));
 const checks = [];
 const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
-const bindings = { ...productionConfig.bindings, TMDB_API_KEY: 'runtime-test', WPZY_COOKIE: runtimeCookie };
+const bindings = { ...productionConfig.bindings, TMDB_ACCESS_TOKEN: 'runtime-test-bearer', WPZY_COOKIE: runtimeCookie };
 let wpzyMode = 'public';
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
@@ -32,6 +32,8 @@ let poolActive = 0;
 let poolPeak = 0;
 let searchScoringMode = false;
 let scoringAttempts = 0;
+let redirectedRequests = 0;
+let gatewayRequests = 0;
 const wikiIdentityCases = {
     '小说家的电影': { description: '2024年漫画改编电影', extract: '《小说家的电影》是一部2024年电影，改编自同名小说。' },
     '2001太空漫游': { description: '1968年电影', extract: '《2001太空漫游》是一部1968年电影。' },
@@ -43,6 +45,18 @@ const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (url.hostname === 'untrusted.example') {
+        redirectedRequests++;
+        return Response.json(tmdbDetail({ id: 606, title: 'Untrusted Redirect' }));
+    }
+    if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/606') {
+        assert.equal(request.headers.get('Authorization'), 'Bearer runtime-test-bearer');
+        return new Response(null, { status: 302, headers: { Location: 'https://untrusted.example/credentials' } });
+    }
+    if (url.hostname === 'api.themoviedb.org' && url.searchParams.get('query') === 'Runtime Gateway') {
+        gatewayRequests++;
+        return new Response('<h1>Too Many Requests</h1>', { status: 429 });
+    }
     if (searchScoringMode && url.hostname === 'api.themoviedb.org' && /^\/3\/search\/(multi|movie|tv)$/.test(url.pathname)) {
         return Response.json({ results: searchPerformanceResults(++scoringAttempts) });
     }
@@ -152,6 +166,19 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const redirect = await request('/api/tmdb/detail?id=606&type=movie', 'runtime-tmdb-redirect');
+    assert.equal(redirect.status, 502);
+    assert.deepEqual(await redirect.json(), { error: 'TMDB unavailable' });
+    assert.equal(redirectedRequests, 0, 'native fetch must not send bearer credentials to a redirected host');
+    checks.push('tmdb-redirect-credential-isolation');
+
+    const gateway = await request('/api/tmdb/search?q=Runtime%20Gateway', 'runtime-tmdb-gateway');
+    assert.equal(gateway.status, 429);
+    assert.equal(gateway.headers.get('cache-control'), 'no-store');
+    await gateway.json();
+    assert.equal(gatewayRequests, 1, 'HTML rate-limit responses must stop the native fallback chain');
+    checks.push('tmdb-non-json-status-and-fallback-policy');
 
     const incompleteMedia = await request('/api/tmdb/detail?id=605&type=movie');
     assert.equal(incompleteMedia.status, 502);

@@ -99,7 +99,7 @@ User submits query from search form
 
 After search, the frontend either selects a high-confidence TMDB match or pauses on an explicit candidate picker when results are ambiguous. It renders search metadata immediately, then uses the detail response's canonical title, media type and year for Douban, Wiki, OMDb and resource queries. If details fail, normal search retains its candidate metadata and retry action; unconfirmed shared links wait for a successful detail retry. After details settle, resource scanning starts when its section approaches the viewport or the user requests it. Resource snapshots are keyed by the selected work and query identity; retries replace successful pages and retain temporarily failed pages, then reconcile duplicate share passwords from their page evidence:
 
-Detail retries retain the active work's view model while rotating its request generation and abort signal. A matching canonical title/type/year preserves verified Wiki and Douban enrichment; changed metadata clears those values, while a changed IMDb ID clears the previous OMDb profile. New searches and navigation reset the retained detail state. Resource lists render six entries initially and expose every bounded API result on expansion.
+Detail retries retain the active work's view model while rotating its request generation and abort signal. A matching canonical title/type/year preserves verified Wiki and Douban enrichment; changed metadata clears those values, while a changed IMDb ID clears the previous OMDb profile and its fallback poster. Direct OMDb responses must match the requested IMDb ID before adding ratings or images. New searches and navigation reset the retained detail state. Resource lists render six entries initially and expose every bounded API result on expansion.
 
 ```
 User submits a search
@@ -369,6 +369,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 ### API Keys and Secrets
 
 - **TMDB credentials** stored as Cloudflare Worker secrets (`TMDB_ACCESS_TOKEN` or `TMDB_API_KEY`). Never exposed to frontend.
+- **TMDB redirects** are rejected before following them. This explicitly prevents cross-origin bearer forwarding under the configured compatibility date; non-JSON HTTP failures retain their status and never expose provider bodies.
 - **OMDb API key** is optional and stored only as a Cloudflare Worker secret. No key is bundled; OMDb-specific requests return `503` when it is absent.
 - **No user authentication** -- iPlay is a fully anonymous, stateless application.
 
@@ -403,7 +404,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
 - **Resource site dependency:** The `/api/resource` endpoint depends on By669 and WPZY availability and markup. One provider may fail without hiding the other's results; if both fail the endpoint returns `502`.
-- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v9 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
+- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v12 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
 - **OMDb configuration:** Without `OMDB_API_KEY`, OMDb enrichment is intentionally unavailable while TMDB and other sources continue to work. After the first `OMDb API not configured` answer, the page skips OMDb requests for the rest of the session.
 
 ---
@@ -434,7 +435,7 @@ iplay/
 
 ### Rationale
 
-- **Flat frontend structure:** No bundler or framework. Vanilla JS with ES Modules keeps the architecture minimal and zero-dependency for runtime.
-- **Worker as a single file:** All backend logic in one file for easy copy-paste deployment into Cloudflare Dashboard. No build step required for the Worker.
+- **Flat frontend structure:** Vanilla JS with ES Modules and no browser runtime dependencies. esbuild bundles and minifies the source into the single production entry `assets/app.min.js`.
+- **Worker entry point:** Backend logic lives in `_worker.js`, which imports the shared `js/release.js`. Wrangler packages the complete module project for deployment.
 - **Separation of concerns:** `api.js` isolates all network calls; `scorer.js` isolates the recommendation algorithm; `main.js` handles all DOM manipulation.
-- **Tailwind CLI only:** No PostCSS or complex build pipeline. A single `npm run build` command generates the CSS.
+- **Small build pipeline:** `npm run build` uses Tailwind CLI for CSS and esbuild for JavaScript; generated assets are committed and checked by CI.

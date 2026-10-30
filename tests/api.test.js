@@ -382,6 +382,83 @@ test('malformed embedded answers are ignored', async t => {
     assert.deepEqual(requested, ['/api/tmdb/search', '/api/tmdb/detail']);
 });
 
+test('embedded answers reject mismatched identities and incomplete person data', async t => {
+    const requested = [];
+    let prefetched;
+    t.mock.method(globalThis, 'fetch', async url => {
+        requested.push(new URL(url).pathname);
+        return new URL(url).pathname === '/api/tmdb/search'
+            ? Response.json({ results: [], prefetched }) : Response.json({ fetched: true });
+    });
+    const { TmdbAPI } = await import('../js/api.js');
+    for (const data of [
+        { id: 881, mediaType: 'movie', title: 'Other ID' },
+        { id: 880, mediaType: 'tv', title: 'Other Type' },
+        { id: 880, mediaType: 'movie' },
+        {}
+    ]) {
+        prefetched = { detail: { id: 880, type: 'movie', data } };
+        await TmdbAPI.search('Invalid Embedded Detail');
+        assert.deepEqual(await TmdbAPI.getDetail(880, 'movie'), { fetched: true });
+    }
+    for (const data of [
+        {}, { person: { id: 882, name: 'Incomplete Actor' } }, { person: { id: 0, name: 'Invalid Actor' }, credits: [] },
+        { person: null, credits: [], searchMeta: { ambiguous: true } },
+        { person: null, credits: [], searchMeta: { ambiguous: true }, personCandidates: [] },
+        { person: null, credits: [], searchMeta: { ambiguous: true }, personCandidates: [{ id: 0, name: 'Invalid Actor' }] }
+    ]) {
+        prefetched = { person: { query: 'Invalid Embedded Actor', data } };
+        await TmdbAPI.search('Invalid Embedded Actor');
+        assert.deepEqual(await TmdbAPI.searchPerson('Invalid Embedded Actor'), { fetched: true });
+    }
+    assert.equal(requested.length, 20, 'every malformed answer falls back to a real request');
+});
+
+test('explicit TMDB cache refreshes bypass and invalidate embedded answers', async t => {
+    const detail = { id: 890, mediaType: 'movie', title: 'Old Detail' };
+    const person = { person: { id: 891, name: 'Refresh Actor' }, credits: [] };
+    const requests = [];
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+        const path = new URL(url).pathname;
+        if (path === '/api/tmdb/search') return Response.json({ results: [], prefetched: {
+            detail: { id: 890, type: 'movie', data: detail }, person: { query: 'Refresh Actor', data: person }
+        } });
+        requests.push({ path, cache: options.cache });
+        return Response.json({ fresh: true });
+    });
+    const { TmdbAPI } = await import('../js/api.js');
+    for (const cache of ['no-store', 'reload', 'no-cache']) {
+        await TmdbAPI.search('Refresh Embedded');
+        assert.deepEqual(await TmdbAPI.getDetail(890, 'movie', { cache }), { fresh: true });
+        assert.deepEqual(await TmdbAPI.searchPerson('Refresh Actor', { cache }), { fresh: true });
+        assert.deepEqual(await TmdbAPI.getDetail(890, 'movie'), { fresh: true }, 'later reads cannot resurrect the invalidated answer');
+        assert.deepEqual(await TmdbAPI.searchPerson('Refresh Actor'), { fresh: true });
+    }
+    assert.equal(requests.length, 12);
+    assert.deepEqual(requests.filter(entry => entry.cache).map(entry => entry.cache), ['no-store', 'no-store', 'reload', 'reload', 'no-cache', 'no-cache']);
+});
+
+test('valid empty and ambiguous embedded person answers still avoid a round trip', async t => {
+    let data;
+    let requests = 0;
+    const query = 'Valid Embedded Person';
+    t.mock.method(globalThis, 'fetch', async () => {
+        requests++;
+        return Response.json({ results: [], prefetched: { person: { query, data } } });
+    });
+    const { TmdbAPI } = await import('../js/api.js');
+    for (data of [
+        { person: null, credits: [], searchMeta: { confidence: 'none' } },
+        { person: null, credits: [], searchMeta: { ambiguous: true }, personCandidates: [
+            { id: 892, name: query }, { id: 893, name: query }
+        ] }
+    ]) {
+        await TmdbAPI.search(query);
+        assert.deepEqual(await TmdbAPI.searchPerson(query), data);
+    }
+    assert.equal(requests, 2);
+});
+
 test('OMDb stops for this page once the Worker reports it is not configured', async t => {
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;

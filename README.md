@@ -148,7 +148,7 @@ const PREFERENCE_WEIGHTS = {
 | `npm run test:performance:parser` | 测量普通及接近正文上限的资源解析；不访问真实网络 |
 | `npm run test:performance:images` | 使用预先下载的真实 JPEG 字节模型核对五组屏幕密度；准备步骤见脚本及测试文档 |
 | `npm run test:live` | 核对生产 HTML、全部 JS 模块、CSS、版本和真实 API；单独报告可选来源可用性 |
-| `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.149.0 运行本地 Worker 或部署命令 |
+| `npm run wrangler -- <command>` | 使用仓库锁定的 Wrangler 4.155.0 运行本地 Worker 或部署命令 |
 
 ## 📜 协议
 

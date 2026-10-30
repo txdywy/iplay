@@ -59,7 +59,7 @@ TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `E
 
 手动回退使用本机 Wrangler OAuth，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
 
-仓库锁定 Wrangler 4.149.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
+仓库锁定 Wrangler 4.155.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
 
 `wrangler.toml` 已声明 `ENVIRONMENT=production`，缺少分布式限流 binding 时拒绝请求；部署时保留两个 Rate Limiting bindings，不能依赖仅本地生效的隔离实例计数器。CI 的 Node 22 作业也会检查生产 Worker 打包。
 
