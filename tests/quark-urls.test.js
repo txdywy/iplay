@@ -206,6 +206,19 @@ test('resource search canonicalizes case-insensitive schemes and hosts without c
     ]), [{ url: 'https://pan.quark.cn/s/AbC123', password: 'a1B2' }]);
 });
 
+test('resource search rejects malformed Quark paths instead of truncating them into other shares', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>https://pan.quark.cn/s/actually-another/extra</p>'
+        + '<p>https://pan.quark.cn/s/short%2Ftoken</p>'
+        + '<p>https://pan.quark.cn/s/valid-token. </p>'
+        + '<p>[分享](https://drive.quark.cn/s/markdown-token?pwd=a1B2)。</p>'
+        + '<p>https://example.org/?next=https://pan.quark.cn/s/embedded-token</p>'
+    ]), [
+        { url: 'https://pan.quark.cn/s/valid-token' },
+        { url: 'https://drive.quark.cn/s/markdown-token', password: 'a1B2' }
+    ]);
+});
+
 test('resource search keeps only canonical Quark share URLs from escaped page content', async t => {
     const originalFetch = globalThis.fetch;
     const originalCaches = globalThis.caches;

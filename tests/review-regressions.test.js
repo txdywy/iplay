@@ -520,6 +520,88 @@ test('Wiki search never fetches an unrelated first result', async t => {
     assert.equal(ctx.writes.length, 0);
 });
 
+test('Wiki skips mismatched candidate summaries and uses the next year-matching page', async t => {
+    const summaries = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (!url.pathname.includes('/summary/')) {
+            return Response.json({ query: { search: [
+                { title: 'Shared Work (电影)' },
+                { title: 'Shared Work (2020年电影)' }
+            ] } });
+        }
+
+        const title = decodeURIComponent(url.pathname.split('/summary/')[1]);
+        summaries.push(title);
+        return Response.json({
+            title,
+            description: '电影',
+            extract: title.includes('2020年') ? 'Shared Work是一部2020年电影。' : 'Shared Work是一部2010年电影。'
+        });
+    });
+
+    const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2020'), {}, ctx);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).title, 'Shared Work (2020年电影)');
+    assert.deepEqual(summaries, ['Shared Work (2020年电影)'], 'an explicit matching year should be tried first');
+    assert.equal(ctx.writes.length, 1);
+});
+
+test('Wiki continues after a same-year candidate has contradictory identity evidence', async t => {
+    const summaries = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (!url.pathname.includes('/summary/')) {
+            return Response.json({ query: { search: [
+                { title: 'Shared Work (2020年电影)' },
+                { title: 'Shared Work（2020年电影）' }
+            ] } });
+        }
+
+        const title = decodeURIComponent(url.pathname.split('/summary/')[1]);
+        summaries.push(title);
+        return Response.json({
+            title,
+            description: title.includes('（') ? '2020年电影' : '2010年电影',
+            extract: title.includes('（') ? 'Shared Work是一部2020年电影。' : 'Shared Work是一部2010年电影。'
+        });
+    });
+
+    const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2020'), {}, ctx);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).title, 'Shared Work（2020年电影）');
+    assert.equal(summaries.length, 2);
+    assert.equal(ctx.writes.length, 1, 'only the verified candidate should be cached');
+});
+
+test('Wiki skips missing pages but stops on upstream failures while checking candidates', async t => {
+    let summaryCalls = 0;
+    let firstStatus = 404;
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (!url.pathname.includes('/summary/')) {
+            return Response.json({ query: { search: [
+                { title: 'Shared Work (2020年电影)' },
+                { title: 'Shared Work（2020年电影）' }
+            ] } });
+        }
+        summaryCalls += 1;
+        if (summaryCalls === 1) return new Response('deleted', { status: firstStatus });
+        return Response.json({ title: 'Shared Work（2020年电影）', description: '2020年电影', extract: 'Shared Work是一部2020年电影。' });
+    });
+
+    const recovered = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2020'), {}, ctx);
+    assert.equal(recovered.status, 200, 'a deleted first result should not hide a later match');
+    assert.equal(summaryCalls, 2);
+
+    summaryCalls = 0;
+    firstStatus = 503;
+    const unavailable = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2020'), {}, ctx);
+    assert.equal(unavailable.status, 503);
+    assert.equal(summaryCalls, 1, 'provider outages must not fan out to more pages');
+    assert.equal(ctx.writes.length, 1);
+});
+
 test('Wiki disambiguation summaries are not presented as a movie synopsis', async t => {
     const ctx = mockUpstreams(t, async url => new URL(url).pathname.includes('/summary/')
         ? Response.json({ title: 'Dune', type: 'disambiguation', extract: 'Dune may refer to several works.' })

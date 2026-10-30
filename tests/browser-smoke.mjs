@@ -432,7 +432,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     castDetails: [{ id: 900, name: 'Clickable Actor', character: 'Lead' }],
                     director: ['Smoke Director'],
                     writer: ['Smoke Writer'],
-                    imdbId: id === 104 || id === 111 ? '' : title === 'Recovered Retained Movie' ? 'tt7654321' : 'tt1234567',
+                    imdbId: id === 104 || id === 111 ? '' : id === 116 && window.__smoke.retentionRecovery === 'imdb-conflict'
+                        ? 'tt7654321' : title === 'Recovered Retained Movie' ? 'tt7654321' : 'tt1234567',
                     summary: id === 106 ? '详情已到达。' : 'A browser smoke test detail.'
                 });
                 window.__smoke.detailResolved += 1;
@@ -448,7 +449,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 ]);
                 return json([]);
             }
-            if (url.pathname === '/api/douban/detail') return json({ rating: 9.1 });
+            if (url.pathname === '/api/douban/detail') return url.searchParams.get('id') === '413'
+                ? json({ rating: 9.1, imdbId: 'tt1234567' }) : json({ rating: 9.1 });
             if (url.pathname === '/api/wiki/zh' && ['Retained Enrichment Movie', 'Recovered Retained Movie'].includes(url.searchParams.get('q')) && window.__smoke.detailAttempts[116] > 1) return json({ error: 'supplement outage' }, 503);
             if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
                 ? '旧片同名作品简介。'
@@ -471,6 +473,20 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     wpzysResources: Array.from({ length: 20 }, (_, index) => ({ title: 'Forum ' + index, url: 'https://wpzy.org/thread-' + index + '.htm' })),
                     quarkUrls: Array.from({ length: 100 }, (_, index) => ({ title: 'Share ' + index, url: 'https://pan.quark.cn/s/large-' + index, password: 'abcd' }))
                 });
+                if (window.__smoke.resourceMode === 'unattempted') {
+                    const resources = Array.from({ length: 13 }, (_, index) => ({
+                        title: 'Unscanned source ' + index, url: 'https://by669.org/d/unscanned-' + index
+                    }));
+                    return json({
+                        partial: false,
+                        resourceMeta: {
+                            partial: false, providers: { by669: 'ok', wpzys: 'ok' },
+                            selectedPages: 12, attemptedPages: 12, failedPages: 0,
+                            pages: resources.map((resource, index) => ({ ...resource, source: 'by669', status: index < 12 ? 'ok' : 'unattempted' }))
+                        },
+                        resources, wpzysResources: [], quarkUrls: []
+                    });
+                }
                 if (window.__smoke.resourceMode === 'long-titles') {
                     const title = 'UnbrokenReleaseFilename'.repeat(12);
                     return json({
@@ -1291,6 +1307,24 @@ async function runCompleteResourceVisibilityFlow() {
     await waitFor("window.__smoke.copied === 'abcd'");
 }
 
+async function runUnscannedResourceStatusFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'unattempted'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#resourcesStatus').textContent.includes('待启动')");
+    await evaluate("Array.from(document.querySelectorAll('#resourcesSection button')).find(button => button.textContent === '开始扫描资源')?.click()");
+    await waitFor('window.__smoke.resourceCalls === 1');
+    await waitFor("document.querySelector('#resourcesStatus').textContent.includes('12/13')");
+    assert.equal(await evaluate("document.querySelector('#resourcesNotice').classList.contains('hidden')"), true,
+        'a fixed scan limit should explain unscanned sources without offering a retry that repeats the same limit');
+    await evaluate("Array.from(document.querySelectorAll('#resourceList button')).find(button => button.textContent.startsWith('显示更多')).click()");
+    assert.equal(await evaluate("Array.from(document.querySelectorAll('#resourceList a')).some(link => link.href === 'https://by669.org/d/unscanned-12')"), true,
+        'sources beyond the detail-page scan limit must remain available as original links');
+}
+
 async function runResourceKeyboardAndLongTitleFlow() {
     await command('Page.navigate', { url: baseUrl });
     // This is the first cold document/module navigation; later business-state
@@ -1388,7 +1422,7 @@ async function runDetailRetryPreservesEnrichmentFlow() {
 }
 
 async function runDetailRetryRecoveryIdentityFlow() {
-    for (const recovery of ['same', 'canonical']) {
+    for (const recovery of ['same', 'canonical', 'imdb-conflict']) {
         await command('Page.navigate', { url: baseUrl });
         await search('Retained Enrichment Movie');
         await assertSearchReady('Retained Enrichment Movie');
@@ -1396,10 +1430,11 @@ async function runDetailRetryRecoveryIdentityFlow() {
         await evaluate(`window.__smoke.retentionRecovery = ${JSON.stringify(recovery)}; document.querySelector('#dataNotice button').click()`);
         await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice').classList.contains('hidden') && document.querySelector('#wikiStatus').getAttribute('aria-busy') === 'false' && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
         const sameIdentity = recovery === 'same';
-        assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), sameIdentity, 'retained synopsis must belong to the confirmed title and year');
-        assert.equal(await evaluate("document.querySelector('#doubanBackupBox').classList.contains('hidden')"), !sameIdentity, 'title-based ratings must be cleared when canonical metadata changes');
+        const changedTitle = recovery === 'canonical';
+        assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), !changedTitle, 'retained synopsis must belong to the confirmed title and year');
+        assert.equal(await evaluate("document.querySelector('#doubanBackupBox').classList.contains('hidden')"), !sameIdentity, 'a rating with a conflicting confirmed IMDb ID must be cleared');
         assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), !sameIdentity, 'a changed IMDb ID must clear the prior rating even when its refresh fails');
-        if (!sameIdentity) assert.equal(await evaluate("document.querySelector('#showTitle').textContent"), 'Recovered Retained Movie');
+        if (changedTitle) assert.equal(await evaluate("document.querySelector('#showTitle').textContent"), 'Recovered Retained Movie');
     }
 }
 
@@ -1421,6 +1456,7 @@ async function runFallbackPosterRecoveryIdentityFlow() {
 try {
     await runResourceKeyboardAndLongTitleFlow();
     await runCompleteResourceVisibilityFlow();
+    await runUnscannedResourceStatusFlow();
     await runConfirmedPosterAbsenceFlow();
     await runActorResponsivePosterFlow();
     await runDetailRetryPreservesEnrichmentFlow();
@@ -1462,7 +1498,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['fallback-poster-recovery-identity', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['fallback-poster-recovery-identity', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }
