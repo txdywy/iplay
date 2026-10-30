@@ -19,6 +19,66 @@ function request(path) {
     });
 }
 
+test('TMDB non-JSON errors preserve stop statuses without retries or diagnostic leakage', async t => {
+    t.mock.method(console, 'error', () => {});
+    const calls = [];
+    let status = 429;
+    const ctx = mockUpstreams(t, async url => {
+        calls.push(new URL(url).pathname);
+        return new Response('Gateway failed: ?api_key=private-key', { status });
+    });
+    for (status of [401, 403, 429, 503, 504]) {
+        calls.length = 0;
+        const response = await worker.fetch(request(`/api/tmdb/search?q=Gateway${status}`), { TMDB_API_KEY: 'test' }, ctx);
+        assert.equal(response.status, status);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.deepEqual(calls, ['/3/search/multi'], 'an upstream stop applies even when its body is not JSON');
+        assert.ok(!(await response.text()).includes('private-key'));
+    }
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('a non-JSON TMDB 404 preserves explicit identity and legacy type recovery', async t => {
+    const calls = [];
+    const ctx = mockUpstreams(t, async url => {
+        const path = new URL(url).pathname;
+        calls.push(path);
+        return path === '/3/tv/42'
+            ? Response.json(tmdbDetail({ id: 42, name: 'Recovered Series' }))
+            : new Response('<h1>Not Found</h1>', { status: 404 });
+    });
+    const explicit = await worker.fetch(request('/api/tmdb/detail?id=42&type=movie'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(explicit.status, 404);
+    assert.deepEqual(calls, ['/3/movie/42']);
+    calls.length = 0;
+    const legacy = await worker.fetch(request('/api/tmdb/detail?id=42'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(legacy.status, 200);
+    assert.equal((await legacy.json()).mediaType, 'tv');
+    assert.deepEqual(calls, ['/3/movie/42', '/3/tv/42']);
+});
+
+test('TMDB redirects never forward bearer credentials or trust redirected payloads', async t => {
+    const forwarded = [];
+    let discarded = false;
+    const ctx = mockUpstreams(t, async (_url, options) => {
+        // Match the configured Workers runtime: automatic redirects forward
+        // Authorization across origins unless the caller handles them manually.
+        if (options.redirect !== 'manual') {
+            forwarded.push(options.headers.Authorization);
+            return Response.json(tmdbDetail({ id: 45, title: 'Untrusted Redirect' }));
+        }
+        return new Response(new globalThis.ReadableStream({
+            cancel() { discarded = true; }
+        }), { status: 302, headers: { Location: 'https://untrusted.example/credentials' } });
+    });
+    const response = await worker.fetch(request('/api/tmdb/detail?id=45&type=movie'), { TMDB_ACCESS_TOKEN: 'test-bearer' }, ctx);
+    assert.equal(response.status, 502);
+    assert.deepEqual(forwarded, []);
+    assert.equal(discarded, true, 'discarding a redirect releases its unused body');
+    assert.equal(ctx.writes.length, 0);
+    assert.deepEqual(await response.json(), { error: 'TMDB unavailable' });
+});
+
 test('unexpected upstream exceptions do not expose request URLs or credentials to API clients', async t => {
     const ctx = mockUpstreams(t, async url => { throw new Error(`Fetch failed for ${url}; Authorization: Bearer private-bearer; bbs_token=private-cookie`); });
     const response = await worker.fetch(request('/api/omdb?imdb=tt1234567'), { OMDB_API_KEY: 'private-omdb-key' }, ctx);

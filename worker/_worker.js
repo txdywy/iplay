@@ -855,9 +855,25 @@ async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
         }
         response = await fetchUpstream(
             url.toString(),
-            { headers },
+            // This compatibility target forwards Authorization when following
+            // cross-origin redirects. TMDB API responses must come from this
+            // exact endpoint, never a destination chosen by a Location header.
+            { headers, redirect: "manual" },
             remainingDeadlineMs(options.deadline, UPSTREAM_TIMEOUT_MS)
         );
+    }
+
+    // Gate on HTTP status before parsing: gateways commonly return HTML or an
+    // empty body for auth, rate-limit and outage errors. Those statuses still
+    // control fallback/retry policy, and their bodies are never public data.
+    if (!response.ok) {
+        await releaseUpstreamResponse(response);
+        if (cachedResponse) {
+            await deleteCachedResponse(cacheKey);
+            return fetchTmdbJsonUncoalesced(path, params, env, ctx, { ...options, refreshCache: true });
+        }
+        throw createHttpError(`TMDB HTTP ${response.status}`, response.status,
+            response.status === 404 ? "TMDB resource not found" : "TMDB unavailable");
     }
 
     let data;
@@ -870,11 +886,6 @@ async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
         }
         if (error.status) throw error;
         throw createHttpError("TMDB returned invalid JSON", 502);
-    }
-
-    if (!response.ok) {
-        const message = data && data.status_message ? data.status_message : `TMDB HTTP ${response.status}`;
-        throw createHttpError(message, response.status, response.status === 404 ? "TMDB resource not found" : "TMDB unavailable");
     }
 
     if (!isValidTmdbPayload(path, data, params)) {
