@@ -413,7 +413,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页最多并发 6 个请求，连接空闲后立即调度下一页，不等待整批最慢页面；结果仍按来源顺序对账，避免网络时序改变排序和密码归属。单页最多提取 25 个链接、整次请求最多返回 100 个链接，已知达到上限或超出约 15 秒总预算时停止启动新请求，但会完成并核对已经开始的页面。一个提供方或任一详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`（提供方状态、选中/尝试/失败页数）；两者都失败时返回 `502` 且不缓存。
+**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页最多并发 6 个请求，连接空闲后立即调度下一页，不等待整批最慢页面；结果仍按来源顺序对账，避免网络时序改变排序和密码归属。单页最多提取 25 个链接、整次请求最多返回 100 个链接，已知达到上限或超出约 15 秒总预算时停止启动新请求，但会完成并核对已经开始的页面。一个提供方或任一选中详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`；超过固定详情页上限的其他帖子保留为 `unattempted`，不重复扫描同一批，但前端会展示已扫描/总来源数并保留这些原帖入口。两提供方都失败时返回 `502` 且不缓存。
 
 分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
 
@@ -613,10 +613,10 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v12-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v13-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
 | `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v5-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 

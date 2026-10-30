@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.22] - 2026-10-30
+
+### Fixed
+
+- Try the next verified Chinese Wikipedia result when an earlier same-title page is missing, belongs to another work, or has the wrong year. Prefer candidates with an explicit matching year and stop on provider failures under the existing shared deadline.
+- Preserve the IMDb ID attached to a Douban rating and clear that rating if a detail retry confirms a different IMDb identity, even when title and year are unchanged.
+- Validate complete Quark share paths before returning links. Extra path segments and encoded slashes no longer get truncated into a different share URL.
+- Show how many source posts were scanned when the fixed detail-page cap leaves additional original posts unscanned.
+
+### Verification
+
+- Add Worker and browser regressions for candidate fallback, identity changes, malformed share paths and unscanned source status.
+- Bump the Wiki cache namespace to v6 and resource cache namespace to v13 so prior cached results do not hide corrected selection and link parsing.
+
 ## [1.0.21] - 2026-10-30
 
 ### Security

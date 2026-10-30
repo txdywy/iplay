@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.21';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.21';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.21';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.21';
-import { RELEASE_VERSION } from './release.js?v=1.0.21';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.22';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.22';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.22';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.22';
+import { RELEASE_VERSION } from './release.js?v=1.0.22';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.21';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.21';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.21';
+} from './match.js?v=1.0.22';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.22';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.22';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1176,12 +1176,17 @@ function renderResourceNotice(resourceResult, onRetry) {
     const loginRequiredPages = Number(meta.loginRequiredPages) || 0;
     const loginRequired = meta.providerIssues?.wpzys === 'login_required' || loginRequiredPages > 0;
     const unavailablePages = Math.max(0, failedPages - restrictedPages - loginRequiredPages);
+    const totalSources = (Array.isArray(resourceResult?.resources) ? resourceResult.resources.length : 0)
+        + (Array.isArray(resourceResult?.wpzysResources) ? resourceResult.wpzysResources.length : 0);
+    const attemptedPages = Number(meta.attemptedPages);
+    const unattemptedSources = Number.isFinite(attemptedPages) ? Math.max(0, totalSources - attemptedPages) : 0;
     const notes = [];
     if (loginRequired) notes.push('WPZY 登录态不可用，需要维护者更新登录；其他可用结果已保留。');
     const unavailableProviders = failedProviders.filter(provider => !loginRequired || provider !== 'WPZY');
     if (unavailableProviders.length) notes.push(`${unavailableProviders.join('、')}暂时没有响应，已保留其他可用结果。`);
     if (restrictedPages > 0) notes.push(`有 ${restrictedPages} 个 WPZY 帖子需回复或 VIP 才能查看链接，已保留原帖入口。`);
     if (unavailablePages > 0) notes.push(`有 ${unavailablePages} 个资源页面暂时无法打开。`);
+    if (unattemptedSources > 0) notes.push(`另有 ${unattemptedSources} 个来源未扫描，可直接打开原帖查看。`);
     const detail = notes.join(' ') || '部分资源尚未完成提取，已保留当前可用结果。';
     const canRetry = failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
         || (Number(meta.attemptedPages) || 0) < (Number(meta.selectedPages) || 0) || notes.length === 0;
@@ -1976,15 +1981,23 @@ function createResourceRetry(candidate, searchId, searchOptions, loadId) {
 }
 
 function renderResourceResult(resourceResult, onRetry) {
-    renderResourceList(Array.isArray(resourceResult.resources) ? resourceResult.resources : []);
-    renderWpzysResourceList(Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [], resourceResult.resourceMeta);
+    const resources = Array.isArray(resourceResult.resources) ? resourceResult.resources : [];
+    const wpzysResources = Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [];
+    renderResourceList(resources);
+    renderWpzysResourceList(wpzysResources, resourceResult.resourceMeta);
     renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
     if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
         setResourceStatus('资源扫描部分完成，已保留可用结果');
         renderResourceNotice(resourceResult, onRetry);
     } else {
         hideResourceNotice();
-        setResourceStatus('资源扫描完成');
+        const totalSources = resources.length + wpzysResources.length;
+        const attemptedPages = Number(resourceResult.resourceMeta?.attemptedPages);
+        if (Number.isFinite(attemptedPages) && attemptedPages < totalSources) {
+            setResourceStatus(`已扫描 ${attemptedPages}/${totalSources} 个来源，未扫描的帖子仍可直接打开`);
+        } else {
+            setResourceStatus('资源扫描完成');
+        }
     }
 }
 
@@ -2161,6 +2174,7 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
             if (!isActiveSearch(searchId, loadId) || !doubanResult) return;
             if (doubanResult.imdbId && viewModel.detail?.imdbId && doubanResult.imdbId !== viewModel.detail.imdbId) return;
             viewModel.doubanRating = doubanResult.rating;
+            viewModel.doubanImdbId = doubanResult.imdbId || null;
             renderBackupDoubanRating(viewModel.doubanRating);
         }
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
@@ -2279,6 +2293,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             const failedPosterUrls = viewModel.failedPosterUrls;
             const posterFallbackPending = viewModel.posterFallbackPending;
             const existingOmdbProfile = viewModel.omdbProfile;
+            const existingDoubanRating = viewModel.doubanRating;
+            const existingDoubanImdbId = viewModel.doubanImdbId;
             const conflictingImdb = Boolean(tmdbDetail.imdbId && existingOmdbProfile?.imdbId
                 && existingOmdbProfile.imdbId !== tmdbDetail.imdbId);
             const previousQueryKey = resourceQueryKey(selectedCandidate);
@@ -2299,6 +2315,15 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             if (existingOmdbProfile && (!tmdbDetail.imdbId || existingOmdbProfile.imdbId === tmdbDetail.imdbId)) {
                 viewModel.omdbProfile = existingOmdbProfile;
             }
+            if (existingDoubanRating !== undefined) {
+                if (tmdbDetail.imdbId && existingDoubanImdbId && existingDoubanImdbId !== tmdbDetail.imdbId) {
+                    delete viewModel.doubanRating;
+                    delete viewModel.doubanImdbId;
+                } else {
+                    viewModel.doubanRating = existingDoubanRating;
+                    viewModel.doubanImdbId = existingDoubanImdbId || null;
+                }
+            }
             Object.assign(selectedCandidate, {
                 title: tmdbDetail.title,
                 originalTitle: tmdbDetail.originalTitle,
@@ -2312,6 +2337,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                 }
             } else {
                 delete viewModel.doubanRating;
+                delete viewModel.doubanImdbId;
             }
             renderBackupDoubanRating(viewModel.doubanRating);
             posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
