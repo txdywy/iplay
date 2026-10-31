@@ -93,7 +93,6 @@ npm run wrangler -- dev
 
 - TMDB 搜索与详情代理
 - 豆瓣搜索与详情抓取
-- OMDb 评分与海报回退
 - Wikipedia 中文简介
 - 夸克资源搜索
 
@@ -162,7 +161,6 @@ Node.js 覆盖率不会计入未加载的 `js/main.js`，不能将其总覆盖�
 
 - `TMDB_ACCESS_TOKEN`
 - `TMDB_API_KEY`
-- `OMDB_API_KEY`
 
 ### 4. 豆瓣详情失效
 

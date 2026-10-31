@@ -81,16 +81,23 @@ assert.equal(denied.status, 404);
 assert.equal(denied.headers.get('access-control-allow-origin'), null);
 results.push({ check: 'invalid-input-and-cors-denial', status: 'passed' });
 
-for (const path of ['/api/tmdb/detail?id=603&type=', '/api/tmdb/person?id=&q=Tom%20Hanks', '/api/omdb?imdb=&title=The%20Matrix']) {
+for (const path of ['/api/tmdb/detail?id=603&type=', '/api/tmdb/person?id=&q=Tom%20Hanks']) {
     const { response, data } = await getApi(path, 400);
     assert.ok(data.error);
     assert.equal(response.headers.get('cache-control'), 'no-store');
 }
 results.push({ check: 'explicit-blank-identities-fail-closed', status: 'passed' });
 
+for (const path of ['/api/omdb?imdb=tt0133093', '/api/omdb?title=Test']) {
+    const { response, data } = await getApi(path, 404);
+    assert.ok(data.error);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+}
+results.push({ check: 'retired-omdb-routes', status: 'passed' });
+
 // These services are optional. Report their real availability without confusing
 // an upstream outage with a failed release of the main TMDB functionality.
-for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&type=movie&year=2019', '/api/resource?q=流浪地球']) {
+for (const path of ['/api/wiki/zh?q=流浪地球&type=movie&year=2019', '/api/resource?q=流浪地球']) {
     const { response, data } = await getApi(path, null);
     assert.ok(data && typeof data === 'object');
     if (path.startsWith('/api/resource') && process.env.LIVE_REQUIRE_WPZY === '1') {
@@ -102,7 +109,7 @@ for (const path of ['/api/omdb?imdb=tt0133093', '/api/wiki/zh?q=流浪地球&typ
         results.push({check:'authenticated-wpzy-upstream',status:'passed',threads:data.wpzysResources.length,restrictedPages:data.resourceMeta.restrictedPages});
     }
     if (response.ok) {
-        if (path.startsWith('/api/omdb')) assert.equal(data.imdbId, 'tt0133093');
+
         if (path.startsWith('/api/wiki')) assert.ok(typeof data.extract === 'string');
         if (path.startsWith('/api/resource')) {
             assert.ok(Array.isArray(data.quarkUrls) && data.resourceMeta);

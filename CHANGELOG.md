@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.24] - 2026-11-01
+
+### Removed
+
+- Remove OMDb endpoints, client requests, API-key configuration, external rating panels and poster fallback. TMDB remains the poster and detail provider; keep IMDb IDs supplied by TMDB for work identity checks.
+- Update active documentation and tests, while retaining historical release/review records.
+
 ## [1.0.23] - 2026-10-31
 
 ### Security

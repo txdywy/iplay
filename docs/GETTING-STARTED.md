@@ -16,7 +16,6 @@
 | npm | >= 9.0.0 | 随 Node.js 一同安装 |
 | Cloudflare 账号 | — | 部署 Worker 代理服务所需 |
 | TMDB 账号 + API Token | — | 在 [TMDB 设置页](https://www.themoviedb.org/settings/api) 申请 v4 Read Access Token |
-| (可选) OMDb API Key | — | 用于启用 IMDb / Rotten Tomatoes 等补充数据；项目不内置 Key |
 | (可选) GitHub 账号 | — | 如需使用 GitHub Pages 部署前端 |
 
 > **提示**：静态页面可以独立预览布局，但搜索功能必须连接 Worker。当前开发配置在 `localhost` 上请求 `http://localhost:8787`，因此完整本地验证需要按下文同时启动 Wrangler 和静态服务器。
@@ -66,8 +65,6 @@ npm run wrangler -- login
 # 设置 TMDB v4 Access Token（推荐，认证方式更稳定）
 npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 
-# 可选：设置 OMDb API Key（获取 IMDb / Rotten Tomatoes 评分）
-npm run wrangler -- secret put OMDB_API_KEY
 ```
 
 按提示粘贴对应的密钥值即可。
@@ -78,7 +75,6 @@ npm run wrangler -- secret put OMDB_API_KEY
 2. 进入 **Workers & Pages** -> 选择你的 Worker（或创建新 Worker）
 3. 在 **Settings** -> **Variables** 中添加以下变量：
    - `TMDB_ACCESS_TOKEN`：你的 TMDB v4 Read Access Token
-   - `OMDB_API_KEY`（可选）：你的 OMDb API Key
    - `CORS_ALLOWED_ORIGINS`（自托管前端时）：你的前端 Origin，多个值用英文逗号分隔
 
 ### 5. 部署 Worker
@@ -143,7 +139,6 @@ python3 -m http.server 8080
 4. **搜索剧集**：输入一部电视剧名称（如 "三体"），确认类型识别正确
 5. **检查评分来源**：在详情页中，确认：
    - TMDB 评分和豆瓣评分均正常显示
-   - IMDb / Rotten Tomatoes 评分正常显示（如配置了 OMDb Key）
 
 如果以上验证均通过，说明你的 iPlay 实例已成功运行。
 
@@ -176,7 +171,6 @@ python3 -m http.server 8080
 
 ### 详情页评分不显示
 
-- **OMDb Key 未配置**：OMDb 是可选补充源；未配置 `OMDB_API_KEY` 时不提供 IMDb / Rotten Tomatoes 等 OMDb 数据，TMDB 等核心功能仍可使用
 - **TMDB 数据缺失**：部分冷门影片可能在 TMDB 中无评分数据，此时会显示 "—"
 
 ---

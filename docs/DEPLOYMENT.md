@@ -25,7 +25,6 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
 4. 到 **Settings → Variables** 配置 Secrets：
    - `TMDB_ACCESS_TOKEN`
    - `TMDB_API_KEY`（可选，作为备用）
-   - `OMDB_API_KEY`（可选；未配置时 OMDb 功能不可用，项目不内置 Key）
    - `WPZY_COOKIE`（可选；wpzy.org 专用只读账号的登录 Cookie，配置前确认站点允许此用途）
    - `CORS_ALLOWED_ORIGINS`（可选；额外允许的前端 Origin，以英文逗号分隔）
    - `ENVIRONMENT=production`（必填；缺少生产限流 binding 时让 Worker fail closed）
@@ -49,7 +48,6 @@ npm ci
 npm run wrangler -- login
 npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 npm run wrangler -- secret put TMDB_API_KEY
-npm run wrangler -- secret put OMDB_API_KEY
 npm run wrangler -- secret put WPZY_COOKIE
 npm run deploy:worker:dry-run
 npm run deploy:worker -- --message "本次变更说明"
@@ -136,7 +134,6 @@ npm run wrangler -- dev
 |------|------|
 | `TMDB_ACCESS_TOKEN` | TMDB v4 访问令牌，推荐优先配置 |
 | `TMDB_API_KEY` | TMDB v3 API Key，作为备用 |
-| `OMDB_API_KEY` | OMDb API Key，可选 |
 | `WPZY_COOKIE` | wpzy.org 的 `bbs_token` 与可选 `bbs_sid`，仅放在 Worker Secret；不可公开、写进前端或 GitHub |
 | `CORS_ALLOWED_ORIGINS` | 额外允许的前端 Origin，多个值用英文逗号分隔；线上域名与 localhost:8080 已默认允许 |
 
@@ -147,7 +144,6 @@ npm run wrangler -- dev
 ```bash
 TMDB_ACCESS_TOKEN=your_token
 TMDB_API_KEY=your_key
-OMDB_API_KEY=your_omdb_key
 ```
 
 ### WPZY 登录态与续期
@@ -190,7 +186,6 @@ Cloudflare Workers Builds 已连接此仓库：main 推送运行 Wrangler 生产
 
 ### 请求返回 5xx
 
-- TMDB 相关接口需要 `TMDB_ACCESS_TOKEN` 或 `TMDB_API_KEY`；OMDb 接口未配置 `OMDB_API_KEY` 时会返回 503
 - 先看 Worker 日志，再逐个验证 Secrets
 
 ### 线上页面能打开但无数据

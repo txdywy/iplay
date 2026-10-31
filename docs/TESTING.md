@@ -18,7 +18,7 @@ iPlay 目前采用轻量级测试策略：
 - **代码检查**: ESLint（flat config，`eslint.config.mjs`）
 - **覆盖率命令**: `npm run test:coverage`
 - **上线验证**: `npm run test:live`，显式请求生产站点，校验无版本参数的首页及带版本的 HTML、生产单文件入口、全部源码模块、CSS、VERSION 与本地逐字一致，以及 Worker 发布响应头、中英文/带年份片名搜索、电影/剧集 ID、人物分页、空身份参数拒绝与 CORS。可用 `LIVE_BASE_URL` / `LIVE_API_BASE` 指向其他部署。
-- **可选数据源**: 上线验证会单独报告 OMDb、Wikipedia、资源服务的可用/部分失败状态；不能把这些上游的暂时失败当作核心服务成功，也不会将其混同为代码部署失败。
+- **可选数据源**: 上线验证会单独报告 Wikipedia、资源服务的可用/部分失败状态；不能把这些上游的暂时失败当作核心服务成功，也不会将其混同为代码部署失败。
 
 > 现有 `tests/` 覆盖 API 客户端、推荐算法、夸克链接处理和 Worker 路由。下文提供手动回归清单以及继续扩展自动化测试的参考。
 
@@ -99,13 +99,9 @@ BROWSER_WS='ws://127.0.0.1:9224/devtools/page/<page-id>' npm run test:browser
 
 1.0.17 继续执行上述 38 条流程，页面使用实际压缩产物；演员分页额外断言旧卡片未被替换、筛选和重试仍正确。CI 会重新生成 CSS 和单文件入口并检查无差异。
 
-1.0.18 增至 40 条流程：新增已确认无海报时省去重复查询，以及演员图片响应式选择。图片检查覆盖 11 组视口/DPR、增大的默认字体及经典滚动条配置、实际选中候选与布局宽度、404 后清除 srcset 并显示占位图、非 TMDB 图片和不适合作为 srcset 的 URL。布局预期按实测滚动条宽度校正 `100vw` 与布局视口的差异，校正后误差仍须小于 1px。无图检查同时验证 OMDb 失败或身份不匹配时仍调用备用流程。返回导航流程通过真实 Enter 激活页面，并等待 URL、history 状态和可见结果，避免隐藏旧标题导致假通过，以及 Chrome 裁剪未激活历史条目造成测试串扰。
-
 1.0.19 增至 41 条流程：演员姓名被纪录片片名包含时打开演员作品而不是纪录片，精确片名与演员同名时仍打开影视。`tests/actor-intent.test.js` 覆盖中文姓名仅一次上游搜索、拉丁姓名保留 en-US 精确片名回查、非演员与非完整姓名不触发、降级结果 `no-store`，以及成功的搜索/人物/详情响应可短期浏览器缓存。
 
 1.0.20 增至 42 条流程：搜索响应预取详情或演员结果时，页面不再发送对应的详情或人物请求，补充数据仍按确认后的片名加载。`tests/search-prefetch.test.js` 覆盖高置信度标题预取详情、需确认的近分候选不预取、详情失败与慢查找不影响搜索、无可靠标题时预取演员、降级的演员结果不预取，以及上游要求停止时不再发起后续查询。
-
-2026-10-30 审核增加备用海报恢复身份流程，共 43 条命名浏览器流程；直接 OMDb 反例同时返回不匹配的 IMDb ID、评分和可加载图片，确保三者均不污染当前作品。Node 回归覆盖非 JSON 的 TMDB 错误状态、旧版类型恢复、重定向拒绝、异常预取、显式刷新后不复用旧缓存，以及合法空结果/同名演员预取。原生 workerd 另验证携带 Bearer 的 TMDB 请求不会访问重定向地址，HTML 格式的 429 只发起一次上游请求。
 
 ### 可重复性能验证
 
@@ -334,8 +330,6 @@ curl "http://localhost:8787/api/poster?title=三体&year=2023"
 # Wikipedia 中文摘要
 curl "http://localhost:8787/api/wiki/zh?q=三体"
 
-# OMDb 查询
-curl "http://localhost:8787/api/omdb?imdb=tt20242042"
 ```
 
 ### 环境变量配置
@@ -346,10 +340,7 @@ Worker 测试需要以下环境变量（可在 `.dev.vars` 中配置）：
 TMDB_ACCESS_TOKEN=your_tmdb_access_token
 # 或
 TMDB_API_KEY=your_tmdb_api_key
-OMDB_API_KEY=your_omdb_api_key
 ```
-
-> `OMDB_API_KEY` 是可选功能配置，但项目不内置 Key；未配置时 OMDb 接口返回 `503`，其他数据源仍可使用。
 
 ### 缓存测试
 
@@ -357,12 +348,11 @@ Worker 使用 `caches.default` 进行响应缓存。测试时注意观察：
 
 - 首次请求：从上游 API 获取，响应时间较长
 - 重复请求：从缓存读取，响应时间显著缩短
-- Worker 内部缓存 TTL：TMDB / 豆瓣 / OMDb / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
+- Worker 内部缓存 TTL：TMDB / 豆瓣 / Wiki 与完整海报聚合为 86400 秒（1天），完整资源搜索为 43200 秒（12小时）
 - 资源搜索使用 `resource-search-v14-cache.local` 命名空间并包含内部登录态指纹；更换或撤销 WPZY Secret 不复用旧 Worker 缓存。页面状态与独立分享证据支持跨次重试；提供方或详情页失败时的部分结果只缓存 900 秒（15 分钟）
 - 资源响应在 miss/hit/refresh 时对浏览器均为 `no-store`，同时检查内部缓存副本仍保留 43200/900 秒；客户端默认也绕过历史 HTTP 缓存，不能只检查显式重试。
 - `tests/wpzy-access.test.js` 覆盖站点 Cookie 白名单、同源与跨提供方跳转、登录失效、回复/VIP 限制、别名归一化、只读路径和账号缓存隔离；测试使用虚构 Cookie，不需要真实登录态
-- 海报聚合使用 `poster-v5-cache.local` 命名空间；已配置来源部分失败时的可用结果只缓存 900 秒
-- OMDb 使用 `omdb-v3-cache.local`；Wiki 使用 `wiki-zh-v6-cache.local`，并将媒体类型和年份纳入缓存键。前端资源和 Wiki 请求携带发布版本，隔离旧浏览器缓存。
+- 海报使用 `poster-v6-cache.local` 命名空间；成功结果缓存 86400 秒，查询失败不缓存
 - `tests/review-regressions.test.js` 验证缺失/畸形人物作品、媒体演职员与外部 ID 数据不写入缓存、旧缓存重取及 Wikipedia 首句年份冲突；`test:runtime` 在真实 workerd 中验证这些失败不会阻止上游恢复。
 
 ---

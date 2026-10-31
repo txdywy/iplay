@@ -234,40 +234,6 @@ test('Wiki requests carry selected identity and release without passing them as 
     assert.ok(await WikiAPI.getSummary('Test Series', { mediaType: 'tv', year: '2023' }));
 });
 
-test('OMDb client fetches a known IMDb profile by id', async t => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = '';
-    globalThis.fetch = async (url, options = {}) => {
-        requestedUrl = String(url);
-        assert.ok(options.signal instanceof AbortSignal);
-        return Response.json({ omdb: true, imdb: 8.4 });
-    };
-    t.after(() => { globalThis.fetch = originalFetch; });
-
-    const { OmdbAPI } = await import('../js/api.js');
-    const result = await OmdbAPI.getById('tt1234567');
-
-    assert.deepEqual(result, { omdb: true, imdb: 8.4 });
-    assert.match(requestedUrl, /\/api\/omdb\?imdb=tt1234567$/);
-});
-
-test('OMDb client can enrich a title when an IMDb id is unavailable', async t => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = '';
-    globalThis.fetch = async (url, options = {}) => {
-        requestedUrl = String(url);
-        assert.ok(options.signal instanceof AbortSignal);
-        return Response.json({ omdb: true, title: 'Test Movie' });
-    };
-    t.after(() => { globalThis.fetch = originalFetch; });
-
-    const { OmdbAPI } = await import('../js/api.js');
-    const result = await OmdbAPI.search('Test Movie', 2024);
-
-    assert.deepEqual(result, { omdb: true, title: 'Test Movie' });
-    assert.match(requestedUrl, /\/api\/omdb\?title=Test%20Movie&year=2024$/);
-});
-
 test('poster client sends the selected work identity without leaking it into fetch options', async t => {
     const originalFetch = globalThis.fetch;
     let requestedUrl;
@@ -304,29 +270,6 @@ test('clients preserve explicit empty identities so the Worker can reject them i
     assert.equal(urls[2].searchParams.get('type'), '');
     for (const name of ['id', 'type', 'imdb']) assert.equal(urls[3].searchParams.get(name), '');
     assert.equal(urls[4].searchParams.has('type'), false, 'omitted legacy type remains omitted');
-});
-
-test('OMDb client keeps provider failures recoverable and preserves caller aborts', async t => {
-    const originalFetch = globalThis.fetch;
-    let fetchCalls = 0;
-    globalThis.fetch = async (_url, options = {}) => {
-        fetchCalls += 1;
-        if (options.signal?.aborted) throw new globalThis.DOMException('Aborted', 'AbortError');
-        return Response.json({ error: 'OMDb unavailable' }, { status: 503 });
-    };
-    t.after(() => { globalThis.fetch = originalFetch; });
-
-    const { OmdbAPI } = await import('../js/api.js');
-    assert.equal(await OmdbAPI.getById(''), null);
-    assert.equal(await OmdbAPI.getById('tt1234567'), null);
-
-    const controller = new globalThis.AbortController();
-    controller.abort();
-    await assert.rejects(
-        OmdbAPI.getById('tt1234567', { signal: controller.signal }),
-        error => error.name === 'AbortError'
-    );
-    assert.equal(fetchCalls, 1);
 });
 
 test('an embedded follow-up answer serves identical TMDB requests without a round trip', async t => {
@@ -457,20 +400,4 @@ test('valid empty and ambiguous embedded person answers still avoid a round trip
         assert.deepEqual(await TmdbAPI.searchPerson(query), data);
     }
     assert.equal(requests, 2);
-});
-
-test('OMDb stops for this page once the Worker reports it is not configured', async t => {
-    const originalFetch = globalThis.fetch;
-    let fetchCalls = 0;
-    globalThis.fetch = async () => {
-        fetchCalls += 1;
-        return Response.json({ error: 'OMDb API not configured' }, { status: 503 });
-    };
-    t.after(() => { globalThis.fetch = originalFetch; });
-
-    const { OmdbAPI } = await import('../js/api.js');
-    assert.equal(await OmdbAPI.getById('tt7654321'), null);
-    assert.equal(await OmdbAPI.getById('tt7654322'), null);
-    assert.equal(await OmdbAPI.search('Another Title', 2024), null);
-    assert.equal(fetchCalls, 1, 'a missing key is permanent until the Worker is redeployed');
 });

@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.23';
+import { RELEASE_VERSION } from './release.js?v=1.0.24';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -9,7 +9,6 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
 const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
 const POSTER_TIMEOUT_MS = 18000;
-const OMDB_TIMEOUT_MS = 12000;
 // Successful TMDB answers are briefly browser-cacheable. Tag them by release so
 // a new frontend never reuses a response shaped for the previous Worker.
 const RELEASE_PARAM = `v=${encodeURIComponent(RELEASE_VERSION)}`;
@@ -18,8 +17,6 @@ const RELEASE_PARAM = `v=${encodeURIComponent(RELEASE_VERSION)}`;
 const PREFETCH_TTL_MS = 300000;
 const PREFETCH_MAX_ENTRIES = 8;
 const prefetchedResponses = new Map();
-// Missing Worker configuration answers every OMDb request the same way.
-let omdbNotConfigured = false;
 
 function tmdbDetailUrl(id, type) {
     let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
@@ -90,10 +87,6 @@ function readPrefetched(url, options = {}) {
     }
     // Callers extend credit lists in place; each read gets its own copy.
     return structuredClone(entry.data);
-}
-
-function noteOmdbFailure(error) {
-    if (error?.status === 503 && /not configured/i.test(error.message || '')) omdbNotConfigured = true;
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -210,34 +203,6 @@ export const WikiAPI = {
     }
 };
 
-/**
- * OMDb 详情接口：使用 TMDB 已确认的 IMDb ID，避免再次按片名搜索。
- */
-export const OmdbAPI = {
-    async getById(imdbId, options = {}) {
-        if (!imdbId || omdbNotConfigured) return null;
-        try {
-            return await fetchWithTimeout(`${API_BASE}/api/omdb?imdb=${encodeURIComponent(imdbId)}`, options, OMDB_TIMEOUT_MS);
-        } catch (e) {
-            if (e.name === 'AbortError') throw e;
-            noteOmdbFailure(e);
-            console.debug("OMDb fetch failed:", e);
-            return null;
-        }
-    },
-    async search(title, year, options = {}) {
-        if (!title || omdbNotConfigured) return null;
-        try {
-            return await fetchWithTimeout(`${API_BASE}/api/omdb?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || '')}`, options, OMDB_TIMEOUT_MS);
-        } catch (e) {
-            if (e.name === 'AbortError') throw e;
-            noteOmdbFailure(e);
-            console.debug("OMDb title fetch failed:", e);
-            return null;
-        }
-    }
-};
-
 export const ResourceAPI = {
     async search(query, options = {}, { refresh = false } = {}) {
         const refreshParam = refresh ? '&refresh=1' : '';
@@ -249,7 +214,7 @@ export const ResourceAPI = {
 };
 
 /**
- * 海报专用接口：优先 TMDB，再向 OMDb 兜底
+ * 海报专用接口：从 TMDB 获取已确认作品的海报
  */
 export const PosterAPI = {
     async getPoster(title, year, options = {}, { refresh = false } = {}) {

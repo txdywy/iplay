@@ -14,7 +14,6 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 |----------|----------|---------|-------------|
 | `TMDB_ACCESS_TOKEN` | **Recommended** | — | TMDB v4 Read Access Token. Used as a Bearer token for authenticated requests to The Movie Database API. This is the preferred authentication method. |
 | `TMDB_API_KEY` | Fallback | — | TMDB v3 API Key. Used as a fallback if `TMDB_ACCESS_TOKEN` is not set. Passed as a query parameter (`api_key`). |
-| `OMDB_API_KEY` | Optional | — | Enables OMDb-backed IMDb ratings, Rotten Tomatoes scores, and poster metadata. No key is bundled; OMDb endpoints return `503` when it is unset. |
 | `CORS_ALLOWED_ORIGINS` | Optional | — | Comma-separated additional frontend origins. At most 20 configured values are read. |
 | `ENVIRONMENT` | Production required | — | Set to `production` in the deployed Worker. When production rate-limit bindings are missing, requests fail closed with `503` instead of using an isolate-local counter. |
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
@@ -31,9 +30,6 @@ npm run wrangler -- secret put TMDB_ACCESS_TOKEN
 
 # Set TMDB v3 API Key (fallback)
 npm run wrangler -- secret put TMDB_API_KEY
-
-# Set OMDb API Key (optional)
-npm run wrangler -- secret put OMDB_API_KEY
 
 # Add self-hosted frontend origins when needed
 npm run wrangler -- secret put CORS_ALLOWED_ORIGINS
@@ -54,7 +50,6 @@ For local testing with `npm run wrangler -- dev`, create a `.dev.vars` file in t
 ```bash
 TMDB_ACCESS_TOKEN=your_tmdb_v4_token_here
 TMDB_API_KEY=your_tmdb_v3_key_here
-OMDB_API_KEY=your_omdb_key_here
 CORS_ALLOWED_ORIGINS=https://preview.example.com,http://localhost:4173
 ENVIRONMENT=development
 ```
@@ -267,8 +262,7 @@ The final recommendation score (0-100) is computed as:
 
 | Setting | Required? | Failure Mode if Missing |
 |---------|-----------|------------------------|
-| `TMDB_ACCESS_TOKEN` or `TMDB_API_KEY` | **Yes** | Direct TMDB search/detail requests return `503` when both are missing. Poster aggregation can still fall back to OMDb when `OMDB_API_KEY` is configured; if neither poster source is configured, it returns `503`. |
-| `OMDB_API_KEY` | No | OMDb-backed ratings and metadata are unavailable; direct OMDb requests return `503`. |
+| `TMDB_ACCESS_TOKEN` or `TMDB_API_KEY` | Required | Search, detail and poster endpoints return `503` without TMDB credentials. |
 | `API_BASE` (frontend) | **Yes** | Frontend cannot communicate with the Worker; all API requests fail. |
 | Tailwind build | **Yes** | Frontend renders without styles if `css/output.css` is missing or stale. |
 

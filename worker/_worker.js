@@ -140,14 +140,6 @@ export default {
                 ), request, env);
             }
 
-            if (path === "/api/omdb") {
-                const imdbId = url.searchParams.has("imdb") ? url.searchParams.get("imdb") : url.searchParams.get("i");
-                if (imdbId !== null) {
-                    return withCors(await handleOmdbById(imdbId, env, ctx), request, env);
-                }
-                return withCors(await handleOmdbSearch(url.searchParams.get("title"), url.searchParams.get("year"), env, ctx), request, env);
-            }
-
             if (path === "/api/poster") {
                 return withCors(await handlePosterSearch(
                     url.searchParams.get("title"),
@@ -503,10 +495,6 @@ function getTmdbAuth(env) {
     return null;
 }
 
-function getOmdbApiKey(env) {
-    return env && env.OMDB_API_KEY ? env.OMDB_API_KEY : null;
-}
-
 function tmdbImage(path, size = TMDB_POSTER_SIZE) {
     return typeof path === "string" && path ? `${TMDB_IMAGE_BASE}/${size}${path}` : null;
 }
@@ -604,50 +592,6 @@ async function checkRateLimit(ip, path, env) {
     }
 
     return checkLocalRateLimit(`${routeKey}:${ip}`, isResourceRoute ? 10 : RATE_LIMIT);
-}
-
-async function fetchOmdbWithYearFallback(title, year, env, deadline = null) {
-    const apiKey = getOmdbApiKey(env);
-    if (!apiKey || !title) return null;
-    const encodedApiKey = encodeURIComponent(apiKey);
-    let url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${encodedApiKey}`;
-    if (year) url += `&y=${year}`;
-
-    if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-    const res = await fetchUpstream(url, {}, remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS));
-    if (!res.ok) {
-        await releaseUpstreamResponse(res);
-        throw createHttpError(`OMDb rejected with status ${res.status}`, res.status);
-    }
-
-    const data = await readJsonWithLimit(res);
-    if (data.Response === "True") return validateOmdbTitleMatch(data, title, year);
-
-    const applicationError = getOmdbApplicationError(data);
-    if (applicationError) throw applicationError;
-
-    if (year) {
-        if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-        const fallbackRes = await fetchUpstream(
-            `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${encodedApiKey}`,
-            {},
-            remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
-        );
-        if (!fallbackRes.ok) {
-            await releaseUpstreamResponse(fallbackRes);
-            throw createHttpError(`OMDb rejected with status ${fallbackRes.status}`, fallbackRes.status);
-        }
-
-        const fallbackData = await readJsonWithLimit(fallbackRes);
-        if (fallbackData.Response === "True") {
-            // Dropping the year may find a different remake with the same title.
-            return validateOmdbTitleMatch(fallbackData, title, year);
-        }
-
-        const fallbackApplicationError = getOmdbApplicationError(fallbackData);
-        if (fallbackApplicationError) throw fallbackApplicationError;
-    }
-    return null;
 }
 
 function getTmdbMediaType(item, mediaTypeOverride = null) {
@@ -2842,162 +2786,6 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     }
 }
 
-function requireOmdbApiKey(env) {
-    const key = getOmdbApiKey(env);
-    if (!key) return { error: jsonResponse({ error: "OMDb API not configured" }, 503) };
-    return { key };
-}
-
-function getOmdbApplicationError(data) {
-    const response = data?.Response;
-    const message = typeof data?.Error === "string" ? data.Error.trim() : "";
-    if (response === "True") return null;
-    if (response !== "False") return createHttpError("OMDb returned an invalid response", 502);
-    if (!message) return createHttpError("OMDb returned an invalid response", 502);
-    if (/not found|no such title/i.test(message)) return null;
-
-    const status = /limit|too many requests/i.test(message) ? 429 : 502;
-    return createHttpError(`OMDb: ${message}`, status, status === 429 ? "OMDb: Request limit reached!" : "OMDb service unavailable");
-}
-
-async function fetchOmdbById(imdbId, env, deadline = null) {
-    const apiKey = getOmdbApiKey(env);
-    if (!apiKey) return null;
-    if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-    const res = await fetchUpstream(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(apiKey)}`, {}, remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS));
-    if (!res.ok) {
-        await releaseUpstreamResponse(res);
-        throw createHttpError(`OMDb rejected with status ${res.status}`, res.status);
-    }
-    const data = await readJsonWithLimit(res);
-    if (data.Response === "True") {
-        validateOmdbSuccess(data);
-        if (data.imdbID !== imdbId) throw createHttpError("OMDb returned a mismatched IMDb identity", 502);
-        return data;
-    }
-    const applicationError = getOmdbApplicationError(data);
-    if (applicationError) throw applicationError;
-    return null;
-}
-
-async function handleOmdbById(imdbId, env, ctx) {
-    const imdbIdCheck = validateImdbId(imdbId);
-    if (imdbIdCheck.error) return imdbIdCheck.error;
-    imdbId = imdbIdCheck.value;
-
-    const keyCheck = requireOmdbApiKey(env);
-    if (keyCheck.error) return keyCheck.error;
-
-    const cacheKey = new Request(`https://omdb-v3-cache.local/id/${encodeURIComponent(imdbId)}`);
-    const cached = await serveCachedJson(cacheKey);
-    if (cached) return cached;
-
-    try {
-        const data = await fetchOmdbById(imdbId, env);
-        if (data) return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
-        return jsonResponse({ error: "OMDb: Not found" }, 404);
-    } catch (e) {
-        return errorResponse(e);
-    }
-}
-
-async function handleOmdbSearch(title, year, env, ctx) {
-    const titleCheck = validateRequiredText(title, "title");
-    if (titleCheck.error) return titleCheck.error;
-    title = titleCheck.value;
-
-    const yearCheck = validateOptionalYear(year);
-    if (yearCheck.error) return yearCheck.error;
-    year = yearCheck.value;
-
-    const keyCheck = requireOmdbApiKey(env);
-    if (keyCheck.error) return keyCheck.error;
-
-    const cacheKey = new Request(`https://omdb-v3-cache.local/search/?t=${encodeURIComponent(title)}&y=${year || ''}`);
-    const cached = await serveCachedJson(cacheKey);
-    if (cached) return cached;
-
-    try {
-        const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const data = await fetchOmdbWithYearFallback(title, year, env, deadline);
-        if (data) return cacheJson(ctx, cacheKey, extractOmdbProfile(data), 86400);
-        return jsonResponse({ error: "Not found on OMDb" }, 404);
-    } catch (e) {
-        return errorResponse(e);
-    }
-}
-
-function validateOmdbSuccess(data) {
-    if (!isObject(data) || typeof data.Title !== "string" || !data.Title.trim() || data.Title === "N/A") {
-        throw createHttpError("OMDb returned an invalid response", 502);
-    }
-}
-
-function validateOmdbTitleMatch(data, title, year) {
-    validateOmdbSuccess(data);
-    if (scoreSearchText(title, data.Title) < SEARCH_ACCEPT_SCORE) return null;
-    if (year && String(data.Year || "").slice(0, 4) !== year) return null;
-    return data;
-}
-
-function cleanOmdbValue(value) {
-    if (value === null || value === undefined || value === "" || value === "N/A") return null;
-    return typeof value === "string" || typeof value === "number" ? value : null;
-}
-
-function cleanOmdbFloat(value) {
-    const clean = cleanOmdbValue(value);
-    const parsed = clean === null ? NaN : Number.parseFloat(clean);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function cleanOmdbInt(value) {
-    const clean = cleanOmdbValue(value);
-    const parsed = clean === null ? NaN : Number.parseInt(clean, 10);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function splitOmdbList(value) {
-    const clean = cleanOmdbValue(value);
-    return typeof clean === "string" ? clean.split(",").map(item => item.trim()).filter(Boolean) : [];
-}
-
-function extractRottenTomato(ratings) {
-    if (!Array.isArray(ratings)) return null;
-    const rTomato = ratings.find(r => isObject(r) && r.Source === "Rotten Tomatoes");
-    if (!rTomato) return null;
-    const parsed = Number.parseInt(String(rTomato.Value || "").replace('%', ''), 10);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function extractOmdbProfile(data) {
-    return {
-        omdb: true,
-        imdb: cleanOmdbFloat(data.imdbRating),
-        imdbVotes: cleanOmdbValue(data.imdbVotes),
-        rottenTomatoes: extractRottenTomato(data.Ratings),
-        poster: cleanOmdbValue(data.Poster),
-        title: cleanOmdbValue(data.Title),
-        year: cleanOmdbValue(data.Year),
-        type: cleanOmdbValue(data.Type),
-        rated: cleanOmdbValue(data.Rated),
-        released: cleanOmdbValue(data.Released),
-        runtime: cleanOmdbValue(data.Runtime),
-        genres: splitOmdbList(data.Genre),
-        director: cleanOmdbValue(data.Director),
-        writer: cleanOmdbValue(data.Writer),
-        actors: cleanOmdbValue(data.Actors),
-        plot: cleanOmdbValue(data.Plot),
-        language: cleanOmdbValue(data.Language),
-        country: cleanOmdbValue(data.Country),
-        awards: cleanOmdbValue(data.Awards),
-        boxOffice: cleanOmdbValue(data.BoxOffice),
-        production: cleanOmdbValue(data.Production),
-        metascore: cleanOmdbInt(data.Metascore),
-        imdbId: cleanOmdbValue(data.imdbID)
-    };
-}
-
 async function handlePosterSearch(title, year, env, ctx, { refresh = false, tmdbId = null, mediaType = null, imdbId = null } = {}) {
     const titleCheck = validateRequiredText(title, "title");
     if (titleCheck.error) return titleCheck.error;
@@ -3024,10 +2812,9 @@ async function handlePosterSearch(title, year, env, ctx, { refresh = false, tmdb
         identity.imdbId = imdbCheck.value;
     }
 
-    const configuredSources = `${getTmdbAuth(env) ? "tmdb" : ""}-${getOmdbApiKey(env) ? "omdb" : ""}`;
     const response = await withInFlight(
         ctx,
-        `poster:${refresh ? "refresh:" : ""}${title}:${year}:${configuredSources}:${JSON.stringify(identity)}`,
+        `poster:${refresh ? "refresh:" : ""}${title}:${year}:${JSON.stringify(identity)}`,
         () => handlePosterSearchUncoalesced(title, year, env, ctx, { refresh, identity })
     );
     return response.clone();
@@ -3042,62 +2829,15 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     if (yearCheck.error) return yearCheck.error;
     year = yearCheck.value;
 
-    const hasTmdb = Boolean(getTmdbAuth(env));
-    const hasOmdb = Boolean(getOmdbApiKey(env));
-    if (!hasTmdb && !hasOmdb) {
-        return jsonResponse({ error: "Poster providers are not configured" }, 503);
-    }
-
-    const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
-    const cacheKey = new Request(`https://poster-v5-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}&imdb=${identity.imdbId || ""}`);
+    if (!getTmdbAuth(env)) return jsonResponse({ error: "TMDB is not configured" }, 503);
+    const cacheKey = new Request(`https://poster-v6-cache.local/?title=${encodeURIComponent(title)}&year=${year}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
-
     try {
-        const deadline = createDeadline(POSTER_TOTAL_TIMEOUT_MS);
-        const [tmdbResult, omdbResult] = await Promise.allSettled([
-            tryTmdbForPoster(title, year, env, ctx, deadline, { refreshCache: refresh, identity }),
-            tryOmdbForPoster(title, year, env, deadline, { identity, ctx, refreshCache: refresh })
-        ]);
-
-        const tmdbPoster = tmdbResult.status === "fulfilled" ? tmdbResult.value : null;
-        const omdbProfile = omdbResult.status === "fulfilled" ? omdbResult.value : null;
-        const isPartial = (hasTmdb && tmdbResult.status === "rejected")
-            || (hasOmdb && omdbResult.status === "rejected");
-        const sourceFailures = [
-            hasTmdb && tmdbResult.status === "rejected" ? tmdbResult.reason : null,
-            hasOmdb && omdbResult.status === "rejected" ? omdbResult.reason : null
-        ].filter(Boolean);
-        const cacheMaxAge = isPartial ? 900 : 86400;
-
-        if (tmdbPoster) {
-            return cacheJson(ctx, cacheKey, {
-                ...tmdbPoster,
-                omdb: omdbProfile
-            }, cacheMaxAge);
-        }
-
-        const withIdentity = data => identity.tmdbId
-            ? { ...data, tmdbId: identity.tmdbId, mediaType: identity.mediaType }
-            : data;
-        if (omdbProfile) return cacheJson(ctx, cacheKey, withIdentity(omdbProfile), cacheMaxAge);
-
-        if (hasOmdb && !identity.imdbId && omdbResult.status === "fulfilled") {
-            const enTitle = await getEnglishTitleFromWiki(title, deadline);
-            if (enTitle && enTitle !== title) {
-                const result = await tryOmdbForPoster(enTitle, year, env, deadline, { identity, ctx, refreshCache: refresh });
-                if (result) return cacheJson(ctx, cacheKey, withIdentity(result), cacheMaxAge);
-            }
-        }
-
-        if (sourceFailures.length > 0) {
-            const failure = sourceFailures.find(error => error?.status === 504) || sourceFailures[0];
-            return errorResponse(failure);
-        }
-
-        return jsonResponse({ error: "No poster found" }, 404);
-    } catch (e) {
-        return errorResponse(e);
+        const result = await tryTmdbForPoster(title, year, env, ctx, createDeadline(POSTER_TOTAL_TIMEOUT_MS), { refreshCache: refresh, identity });
+        return result ? cacheJson(ctx, cacheKey, result, 86400) : jsonResponse({ error: "No poster found" }, 404);
+    } catch (error) {
+        return errorResponse(error);
     }
 }
 
@@ -3109,7 +2849,7 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refres
         const detail = normalizeTmdbDetail(data, identity.mediaType);
         return detail.poster ? {
             poster: detail.poster, tmdbRating: detail.tmdbRating, tmdbVotes: detail.tmdbVotes,
-            rottenTomatoes: null, tmdb: true, tmdbId: detail.id, mediaType: detail.mediaType
+            tmdb: true, tmdbId: detail.id, mediaType: detail.mediaType
         } : null;
     }
     let searchData = await fetchTmdbJson("/search/multi", {
@@ -3145,50 +2885,10 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refres
         poster: tmdbImage(bestRaw.poster_path),
         tmdbRating: best.tmdbRating,
         tmdbVotes: best.tmdbVotes,
-        rottenTomatoes: null,
         tmdb: true,
         tmdbId: best.id,
         mediaType: best.mediaType
     };
-}
-
-async function tryOmdbForPoster(title, year, env, deadline = null, { identity = {}, ctx, refreshCache = false } = {}) {
-    const data = identity.imdbId
-        ? await fetchOmdbById(identity.imdbId, env, deadline)
-        : await fetchOmdbWithYearFallback(title, year, env, deadline);
-    if (data && identity.tmdbId) {
-        const imdbCheck = validateImdbId(data.imdbID);
-        if (imdbCheck.error || !getTmdbAuth(env)) return null;
-        const mapping = await fetchTmdbFindByExternalId(imdbCheck.value, "zh-CN", env, ctx, { deadline, refreshCache });
-        if (!getTmdbFindEntries(mapping).some(entry => entry.mediaType === identity.mediaType
-            && toSafeTmdbId(entry.item?.id) === identity.tmdbId)) return null;
-    }
-    if (data && (identity.tmdbId || (data.Poster && data.Poster !== "N/A"))) {
-        return extractOmdbProfile(data);
-    }
-    return null;
-}
-
-async function getEnglishTitleFromWiki(zhTitle, deadline = null) {
-    const title = await searchZhWikiTitle(zhTitle, deadline);
-    if (!title) return null;
-    if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-
-    const pageRes = await fetchUpstream(
-        `https://zh.wikipedia.org/w/api.php?action=query&prop=langlinks&titles=${encodeURIComponent(title)}&lllang=en&format=json&origin=*`,
-        { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } },
-        remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
-    );
-    if (!pageRes.ok) {
-        await releaseUpstreamResponse(pageRes);
-        throw createHttpError(`Wiki langlinks rejected with status ${pageRes.status}`, pageRes.status);
-    }
-
-    const pageData = await readJsonWithLimit(pageRes);
-    const pages = pageData?.query?.pages;
-    const page = pages && typeof pages === "object" ? Object.values(pages)[0] : null;
-    const langlinks = Array.isArray(page?.langlinks) ? page.langlinks : [];
-    return langlinks.length > 0 ? langlinks[0]["*"] || null : null;
 }
 
 function getWikiIdentityEvidence(text) {
@@ -3314,11 +3014,6 @@ async function searchZhWikiTitles(query, deadline = null, { mediaType = null, ye
             - Number(Boolean(mediaType) && getWikiTitleKind(a.title) === mediaType)
     ));
     return candidates.slice(0, 10).map(candidate => candidate.title);
-}
-
-async function searchZhWikiTitle(query, deadline = null, options = {}) {
-    const titles = await searchZhWikiTitles(query, deadline, options);
-    return titles[0] || null;
 }
 
 async function handleWikiZh(query, ctx, options = {}) {

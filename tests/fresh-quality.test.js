@@ -92,7 +92,6 @@ test('explicit blank identity parameters fail before any fallback lookup', async
     for (const path of [
         '/api/tmdb/person?q=Selected%20Actor&id=', '/api/tmdb/person?q=Selected%20Actor&id=%20%20',
         '/api/tmdb/detail?id=42&type=', '/api/tmdb/detail?id=42&type=%20%20',
-        '/api/omdb?imdb=&title=Different', '/api/omdb?i=&title=Different', '/api/omdb?imdb=&i=tt1234567'
     ]) {
         const response = await worker.fetch(request(path), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
         assert.equal(response.status, 400, path);
