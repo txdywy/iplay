@@ -1314,7 +1314,9 @@ async function runUnscannedResourceStatusFlow() {
     await search('Test Movie');
     await assertSearchReady('Test Movie');
     await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
-    await waitFor("document.querySelector('#resourcesStatus').textContent.includes('待启动')");
+    // IntersectionObserver may start the scan as soon as scrolling exposes
+    // the section. Do not require its transient deferred state to persist.
+    await waitFor("window.__smoke.resourceCalls === 1 || document.querySelector('#resourcesStatus').textContent.includes('待启动')");
     await evaluate("Array.from(document.querySelectorAll('#resourcesSection button')).find(button => button.textContent === '开始扫描资源')?.click()");
     await waitFor('window.__smoke.resourceCalls === 1');
     await waitFor("document.querySelector('#resourcesStatus').textContent.includes('12/13')");
