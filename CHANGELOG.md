@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.23] - 2026-10-31
+
+### Security
+
+- Override the ESLint toolchain's transitive minimatch to 11.0.1, the patched version for GHSA-g3hv-75wg-m249. Keep the existing ESLint version and Node 22/24 CI matrix.
+
+### Fixed
+
+- Reject Quark source paths containing literal or encoded dot segments before URL normalization can rewrite them into another share.
+- Validate TMDB detail titles against the requested media type, and use movie/TV-specific title, original-title and date fields throughout search, details and poster selection. A same-number ID from the other media type no longer passes detail validation or enters its cache.
+- Invalidate older resource and poster aggregates after these identity corrections.
+- Decode HTML numeric entities as complete Unicode code points so supplementary Chinese characters and emoji do not corrupt resource titles or hide matching WPZY results.
+
 ## [1.0.22] - 2026-10-30
 
 ### Fixed

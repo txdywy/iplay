@@ -2158,7 +2158,7 @@ test('poster aggregation short-caches a usable result when a configured source f
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v4-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v5-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.tmdb, true);
@@ -2211,7 +2211,7 @@ test('poster aggregation short-caches OMDb fallback when configured TMDB fails',
         { waitUntil() {} }
     );
     const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v4-cache.local/'));
+    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v5-cache.local/'));
 
     assert.equal(response.status, 200);
     assert.equal(body.omdb, true);

@@ -164,6 +164,48 @@ test('TMDB details reject mismatched identities and title-less payloads', async 
     }
 });
 
+test('TMDB details reject the opposite media schema even when its numeric ID matches', async t => {
+    let payload;
+    const ctx = mockUpstreams(t, async () => Response.json(payload));
+    for (const type of ['movie', 'tv']) {
+        payload = tmdbDetail({ id: 42, [type === 'movie' ? 'name' : 'title']: 'Wrong media' });
+        const response = await worker.fetch(request(`/api/tmdb/detail?id=42&type=${type}`), { TMDB_API_KEY: 'test' }, ctx);
+        assert.equal(response.status, 502);
+    }
+    assert.equal(ctx.writes.length, 0);
+});
+
+test('typed TMDB details use only their own title, original title and release date fields', async t => {
+    const ctx = mockUpstreams(t, async () => Response.json(tmdbDetail({
+        id: 42, title: 'Film', name: 'Series', original_title: 'Original Film', original_name: 'Original Series',
+        release_date: '2001-01-01', first_air_date: '2020-01-01'
+    })));
+    const response = await worker.fetch(request('/api/tmdb/detail?id=42&type=tv'), { TMDB_API_KEY: 'test' }, ctx);
+    const detail = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(detail.title, 'Series');
+    assert.equal(detail.originalTitle, 'Original Series');
+    assert.equal(detail.year, '2020');
+});
+
+test('TMDB search ranks and normalizes a TV result using TV identity fields', async t => {
+    const item = { id: 42, media_type: 'tv', title: 'Wrong Film', name: 'Series',
+        original_title: 'Wrong Original', original_name: 'Original Series',
+        release_date: '2001-01-01', first_air_date: '2020-01-01', poster_path: '/series.jpg' };
+    const ctx = mockUpstreams(t, async url => new URL(url).pathname.includes('/search/')
+        ? Response.json({ results: [item] }) : Response.json(tmdbDetail(item)));
+    const response = await worker.fetch(request('/api/tmdb/search?q=Series%202020'), { TMDB_API_KEY: 'test' }, ctx);
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.results[0].title, 'Series');
+    assert.equal(data.results[0].originalTitle, 'Original Series');
+    assert.equal(data.results[0].year, '2020');
+    assert.ok(data.results[0].matchScore >= 0.72);
+    const poster = await worker.fetch(request('/api/poster?title=Series&year=2020'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(poster.status, 200);
+    assert.equal((await poster.json()).poster, 'https://image.tmdb.org/t/p/w500/series.jpg');
+});
+
 test('media details reject missing or malformed appended fields and allow genuinely empty credits', async t => {
     let payload;
     const ctx = mockUpstreams(t, async () => Response.json(payload));

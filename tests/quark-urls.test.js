@@ -219,6 +219,14 @@ test('resource search rejects malformed Quark paths instead of truncating them i
     ]);
 });
 
+test('resource search rejects paths that URL parsing would rewrite into another Quark share', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>https://pan.quark.cn/s/old/../rewritten</p>'
+        + '<p>https://drive.quark.cn/s/old/%2e%2e/encoded-rewrite?pwd=bad1</p>'
+        + '<p>https://pan.quark.cn/s/valid?pwd=good1</p>'
+    ]), [{ url: 'https://pan.quark.cn/s/valid', password: 'good1' }]);
+});
+
 test('resource search keeps only canonical Quark share URLs from escaped page content', async t => {
     const originalFetch = globalThis.fetch;
     const originalCaches = globalThis.caches;
