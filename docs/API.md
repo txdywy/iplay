@@ -613,9 +613,9 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v13-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v14-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
-| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v4-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
+| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v5-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。

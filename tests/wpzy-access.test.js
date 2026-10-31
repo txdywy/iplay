@@ -26,8 +26,8 @@ function setup(t, upstream) {
     };
     t.after(() => { globalThis.fetch = originalFetch; globalThis.caches = originalCaches; });
     const ctx = { waitUntil(promise) { writes.push(promise); } };
-    async function search(cookie = LOGIN_COOKIE, { refresh = false } = {}) {
-        const response = await worker.fetch(new Request(`https://worker.test/api/resource?q=${encodeURIComponent(title)}${refresh ? '&refresh=1' : ''}`, {
+    async function search(cookie = LOGIN_COOKIE, { refresh = false, query = title } = {}) {
+        const response = await worker.fetch(new Request(`https://worker.test/api/resource?q=${encodeURIComponent(query)}${refresh ? '&refresh=1' : ''}`, {
             headers: { 'cf-connecting-ip': t.name, Cookie: 'bbs_token=untrusted-client-cookie' }
         }), cookie ? { WPZY_COOKIE: cookie } : {}, ctx);
         const body = await response.json();
@@ -36,6 +36,16 @@ function setup(t, upstream) {
     }
     return { requests, entries, search };
 }
+
+test('WPZY matches supplementary Chinese characters encoded as HTML numeric entities', async t => {
+    const { search } = setup(t, url => url.pathname === '/search.htm'
+        ? new Response(thread(201, '&#127916; &#x110000;').replace('流浪地球', '&#x20bb7;祥'))
+        : new Response('<p>https://pan.quark.cn/s/unicode-title</p>'));
+    const { body } = await search(LOGIN_COOKIE, { query: '𠮷祥' });
+    assert.equal(body.wpzysResources.length, 1);
+    assert.equal(body.wpzysResources[0].title, '𠮷祥 夸克 🎬 �');
+    assert.equal(body.quarkUrls[0].url, 'https://pan.quark.cn/s/unicode-title');
+});
 
 test('WPZY uses only the server secret for search, detail and same-origin redirects', async t => {
     const { search, requests, entries } = setup(t, (url, headers) => {
@@ -55,7 +65,7 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     assert.equal(body.quarkUrls[0]?.sourceUrl, 'https://wpzy.org/thread-201.htm');
     assert.ok(requests.filter(request => request.url.startsWith('https://by669.org/')).every(request => request.cookie === null));
     assert.ok(requests.every(request => request.method === 'GET'));
-    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v13-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
+    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v14-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
 });

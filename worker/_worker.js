@@ -655,32 +655,42 @@ function getTmdbMediaType(item, mediaTypeOverride = null) {
     return mediaType === "movie" || mediaType === "tv" ? mediaType : null;
 }
 
-function getTmdbTitle(item) {
+function getTmdbTitle(item, mediaTypeOverride = null) {
+    const type = getTmdbMediaType(item, mediaTypeOverride);
+    if (type) return pickTmdbText(type === "movie" ? item?.title : item?.name);
     return pickTmdbText(item?.title, item?.name);
 }
 
-function getTmdbOriginalTitle(item) {
+function getTmdbOriginalTitle(item, mediaTypeOverride = null) {
+    const type = getTmdbMediaType(item, mediaTypeOverride);
+    if (type) return pickTmdbText(type === "movie" ? item?.original_title : item?.original_name, getTmdbTitle(item, type));
     return pickTmdbText(item?.original_title, item?.original_name, getTmdbTitle(item));
+}
+
+function getTmdbYear(item, mediaTypeOverride = null) {
+    const type = getTmdbMediaType(item, mediaTypeOverride);
+    return parseYear(type === "movie" ? item?.release_date : type === "tv" ? item?.first_air_date
+        : item?.release_date || item?.first_air_date);
 }
 
 function isValidTmdbSearchItem(item, mediaTypeOverride = null) {
     return isObject(item)
         && toSafeTmdbId(item.id) !== null
         && getTmdbMediaType(item, mediaTypeOverride) !== null
-        && Boolean(getTmdbTitle(item));
+        && Boolean(getTmdbTitle(item, mediaTypeOverride));
 }
 
 function normalizeTmdbItem(item, mediaTypeOverride = null, match = null) {
     if (!isValidTmdbSearchItem(item, mediaTypeOverride)) return null;
 
-    const title = getTmdbTitle(item);
-    const originalTitle = getTmdbOriginalTitle(item);
+    const title = getTmdbTitle(item, mediaTypeOverride);
+    const originalTitle = getTmdbOriginalTitle(item, mediaTypeOverride);
     const normalized = {
         id: toSafeTmdbId(item.id),
         mediaType: getTmdbMediaType(item, mediaTypeOverride),
         title,
         originalTitle,
-        year: parseYear(typeof item.release_date === "string" ? item.release_date : item.first_air_date),
+        year: getTmdbYear(item, mediaTypeOverride),
         poster: tmdbImage(item.poster_path),
         backdrop: tmdbImage(item.backdrop_path, "w780"),
         summary: typeof item.overview === "string" ? item.overview : "",
@@ -728,9 +738,10 @@ function normalizeTmdbSeasons(data, type) {
 function normalizeTmdbDetail(data, type) {
     if (!isObject(data)) return null;
 
-    const title = pickTmdbText(data.title, data.name);
-    const originalTitle = pickTmdbText(data.original_title, data.original_name, title);
-    const year = parseYear(data.release_date || data.first_air_date);
+    const isMovie = type === "movie";
+    const title = pickTmdbText(isMovie ? data.title : data.name);
+    const originalTitle = pickTmdbText(isMovie ? data.original_title : data.original_name, title);
+    const year = parseYear(isMovie ? data.release_date : data.first_air_date);
     const credits = isObject(data.credits) ? data.credits : {};
     const castDetails = Array.isArray(credits.cast)
         ? credits.cast.filter(isObject).slice(0, 8).map(person => ({
@@ -792,7 +803,8 @@ function isValidTmdbPayload(path, data, params = {}) {
     if (/^\/find\/[^/]+$/.test(path)) return Array.isArray(data.movie_results) && Array.isArray(data.tv_results);
     if (/^\/(?:movie|tv)\/\d+$/.test(path)) {
         const appended = String(params.append_to_response || "").split(",");
-        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(getTmdbTitle(data))
+        const title = path.startsWith("/movie/") ? data.title : data.name;
+        return toSafeTmdbId(data.id) === Number(path.split("/").at(-1)) && Boolean(pickTmdbText(title))
             && (!appended.includes("external_ids") || isObject(data.external_ids))
             && (!appended.includes("credits") || (isObject(data.credits)
                 && Array.isArray(data.credits.cast) && Array.isArray(data.credits.crew)));
@@ -1241,7 +1253,7 @@ function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct", 
         }
     }
 
-    const candidateYear = parseYear(typeof item.release_date === "string" ? item.release_date : item.first_air_date);
+    const candidateYear = getTmdbYear(item);
     if (intent.year && candidateYear === intent.year) bestScore += 0.1;
     if (intent.year && candidateYear && candidateYear !== intent.year) bestScore -= 0.08;
 
@@ -1434,9 +1446,9 @@ function pickBestTmdbPosterCandidate(items, title, year) {
         .filter(item => isValidTmdbSearchItem(item) && typeof item.poster_path === "string" && item.poster_path)
         .filter(item => Math.max(scoreSearchText(title, getTmdbTitle(item)), scoreSearchText(title, getTmdbOriginalTitle(item))) >= SEARCH_ACCEPT_SCORE)
         .map(item => {
-            const itemTitle = normalizeMatchText(item.title || item.name);
-            const originalTitle = normalizeMatchText(item.original_title || item.original_name);
-            const itemYear = parseYear(item.release_date || item.first_air_date);
+            const itemTitle = normalizeMatchText(getTmdbTitle(item));
+            const originalTitle = normalizeMatchText(getTmdbOriginalTitle(item));
+            const itemYear = getTmdbYear(item);
             let score = 0;
 
             if (itemTitle === normalizedTitle || originalTitle === normalizedTitle) score += 1000;
@@ -2211,6 +2223,10 @@ function parseQuarkUrl(rawUrl) {
     try {
         const url = new URL(absoluteUrl);
         if (!/^(?:pan|drive)\.quark\.cn$/i.test(url.hostname) || url.username || url.password) return null;
+        // URL parsing collapses literal and encoded dot segments. A malformed
+        // source must never become a different valid share after normalization.
+        const rawPath = absoluteUrl.match(/^https?:\/\/[^/?#]+(\/[^?#]*)?/i)?.[1];
+        if (rawPath !== url.pathname) return null;
         const token = url.pathname.match(/^\/s\/([a-z0-9_-]+)$/i)?.[1];
         if (!token || token.length > RESOURCE_MAX_QUARK_TOKEN_LENGTH) return null;
         return {
@@ -2358,6 +2374,11 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
 function decodeHtmlEntities(value) {
     if (!value) return "";
 
+    const codePoint = (code, radix) => {
+        const number = Number.parseInt(code, radix);
+        return number > 0 && number <= 0x10ffff && !(number >= 0xd800 && number <= 0xdfff)
+            ? String.fromCodePoint(number) : "\uFFFD";
+    };
     return value
         .replace(/&amp;/g, "&")
         .replace(/&quot;/g, '"')
@@ -2365,8 +2386,8 @@ function decodeHtmlEntities(value) {
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&nbsp;/g, " ")
-        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number.parseInt(code, 10)))
-        .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)));
+        .replace(/&#(\d+);/g, (_, code) => codePoint(code, 10))
+        .replace(/&#x([0-9a-f]+);/gi, (_, code) => codePoint(code, 16));
 }
 
 function stripHtml(value) {
@@ -2764,7 +2785,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v13-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v14-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -3028,7 +3049,7 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     }
 
     const configuredSources = `${hasTmdb ? "tmdb" : ""}-${hasOmdb ? "omdb" : ""}`;
-    const cacheKey = new Request(`https://poster-v4-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}&imdb=${identity.imdbId || ""}`);
+    const cacheKey = new Request(`https://poster-v5-cache.local/?title=${encodeURIComponent(title)}&year=${year}&sources=${configuredSources}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}&imdb=${identity.imdbId || ""}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -3099,7 +3120,7 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refres
     }, env, ctx, { deadline, refreshCache });
 
     let candidates = Array.isArray(searchData.results)
-        ? searchData.results.filter(item => isObject(item) && (!year || parseYear(item.release_date || item.first_air_date) === String(year)))
+        ? searchData.results.filter(item => isObject(item) && (!year || getTmdbYear(item) === String(year)))
         : [];
     let bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
 
@@ -3111,7 +3132,7 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refres
             page: "1"
         }, env, ctx, { deadline, refreshCache });
         candidates = Array.isArray(searchData.results)
-            ? searchData.results.filter(item => isObject(item) && (!year || parseYear(item.release_date || item.first_air_date) === String(year)))
+            ? searchData.results.filter(item => isObject(item) && (!year || getTmdbYear(item) === String(year)))
             : [];
         bestRaw = pickBestTmdbPosterCandidate(candidates, title, year);
     }
