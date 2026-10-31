@@ -232,7 +232,7 @@ try {
     } finally { searchScoringMode = false; }
     checks.push('bounded-request-local-search-scoring');
 
-    for (const path of ['/api/tmdb/detail?id=101&type=', '/api/tmdb/person?id=&q=Runtime%20Actor', '/api/omdb?imdb=&title=Runtime%20Movie']) {
+    for (const path of ['/api/tmdb/detail?id=101&type=', '/api/tmdb/person?id=&q=Runtime%20Actor']) {
         const response = await request(path, 'runtime-explicit-empty-identity');
         assert.equal(response.status, 400, path);
         assert.equal(response.headers.get('cache-control'), 'no-store');

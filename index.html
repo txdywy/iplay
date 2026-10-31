@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iPlay · 沉浸式观影指南</title>
-    <meta name="description" content="iPlay 沉浸式观影指南 — 聚合 TMDB、豆瓣、IMDb、OMDb、Wikipedia 多源评分与剧情信息，个性化推荐，一键获取资源链接。">
+    <meta name="description" content="iPlay 沉浸式观影指南 — 聚合 TMDB、豆瓣、Wikipedia 多源评分与剧情信息，个性化推荐，一键获取资源链接。">
     <meta property="og:title" content="iPlay · 沉浸式观影指南">
-    <meta property="og:description" content="聚合 TMDB、豆瓣、IMDb、OMDb、Wikipedia 多源评分，个性化推荐，一键获取资源链接。">
+    <meta property="og:description" content="聚合 TMDB、豆瓣、Wikipedia 多源评分，个性化推荐，一键获取资源链接。">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://iplay.hackx64.eu.org">
     <meta name="twitter:card" content="summary_large_image">
@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.23" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.24" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
     <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
@@ -133,7 +133,7 @@
                         <div class="flex items-center justify-between gap-3 mb-3">
                             <div>
                                 <div id="tmdbProfileLabel" class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">Media profile</div>
-                                <div class="text-xs text-cinema-400/70 mt-0.5">TMDB • OMDb</div>
+                                <div class="text-xs text-cinema-400/70 mt-0.5">TMDB • 豆瓣</div>
                             </div>
                             <div class="text-right">
                                 <div id="tmdbRatingLabel" class="text-cinema-400 text-xs font-mono uppercase tracking-widest">TMDB</div>
@@ -175,21 +175,6 @@
                                 <span class="text-cinema-400 font-mono text-xs">/10</span>
                             </div>
                             <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">Douban</div>
-                        </div>
-
-                        <div id="imdbRatingBox" class="rating-box hidden min-w-[92px] md:min-w-[108px] px-4 py-3">
-                            <div class="flex items-baseline gap-1">
-                                <span id="imdbRating" class="text-2xl font-mono font-bold text-accent-gold"></span>
-                                <span class="text-cinema-400 font-mono text-xs">/10</span>
-                            </div>
-                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">IMDb</div>
-                        </div>
-
-                        <div id="rottenRatingBox" class="rating-box hidden min-w-[92px] md:min-w-[108px] px-4 py-3">
-                            <div class="flex items-baseline gap-1">
-                                <span id="rottenRating" class="text-2xl font-mono font-bold"></span>
-                            </div>
-                            <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest mt-1">Tomatometer</div>
                         </div>
                     </div>
 
@@ -246,18 +231,18 @@
                     </div>
 
                     <!-- Source Dossier — full content width, wider grid -->
-                    <div id="omdbPanel" class="bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
+                    <div id="profilePanel" class="bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
                         <div class="flex items-center justify-between gap-4 mb-4">
                             <div>
                                 <h3 class="font-mono text-xs uppercase tracking-[0.3em] text-cinema-400">数据档案</h3>
-                            <p class="text-xs text-cinema-400/80 font-mono mt-1">TMDB 主数据 · OMDb / IMDb 补充</p>
-                            <p id="omdbStatus" class="text-xs text-cinema-400 font-mono mt-2" aria-live="polite"></p>
+                            <p class="text-xs text-cinema-400/80 font-mono mt-1">TMDB 影视资料</p>
+                            <p id="posterStatus" class="text-xs text-cinema-400 font-mono mt-2" aria-live="polite"></p>
                             </div>
                             <div class="text-right">
                                 <div class="text-cinema-400 text-xs font-mono uppercase tracking-widest">DETAILS</div>
                             </div>
                         </div>
-                        <div id="omdbFields" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm"></div>
+                        <div id="profileFields" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm"></div>
                     </div>
                 </div>
             </div>
@@ -307,6 +292,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-6 right-6 max-w-[min(90vw,28rem)] transform translate-y-20 opacity-0 transition-[transform,opacity] duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
 
     <footer id="releaseVersion" class="relative z-10 pb-8 font-mono text-xs text-cinema-400" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.23"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.24"></script>
 </body>
 </html>

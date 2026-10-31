@@ -2,7 +2,7 @@
 
 # iPlay API 文档
 
-iPlay 后端是一个部署在 Cloudflare Worker 上的 API 代理服务，负责聚合 TMDB、豆瓣、OMDb、夸克网盘和中文 Wikipedia 等多个数据源，为前端提供统一的接口。
+iPlay 后端是一个部署在 Cloudflare Worker 上的 API 代理服务，负责聚合 TMDB、豆瓣、夸克网盘和中文 Wikipedia 等多个数据源，为前端提供统一的接口。
 
 ---
 
@@ -23,7 +23,6 @@ https://iplayw.hackx64.eu.org
 | 数据源 | 认证方式 | 配置来源 |
 |--------|----------|----------|
 | TMDB | Bearer Token 或 API Key | `env.TMDB_ACCESS_TOKEN` / `env.TMDB_API_KEY` |
-| OMDb | API Key | `env.OMDB_API_KEY`（可选功能，无内置 Key） |
 | 豆瓣 / 夸克 / Wikipedia | 无需认证 | — |
 
 > 如果你自行部署 Worker，请在 Cloudflare Dashboard 的 Worker Environment Variables 中配置上述密钥。
@@ -40,8 +39,6 @@ https://iplayw.hackx64.eu.org
 - **参数限制**：搜索词与标题去除首尾空白后最长 100 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
 
 TMDB 上游错误按 HTTP 状态处理，即使正文是 HTML 或为空，也不会将认证失败、限流或服务不可用误判为 JSON 解析失败。TMDB 重定向不会被跟随，避免运行时向其他地址转发凭据；没有其他可用结果时按上游不可用返回 `502`，聚合接口仍可保留成功的其他来源。
-
-身份参数的“省略”和“显式为空”含义不同：`/api/tmdb/person?id=`、`/api/tmdb/detail?type=` 及 `/api/omdb?imdb=`（含 `i=` 别名）均返回 `400`，不会降级成名称查询或另一媒体命名空间。只有真正省略媒体类型的旧详情请求保留电影/电视剧探测；同时给出 `imdb` 与 `i` 时，显式 `imdb` 优先并单独校验。
 
 ### 通用错误响应格式
 
@@ -60,7 +57,6 @@ TMDB 上游错误按 HTTP 状态处理，即使正文是 HTML 或为空，也不
 | 405 | 请求方法不支持 |
 | 429 | 本服务或上游限流。本服务普通接口每分钟 60 次、资源搜索每分钟 10 次，命中本服务限流时响应包含 `Retry-After: 60` |
 | 502 | 上游服务或所有资源提供方不可用 |
-| 503 | 所需上游功能未配置（例如缺少 `OMDB_API_KEY`），或生产限流 binding 不可用 |
 | 504 | 直连上游请求超时；聚合接口会按可用来源返回部分结果或 `502` |
 | 500 | 上游服务异常或内部错误 |
 
@@ -433,134 +429,23 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 ---
 
-### 7. OMDb 代理
+### 7. 海报获取
 
-代理 OMDb API，用于获取 IMDb 评分、烂番茄评分和海报等信息。
+仅从 TMDB 获取海报。已选作品应传入 `id` 与 `type`，避免匹配同名作品；没有海报时返回 `404`。
 
-```
-GET /api/omdb?imdb={imdbId}
-GET /api/omdb?title={title}&year={year}
-```
-
-**Query Parameters：**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `imdb` | string | 条件必填 | IMDb ID（如 `tt7605074`），与 `title` 二选一；兼容旧参数 `i` |
-| `title` | string | 条件必填 | 影片英文标题 |
-| `year` | string | 否 | 发行年份 |
-
-**Example Request：**
-
-```bash
-curl "https://iplayw.hackx64.eu.org/api/omdb?imdb=tt7605074"
-curl "https://iplayw.hackx64.eu.org/api/omdb?title=The+Wandering+Earth&year=2019"
+```text
+GET /api/poster?title={title}&year={year}&id={id}&type={movie|tv}&refresh=1
 ```
 
-**Example Response：**
+`title` 必填；`year` 可选；`id` / `type` 必须同时提供。`refresh=1` 绕过海报聚合及 TMDB 缓存。缓存命名空间为 `poster-v6-cache.local`，成功结果缓存 24 小时，错误不缓存。
 
 ```json
-{
-  "omdb": true,
-  "imdb": 6.0,
-  "imdbVotes": "12,345",
-  "rottenTomatoes": 70,
-  "poster": "https://m.media-amazon.com/images/...jpg",
-  "title": "The Wandering Earth",
-  "year": "2019",
-  "type": "movie",
-  "rated": "PG-13",
-  "released": "05 Feb 2019",
-  "runtime": "125 min",
-  "genres": ["Action", "Sci-Fi", "Adventure"],
-  "director": "Frant Gwo",
-  "writer": "Gong Geer, Yan Dongxu",
-  "actors": "Jing Wu, Chuxiao Qu, Guangjie Li",
-  "plot": "As the sun is dying out...",
-  "language": "Mandarin, English, Russian",
-  "country": "China",
-  "awards": "3 wins & 8 nominations",
-  "boxOffice": "$699,990,000",
-  "production": "China Film Group Corporation",
-  "metascore": 57,
-  "imdbId": "tt7605074"
-}
+{"poster":"https://image.tmdb.org/t/p/w500/xxx.jpg","tmdbRating":6.4,"tmdbVotes":1205,"tmdb":true,"tmdbId":550988,"mediaType":"movie"}
 ```
 
 ---
 
-### 8. 海报获取
-
-智能海报获取接口：优先从 TMDB 获取高清海报，失败时自动降级到 OMDb。若中文标题在 OMDb 未找到，还会尝试通过中文 Wikipedia 查找英文标题后再搜索 OMDb。
-
-前端始终提供已选作品的 `id` 和 `type`，TMDB 只查询该作品详情，不按片名选择另一作品。已知 `imdb` 时 OMDb 只按该 ID 查询，不降级到片名或 Wikipedia；缺少 IMDb ID 时可以按片名和年份检索，但所有带身份的 OMDb 结果都必须经 TMDB IMDb 映射确认属于已选作品后才能返回。身份校验需要配置 TMDB，无法确认时不会附加 OMDb 数据。已验证的资料即使没有海报也可返回，且包含 `tmdbId` / `mediaType`；前端再次核对身份，并保留已有的正确海报和评分。
-
-至少需要配置 TMDB 或 OMDb 中的一个来源；两者都未配置时返回 `503`。所有已配置来源健康时聚合结果缓存 24 小时；某个已配置来源临时失败但仍有可用结果时只缓存 15 分钟。若没有可用结果，接口保留上游的 `429`、`5xx` 或 `504` 状态，而不是误报为未找到。
-
-```
-GET /api/poster?title={title}&year={year}
-```
-
-**Query Parameters：**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `title` | string | 是 | 影片标题（支持中文） |
-| `year` | string | 否 | 发行年份，用于提高匹配准确度 |
-| `id` | 正整数 | 否 | 已选 TMDB 作品 ID；与 `type` 必须同时提供 |
-| `type` | `movie` / `tv` | 否 | 已选作品类型，避免同名电影与剧集混用 |
-| `imdb` | string | 否 | 已知 IMDb ID，须同时提供 TMDB `id` / `type`；不再按片名兜底 |
-| `refresh` | `1` | 否 | 海报加载失败后的重试绕过 Worker 缓存；前端同时绕过浏览器 HTTP 缓存 |
-
-**Example Request：**
-
-```bash
-curl "https://iplayw.hackx64.eu.org/api/poster?title=流浪地球&year=2019&id=550988&type=movie"
-```
-
-**Example Response（TMDB 命中）：**
-
-```json
-{
-  "poster": "https://image.tmdb.org/t/p/w500/xxx.jpg",
-  "tmdbRating": 6.4,
-  "tmdbVotes": 1205,
-  "rottenTomatoes": null,
-  "tmdb": true,
-  "tmdbId": 550988,
-  "mediaType": "movie",
-  "omdb": {
-    "omdb": true,
-    "imdb": 6.0,
-    "imdbVotes": "12,345",
-    "rottenTomatoes": 70,
-    "poster": "https://m.media-amazon.com/images/...jpg",
-    "title": "The Wandering Earth",
-    ...
-  }
-}
-```
-
-**Example Response（OMDb 兜底命中）：**
-
-```json
-{
-  "omdb": true,
-  "tmdbId": 550988,
-  "mediaType": "movie",
-  "imdb": 6.0,
-  "imdbVotes": "12,345",
-  "rottenTomatoes": 70,
-  "poster": "https://m.media-amazon.com/images/...jpg",
-  "title": "The Wandering Earth",
-  "year": "2019",
-  ...
-}
-```
-
----
-
-### 9. 中文 Wikipedia 摘要
+### 8. 中文 Wikipedia 摘要
 
 获取与片名相符的中文 Wikipedia 摘要。提供媒体类型和年份可避免误用同名小说、旧版改编或消歧义页；没有可靠匹配时返回 `404`，前端保留 TMDB 简介。
 
@@ -614,13 +499,12 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
 | `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v14-cache.local/?q={query}&scope={loginStateHash}` |
-| `/api/omdb` | 24h | `omdb-v3-cache.local/id/{imdbId}` 或 `omdb-v3-cache.local/search/?t={title}&y={year}` |
-| `/api/poster` | 完整聚合 24h；已配置来源部分失败 15min | `poster-v5-cache.local/?title={title}&year={year}&sources={sources}&id={id}&type={type}&imdb={imdb}` |
+| `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 
-详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅在 Worker 内缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v12 缓存排除旧的无长度限制条目，海报 v4 缓存排除了缺少作品身份的海报条目，Wiki v5 缓存排除多年份简介误配的旧结果。
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅在 Worker 内缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v12 缓存排除旧的无长度限制条目，海报 v6 缓存隔离旧版聚合结果，Wiki v5 缓存排除多年份简介误配的旧结果。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会刷新 `CRON_REFRESH_TITLES` 中配置的标题缓存；未配置时默认刷新 `大叔再出招`，并绕过旧缓存重新写入 TMDB 搜索和详情缓存。
 
@@ -632,17 +516,15 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 
 ### 前端搜索与恢复行为
 
-`js/main.js` 先检查影视标题，仅在没有可靠标题匹配时查询演员；若 `searchMeta.exactPerson` 存在而最佳片名不是精确匹配（`matchedBy` 不以 `-exact` 结尾且不是 `external-id`），包含姓名的纪录片或合集不算可靠匹配，前端改为查询演员，演员不可用时仍回到这些影视候选。精确片名与演员同名时仍打开影视。命中高置信度演员时按电视剧 / 电影分组展示出演作品；影视查询则使用 `js/match.js` 对 Worker 返回的候选进行二次判断，高置信度且分数明显领先的结果会直接加载详情，中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。详情页的 TMDB / OMDb 演员名以按钮形式复用演员搜索。
+`js/main.js` 先检查影视标题，仅在没有可靠标题匹配时查询演员；若 `searchMeta.exactPerson` 存在而最佳片名不是精确匹配（`matchedBy` 不以 `-exact` 结尾且不是 `external-id`），包含姓名的纪录片或合集不算可靠匹配，前端改为查询演员，演员不可用时仍回到这些影视候选。精确片名与演员同名时仍打开影视。命中高置信度演员时按电视剧 / 电影分组展示出演作品；影视查询则使用 `js/match.js` 对 Worker 返回的候选进行二次判断，高置信度且分数明显领先的结果会直接加载详情，中低置信度或分数接近的结果会先展示最多 6 个候选，让用户确认标题、年份和媒体类型。详情页的 TMDB 演员名以按钮形式复用演员搜索。
 
 搜索结果会先于详情接口出现，详情接口失败时页面会保留 TMDB 搜索候选中的基础信息，并在结果顶部显示“重试详情”；现代浏览器中的资源聚合默认延后到资源区接近视口或用户主动点击后执行，不支持 IntersectionObserver 的旧环境才使用空闲回调或定时回退。资源接口返回部分成功时，三个资源列表会保留可用内容，并显示“重试补全资源”；完全失败时三个资源列表各自显示可重试状态。资源列表首屏最多渲染 6 项，用户可展开到接口返回上限，减少移动端首屏高度和无效 DOM。
 
-同一作品的详情重试在等待和失败期间保留已加载的简介、海报与补充评分。重试成功后，片名、类型或年份变化会清除旧查询的 Wiki 简介和豆瓣评分；确认的 IMDb ID 与已有资料冲突时，会清除旧 IMDb 资料及其备用海报。直接 OMDb 响应也必须与请求的 IMDb ID 一致，才能应用评分或图片。切换作品、开始新搜索或返回首页时清除保留状态，避免旧作品数据串入新结果。
+同一作品的详情重试保留已加载的简介、海报和豆瓣评分；确认的片名、类型、年份或 IMDb ID 变化时，会清除不再匹配的补充数据。豆瓣和 Wikipedia 查询等待详情完成后使用确认的身份。
 
 补全资源时，已有链接和复制密码按钮继续可用，补全按钮在请求结束前禁用；补全失败后保留当前结果和展开状态，可再次重试。演员候选或分享链接的加载失败后，“重试演员作品”继续请求已选人物 ID。分享链接中明确提供但无效的 `type`（包括空值）会显示错误，不按同 ID 的其他媒体类型回退；类型值会去除首尾空白并转为小写。
 
 分享链接明确提供的 `person` 或影视 `id` 必须是 1–12 位正整数；空值、零、负数、混合字符或过长值会显示错误且不请求 API。未提供 `person` 的旧版演员姓名链接仍支持姓名搜索。
-
-正常搜索先显示候选基础信息；豆瓣、Wikipedia 和 OMDb 补充查询等待详情完成，使用详情确认后的片名、类型和年份，避免沿用过期搜索数据。普通搜索详情失败时仍按已知候选信息降级；分享链接未确认详情时继续等待重试。
 
 剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。
 
@@ -700,20 +582,6 @@ const summary = await WikiAPI.getSummary('流浪地球');
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `getSummary` | `(query, options = {})` | `{ title, extract, thumbnail }` 或 `null` |
-
-### `OmdbAPI`
-
-```javascript
-import { OmdbAPI } from './api.js';
-
-const profile = await OmdbAPI.getById('tt7605074');
-// 网络或上游失败时返回 null；调用方可继续使用 TMDB 数据
-```
-
-| 方法 | 签名 | 返回值 |
-|------|------|--------|
-| `getById` | `(imdbId, options = {})` | OMDb 详情对象 或 `null` |
-| `search` | `(title, year, options = {})` | OMDb 详情对象 或 `null` |
 
 ### `ResourceAPI`
 
@@ -773,7 +641,6 @@ Worker 源码位于 `worker/_worker.js`。自行部署时：
 2. 使用 `npm run deploy:worker` 部署完整模块项目；`worker/_worker.js` 引用共享 `js/release.js`，不能单独上传一个文件
 3. 在 Worker Settings > Variables 中添加环境变量：
    - `TMDB_ACCESS_TOKEN`（推荐）或 `TMDB_API_KEY`
-   - `OMDB_API_KEY`（可选；无内置 Key，未配置时 OMDb 功能返回 `503`）
    - `CORS_ALLOWED_ORIGINS`（可选，额外前端 Origin 的逗号分隔列表）
 
 详见 [DEPLOYMENT.md](DEPLOYMENT.md) 和 [CONFIGURATION.md](CONFIGURATION.md)。

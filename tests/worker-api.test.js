@@ -5,6 +5,19 @@ import worker from '../worker/_worker.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 import { tmdbDetail } from './fixtures/tmdb.js';
 
+// The retired provider must stay unreachable even with legacy configuration.
+test('retired OMDb routes return 404 without contacting upstream', async t => {
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async () => { calls++; throw new Error('Unexpected upstream'); });
+    for (const path of ['/api/omdb?imdb=tt0133093', '/api/omdb?title=Test']) {
+        const response = await worker.fetch(new Request(`https://worker.test${path}`, {
+            headers: { 'cf-connecting-ip': path }
+        }), { OMDB_API_KEY: 'unused-legacy-config' }, { waitUntil() {} });
+        assert.equal(response.status, 404);
+    }
+    assert.equal(calls, 0);
+});
+
 function muteConsole(t, method) {
     const original = console[method];
     console[method] = () => {};
@@ -1471,7 +1484,6 @@ test('text and numeric API parameters are normalized and validated consistently'
         ['/api/douban/detail?id=not-a-number', {}, 'test-invalid-douban-id'],
         ['/api/wiki/zh?q=%20%20', {}, 'test-invalid-wiki-query'],
         ['/api/poster?title=%20%20', {}, 'test-invalid-poster-title'],
-        ['/api/omdb?title=%20%20', { OMDB_API_KEY: 'test-key' }, 'test-invalid-omdb-title']
     ];
 
     for (const [path, env, clientIp] of cases) {
@@ -1489,7 +1501,6 @@ test('text and numeric API parameters are normalized and validated consistently'
 test('media type and year parameters reject unsupported formats', async () => {
     const cases = [
         ['/api/tmdb/detail?id=42&type=person', { TMDB_API_KEY: 'test-key' }, 'test-invalid-media-type'],
-        ['/api/omdb?title=test&year=20x6', { OMDB_API_KEY: 'test-key' }, 'test-invalid-omdb-year'],
         ['/api/poster?title=test&year=20x6', {}, 'test-invalid-poster-year']
     ];
 
@@ -1773,224 +1784,6 @@ test('resource search ignores an oversized forum response body', async t => {
     assert.equal(requestedUrls.includes('https://wpzy.org/thread-999.htm'), false);
 });
 
-test('OMDb accepts the documented i parameter as an IMDb id alias', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-    const upstreamUrls = [];
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async url => {
-        upstreamUrls.push(String(url));
-        return Response.json({
-            Response: 'True',
-            imdbID: 'tt1234567',
-            Title: 'Test Movie',
-            Ratings: []
-        });
-    };
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/omdb?i=tt1234567', {
-            headers: { 'cf-connecting-ip': 'test-omdb-i-alias' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(response.status, 200);
-    const clientParameterResponse = await worker.fetch(
-        new Request('https://worker.test/api/omdb?imdb=tt1234567', {
-            headers: { 'cf-connecting-ip': 'test-omdb-imdb-parameter' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(clientParameterResponse.status, 200);
-    assert.equal(upstreamUrls.length, 2);
-    assert.ok(upstreamUrls.every(url => /[?&]i=tt1234567(?:&|$)/.test(url)));
-});
-
-test('OMDb exposes provider application errors instead of reporting every failure as not found', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async () => Response.json({
-        Response: 'False',
-        Error: 'Request limit reached!'
-    });
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/omdb?imdb=tt7654321', {
-            headers: { 'cf-connecting-ip': 'test-omdb-application-error' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(response.status, 429);
-    assert.deepEqual(await response.json(), { error: 'OMDb: Request limit reached!' });
-});
-
-test('OMDb distinguishes malformed provider payloads from an explicit not-found response', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-    let payload = {};
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async () => Response.json(payload);
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const malformedResponse = await worker.fetch(
-        new Request('https://worker.test/api/omdb?imdb=tt7654322', {
-            headers: { 'cf-connecting-ip': 'test-omdb-malformed-payload' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-    assert.equal(malformedResponse.status, 502);
-    assert.deepEqual(await malformedResponse.json(), { error: 'OMDb returned an invalid response' });
-
-    payload = { Response: 'False', Error: 'Movie not found!' };
-    const notFoundResponse = await worker.fetch(
-        new Request('https://worker.test/api/omdb?imdb=tt7654323', {
-            headers: { 'cf-connecting-ip': 'test-omdb-explicit-not-found' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-    assert.equal(notFoundResponse.status, 404);
-    assert.deepEqual(await notFoundResponse.json(), { error: 'OMDb: Not found' });
-});
-
-test('OMDb rejects malformed IMDb identifiers before calling upstream', async t => {
-    const originalFetch = globalThis.fetch;
-    let fetchCalls = 0;
-    globalThis.fetch = async () => {
-        fetchCalls += 1;
-        return Response.json({ Response: 'False' });
-    };
-    t.after(() => { globalThis.fetch = originalFetch; });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/omdb?imdb=..%2F..%2F', {
-            headers: { 'cf-connecting-ip': 'test-omdb-invalid-id' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(response.status, 400);
-    assert.equal(fetchCalls, 0);
-});
-
-test('OMDb ignores malformed optional rating fields instead of crashing', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async () => Response.json({
-        Response: 'True',
-        Title: 'Malformed Metadata',
-        Genre: { unexpected: true },
-        imdbRating: 'not-a-number',
-        Ratings: [null, { Source: 'Rotten Tomatoes', Value: 87 }]
-    });
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/omdb?title=Malformed%20Metadata', {
-            headers: { 'cf-connecting-ip': 'test-omdb-malformed-fields' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-    const body = await response.json();
-
-    assert.equal(response.status, 200);
-    assert.equal(body.imdb, null);
-    assert.equal(body.rottenTomatoes, 87);
-    assert.deepEqual(body.genres, []);
-});
-
-test('poster aggregation reuses its cached result for identical requests', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-    let cachedResponse = null;
-    let fetchCalls = 0;
-
-    globalThis.caches = {
-        default: {
-            match: async () => cachedResponse ? cachedResponse.clone() : null,
-            put: async (_key, response) => { cachedResponse = response.clone(); }
-        }
-    };
-    globalThis.fetch = async () => {
-        fetchCalls += 1;
-        return Response.json({
-            Response: 'True',
-            Title: 'Test Movie',
-            Year: '2026',
-            Poster: 'https://images.example/poster.jpg',
-            Ratings: []
-        });
-    };
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    for (const clientIp of ['test-poster-cache-1', 'test-poster-cache-2']) {
-        const response = await worker.fetch(
-            new Request('https://worker.test/api/poster?title=Test%20Movie&year=2026', {
-                headers: { 'cf-connecting-ip': clientIp }
-            }),
-            { OMDB_API_KEY: 'test-key' },
-            { waitUntil() {} }
-        );
-        assert.equal(response.status, 200);
-    }
-
-    assert.equal(fetchCalls, 1);
-    assert.ok(cachedResponse);
-    assert.equal(cachedResponse.headers.get('cache-control'), 'public, max-age=86400');
-});
-
 test('poster aggregation reports missing provider configuration', async t => {
     const originalCaches = globalThis.caches;
     const originalFetch = globalThis.fetch;
@@ -2020,7 +1813,7 @@ test('poster aggregation reports missing provider configuration', async t => {
     );
 
     assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), { error: 'Poster providers are not configured' });
+    assert.deepEqual(await response.json(), { error: 'TMDB is not configured' });
     assert.equal(fetchCalls, 0);
 });
 
@@ -2111,114 +1904,6 @@ test('resource search short-caches raw results when every detail page fails', as
     assert.equal(cachedResponse.headers.get('cache-control'), 'public, max-age=900');
 });
 
-test('poster aggregation short-caches a usable result when a configured source fails', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-    const cacheWrites = [];
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async (key, response) => {
-                cacheWrites.push({
-                    url: key.url,
-                    cacheControl: response.headers.get('cache-control')
-                });
-            }
-        }
-    };
-    globalThis.fetch = async url => {
-        const value = String(url);
-        if (value.startsWith('https://api.themoviedb.org/3/search/multi')) {
-            return Response.json({
-                results: [{
-                    id: 7,
-                    media_type: 'movie',
-                    title: 'Test Movie',
-                    release_date: '2026-01-01',
-                    poster_path: '/poster.jpg'
-                }]
-            });
-        }
-        if (value.startsWith('https://www.omdbapi.com/')) {
-            return Response.json({ Error: 'temporarily unavailable' }, { status: 503 });
-        }
-        throw new Error(`Unexpected fetch: ${value}`);
-    };
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/poster?title=Test%20Movie&year=2026', {
-            headers: { 'cf-connecting-ip': 'test-poster-partial-cache' }
-        }),
-        { TMDB_API_KEY: 'tmdb-key', OMDB_API_KEY: 'omdb-key' },
-        { waitUntil() {} }
-    );
-    const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v5-cache.local/'));
-
-    assert.equal(response.status, 200);
-    assert.equal(body.tmdb, true);
-    assert.match(body.poster, /\/w500\//);
-    assert.ok(posterCacheWrite);
-    assert.equal(posterCacheWrite.cacheControl, 'public, max-age=900');
-});
-
-test('poster aggregation short-caches OMDb fallback when configured TMDB fails', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-    const cacheWrites = [];
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async (key, response) => {
-                cacheWrites.push({
-                    url: key.url,
-                    cacheControl: response.headers.get('cache-control')
-                });
-            }
-        }
-    };
-    globalThis.fetch = async url => {
-        const value = String(url);
-        if (value.startsWith('https://api.themoviedb.org/3/search/multi')) {
-            return Response.json({ status_message: 'temporarily unavailable' }, { status: 503 });
-        }
-        if (value.startsWith('https://www.omdbapi.com/')) {
-            return Response.json({
-                Response: 'True',
-                Title: 'Fallback Movie',
-                Poster: 'https://images.example/fallback.jpg',
-                Ratings: []
-            });
-        }
-        throw new Error(`Unexpected fetch: ${value}`);
-    };
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/poster?title=Fallback%20Movie', {
-            headers: { 'cf-connecting-ip': 'test-poster-tmdb-partial-cache' }
-        }),
-        { TMDB_API_KEY: 'tmdb-key', OMDB_API_KEY: 'omdb-key' },
-        { waitUntil() {} }
-    );
-    const body = await response.json();
-    const posterCacheWrite = cacheWrites.find(write => write.url.startsWith('https://poster-v5-cache.local/'));
-
-    assert.equal(response.status, 200);
-    assert.equal(body.omdb, true);
-    assert.ok(posterCacheWrite);
-    assert.equal(posterCacheWrite.cacheControl, 'public, max-age=900');
-});
-
 test('Douban reports a real upstream abort timeout as 504', async t => {
     muteConsole(t, 'error');
     const originalCaches = globalThis.caches;
@@ -2254,37 +1939,6 @@ test('Douban reports a real upstream abort timeout as 504', async t => {
     const response = await responsePromise;
     assert.equal(response.status, 504);
     assert.deepEqual(await response.json(), { error: 'Upstream request timed out' });
-});
-
-test('OMDb search preserves an upstream HTTP status', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async () => Response.json(
-        { Error: 'rate limited' },
-        { status: 429 }
-    );
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/omdb?title=Rate%20Limited', {
-            headers: { 'cf-connecting-ip': 'test-omdb-upstream-status' }
-        }),
-        { OMDB_API_KEY: 'test-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(response.status, 429);
-    assert.deepEqual(await response.json(), { error: 'OMDb rejected with status 429' });
 });
 
 test('Wiki preserves the 504 status produced by an aborted upstream request', async t => {
@@ -2388,43 +2042,6 @@ test('resource search treats a WPZYS HTTP 200 challenge page as a partial outage
     assert.equal(response.status, 200);
     assert.ok(cachedResponse);
     assert.equal(cachedResponse.headers.get('cache-control'), 'public, max-age=900');
-});
-
-test('poster search preserves a Wikipedia fallback upstream status', async t => {
-    const originalCaches = globalThis.caches;
-    const originalFetch = globalThis.fetch;
-
-    globalThis.caches = {
-        default: {
-            match: async () => null,
-            put: async () => undefined
-        }
-    };
-    globalThis.fetch = async url => {
-        const value = String(url);
-        if (value.startsWith('https://www.omdbapi.com/')) {
-            return Response.json({ Response: 'False', Error: 'Movie not found!' });
-        }
-        if (value.startsWith('https://zh.wikipedia.org/w/api.php')) {
-            return Response.json({ error: 'unavailable' }, { status: 503 });
-        }
-        throw new Error(`Unexpected fetch: ${value}`);
-    };
-    t.after(() => {
-        globalThis.caches = originalCaches;
-        globalThis.fetch = originalFetch;
-    });
-
-    const response = await worker.fetch(
-        new Request('https://worker.test/api/poster?title=Wiki%20Fallback', {
-            headers: { 'cf-connecting-ip': 'test-poster-wiki-status' }
-        }),
-        { OMDB_API_KEY: 'omdb-key' },
-        { waitUntil() {} }
-    );
-
-    assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), { error: 'Wiki search rejected with status 503' });
 });
 
 test('scheduled refresh limits title fan-out concurrency', async t => {

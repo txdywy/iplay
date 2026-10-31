@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI, OmdbAPI } from './api.js?v=1.0.23';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.23';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.23';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.23';
-import { RELEASE_VERSION } from './release.js?v=1.0.23';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.24';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.24';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.24';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.24';
+import { RELEASE_VERSION } from './release.js?v=1.0.24';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.23';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.23';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.23';
+} from './match.js?v=1.0.24';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.24';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.24';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -47,7 +47,7 @@ const els = {
     searchStatus: document.getElementById('searchStatus'),
     dataNotice: document.getElementById('dataNotice'),
     wikiStatus: document.getElementById('wikiStatus'),
-    omdbStatus: document.getElementById('omdbStatus'),
+    posterStatus: document.getElementById('posterStatus'),
     resourceSection: document.getElementById('resourcesSection'),
     resourceNotice: document.getElementById('resourcesNotice'),
 
@@ -62,16 +62,11 @@ const els = {
     doubanBackupBox: document.getElementById('doubanBackupBox'),
     doubanBackupRating: document.getElementById('doubanBackupRating'),
 
-    imdbRatingBox: document.getElementById('imdbRatingBox'),
-    imdbRating: document.getElementById('imdbRating'),
-    rottenRatingBox: document.getElementById('rottenRatingBox'),
-    rottenRating: document.getElementById('rottenRating'),
-
     tmdbFacts: document.getElementById('tmdbFacts'),
     tmdbProfileLabel: document.getElementById('tmdbProfileLabel'),
     tmdbOverview: document.getElementById('tmdbOverview'),
-    omdbPanel: document.getElementById('omdbPanel'),
-    omdbFields: document.getElementById('omdbFields'),
+    profilePanel: document.getElementById('profilePanel'),
+    profileFields: document.getElementById('profileFields'),
 
     tags: document.getElementById('showTags'),
 
@@ -713,7 +708,6 @@ function getTmdbPosterSourceSet(posterUrl, widths = [300, 500]) {
 
 function pickPosterFallback(posterResult, failedSource) {
     const candidates = [
-        posterResult?.omdb?.poster,
         posterResult?.poster
     ];
     return candidates
@@ -726,7 +720,7 @@ function selectedPosterOptions(candidate, viewModel, searchOptions) {
         ...searchOptions,
         mediaId: viewModel.detail?.id || candidate?.id,
         mediaType: viewModel.detail?.mediaType || candidate?.mediaType,
-        imdbId: viewModel.detail?.imdbId || candidate?.imdbId || viewModel.omdbProfile?.imdbId
+        imdbId: viewModel.detail?.imdbId || candidate?.imdbId
     };
 }
 
@@ -734,8 +728,6 @@ function matchSelectedPosterResult(result, identity) {
     if (!result || !identity.mediaId
         || Number(result.tmdbId) !== Number(identity.mediaId)
         || result.mediaType !== identity.mediaType) return null;
-    const profile = typeof result.omdb === 'object' ? result.omdb : result.omdb ? result : null;
-    if (profile && identity.imdbId && profile.imdbId !== identity.imdbId) return null;
     return result;
 }
 
@@ -761,7 +753,7 @@ function handlePosterLoadError() {
     }
 
     context.fallbackAttempted = true;
-    setEnrichmentStatus(els.omdbStatus, '海报加载失败，正在查找备用海报…', true);
+    setEnrichmentStatus(els.posterStatus, '海报加载失败，正在查找备用海报…', true);
     const { viewModel, searchId, loadId, searchOptions } = context;
     viewModel.posterFallbackPending = true;
 
@@ -773,26 +765,23 @@ function handlePosterLoadError() {
             const posterResult = matchSelectedPosterResult(result, identity);
             const fallbackPoster = pickPosterFallback(posterResult, failedSource);
             if (fallbackPoster) {
-                if (posterResult.omdb) {
-                    viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
-                }
                 viewModel.posterUrl = fallbackPoster;
                 viewModel.posterSource = 'fallback';
                 loadPoster(fallbackPoster, viewModel.title, { ...context, fallbackAttempted: true });
                 renderTmdbProfile(viewModel);
-                setEnrichmentStatus(els.omdbStatus, posterResult?.omdb ? '已补充 OMDb 数据并更换海报' : '已找到备用海报');
+                setEnrichmentStatus(els.posterStatus, '已找到备用海报');
                 return;
             }
 
             loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
-            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据，暂无可用海报' : '暂无可用海报');
+            setEnrichmentStatus(els.posterStatus, '暂无可用海报');
         })
         .catch(error => {
             if (error?.name === 'AbortError') return;
             if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
             viewModel.posterFallbackPending = false;
             loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
-            setEnrichmentStatus(els.omdbStatus, '备用海报暂时不可用');
+            setEnrichmentStatus(els.posterStatus, '备用海报暂时不可用');
             console.debug('Broken poster fallback skipped:', error);
         });
 }
@@ -928,9 +917,6 @@ function appendInfoCards(container, cards) {
 function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
     const detail = tmdbDetail && typeof tmdbDetail === 'object' ? tmdbDetail : null;
     const source = detail || candidate || {};
-    const omdbProfile = posterResult && posterResult.omdb
-        ? (typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult)
-        : null;
     return {
         detail,
         candidate: candidate || {},
@@ -948,7 +934,6 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         posterSource: detail ? 'detail' : 'candidate',
         failedPosterUrls: new Set(),
         posterFallbackPending: false,
-        omdbProfile,
         overviewSource: wikiResult && wikiResult.extract ? 'ZH.WIKIPEDIA' : source.summary ? 'TMDB' : 'NO DATA'
     };
 }
@@ -1034,15 +1019,13 @@ function renderTmdbFacts(viewModel) {
 }
 
 function renderTmdbProfile(viewModel) {
-    if (!els.omdbPanel || !els.omdbFields) return;
+    if (!els.profilePanel || !els.profileFields) return;
 
     const vm = viewModel && typeof viewModel === 'object' ? viewModel : null;
-    clearNode(els.omdbFields);
+    clearNode(els.profileFields);
 
     if (!vm) {
-        els.omdbPanel.classList.add('hidden');
-        if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
-        if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
+        els.profilePanel.classList.add('hidden');
         return;
     }
 
@@ -1052,15 +1035,11 @@ function renderTmdbProfile(viewModel) {
     const castDetails = Array.isArray(detail.castDetails) && detail.castDetails.length > 0 ? detail.castDetails : cast;
     const directors = Array.isArray(detail.director) ? detail.director : [];
     const writers = Array.isArray(detail.writer) ? detail.writer : [];
-    const omdb = vm.omdbProfile && typeof vm.omdbProfile === 'object' ? vm.omdbProfile : null;
-    const omdbGenres = Array.isArray(omdb?.genres) ? omdb.genres : [];
     const tmdbRating = toFiniteNumber(detail.tmdbRating);
-    const omdbRating = toFiniteNumber(omdb?.imdb);
-    const rottenTomatoes = toFiniteNumber(omdb?.rottenTomatoes);
     const seasonTotals = detail.mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
     const seasonEpisodes = detail.mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
-    appendInfoCards(els.omdbFields, [
+    appendInfoCards(els.profileFields, [
         createInfoCard('Runtime', detail.runtime ? `${detail.runtime} min` : '—'),
         seasonTotals ? createInfoCard('Seasons / Episodes', seasonTotals) : null,
         createInfoCard('Status', detail.status || '—'),
@@ -1069,7 +1048,7 @@ function renderTmdbProfile(viewModel) {
         tmdbRating !== null && tmdbRating > 0 ? createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`) : null
     ].filter(Boolean));
 
-    appendInfoCards(els.omdbFields, [
+    appendInfoCards(els.profileFields, [
         genres.length > 0 ? createInfoCard('Genres', genres, { wide: true }) : null,
         detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('Production Companies', detail.productionCompanies, { wide: true }) : null,
         detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('Production Countries', detail.productionCountries, { wide: true }) : null,
@@ -1079,46 +1058,8 @@ function renderTmdbProfile(viewModel) {
         seasonEpisodes ? createInfoCard('Episodes / Season', seasonEpisodes, { wide: true }) : null,
     ].filter(Boolean));
 
-    appendInfoCards(els.omdbFields, omdb ? [
-        omdbRating !== null && omdbRating > 0 ? createInfoCard('IMDb Rating', `${formatRating(omdbRating)}/10`) : null,
-        omdb.imdbVotes ? createInfoCard('IMDb Votes', omdb.imdbVotes) : null,
-        rottenTomatoes !== null && rottenTomatoes >= 0 ? createInfoCard('Rotten Tomatoes', `${rottenTomatoes}%`) : null,
-        omdb.rated ? createInfoCard('Rated', omdb.rated) : null,
-        omdb.released ? createInfoCard('Released', omdb.released) : null,
-        omdb.runtime ? createInfoCard('OMDb Runtime', omdb.runtime) : null,
-        omdbGenres.length > 0 ? createInfoCard('OMDb Genres', omdbGenres, { wide: true }) : null,
-        omdb.director ? createInfoCard('OMDb Director', omdb.director) : null,
-        omdb.writer ? createInfoCard('OMDb Writer', omdb.writer, { wide: true }) : null,
-        omdb.actors ? createInfoCard('Actors', omdb.actors, { wide: true, interactiveValues: String(omdb.actors).split(',') }) : null,
-        omdb.language ? createInfoCard('Language', omdb.language) : null,
-        omdb.country ? createInfoCard('Country', omdb.country) : null,
-        omdb.awards ? createInfoCard('Awards', omdb.awards, { wide: true }) : null,
-        omdb.boxOffice ? createInfoCard('Box Office', omdb.boxOffice) : null,
-        omdb.production ? createInfoCard('Production', omdb.production, { wide: true }) : null,
-        omdb.metascore ? createInfoCard('Metascore', `${omdb.metascore}/100`) : null,
-        omdb.plot ? createInfoCard('Plot', omdb.plot, { wide: true }) : null
-    ].filter(Boolean) : []);
-
-    const hasProfileData = Boolean(
-        vm.title || detail.originalTitle || vm.summary || genres.length > 0 || cast.length > 0 || directors.length > 0 || writers.length > 0 || detail.imdbId || detail.tmdbRating || detail.tmdbVotes || detail.popularity || omdb || omdbGenres.length > 0
-    );
-    els.omdbPanel.classList.toggle('hidden', !hasProfileData);
-
-    if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
-    if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
-
+    els.profilePanel.classList.remove('hidden');
     renderPrimaryRating(vm.rating, 'TMDB');
-    if (omdbRating !== null && omdbRating > 0 && els.imdbRating && els.imdbRatingBox) {
-        els.imdbRating.textContent = formatRating(omdbRating);
-        els.imdbRating.className = 'text-2xl font-mono font-bold text-accent-gold';
-        els.imdbRatingBox.classList.remove('hidden');
-    }
-
-    if (rottenTomatoes !== null && rottenTomatoes >= 0 && els.rottenRating && els.rottenRatingBox) {
-        els.rottenRating.textContent = `${rottenTomatoes}%`;
-        els.rottenRating.className = `text-2xl font-mono font-bold ${rottenTomatoes >= 75 ? 'text-green-500' : rottenTomatoes >= 60 ? 'text-yellow-500' : 'text-accent-red'}`;
-        els.rottenRatingBox.classList.remove('hidden');
-    }
 }
 
 function renderSynopsis(sourceLabel, text) {
@@ -1798,8 +1739,6 @@ async function safeTmdbPersonSearch(query, options = {}) {
 }
 
 function resetRatingBoxes() {
-    if (els.imdbRatingBox) els.imdbRatingBox.classList.add('hidden');
-    if (els.rottenRatingBox) els.rottenRatingBox.classList.add('hidden');
     if (els.doubanBackupBox) els.doubanBackupBox.classList.add('hidden');
 }
 
@@ -2077,19 +2016,15 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
 }
 
 function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
-    setEnrichmentStatus(els.omdbStatus, viewModel.posterUrl ? '正在核对并补充 OMDb 数据…' : '正在查找备用海报…', true);
+    setEnrichmentStatus(els.posterStatus, viewModel.posterUrl ? '海报已加载' : '正在查找备用海报…', true);
     const posterContext = createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
     const identity = selectedPosterOptions(candidate, viewModel, searchOptions);
     return PosterAPI.getPoster(enrichmentQuery, candidate.year, identity).then(result => {
         if (!isActiveSearch(searchId, loadId)) return;
         const posterResult = matchSelectedPosterResult(result, identity);
         if (!posterResult) {
-            setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报');
+            setEnrichmentStatus(els.posterStatus, viewModel.posterUrl ? '海报已加载' : '暂无备用海报');
             return;
-        }
-
-        if (posterResult.omdb) {
-            viewModel.omdbProfile = typeof posterResult.omdb === 'object' ? posterResult.omdb : posterResult;
         }
         const safePoster = toSafeImageUrl(posterResult.poster);
         const addedPoster = !viewModel.posterUrl && safePoster;
@@ -2100,61 +2035,13 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
         }
         renderTmdbProfile(viewModel);
         setEnrichmentStatus(
-            els.omdbStatus,
-            viewModel.omdbProfile ? '已补充 OMDb 数据' : addedPoster ? '已找到备用海报' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报'
+            els.posterStatus,
+            addedPoster ? '已找到备用海报' : viewModel.posterUrl ? '海报已加载' : '暂无备用海报'
         );
     }).catch(error => {
         if (error?.name === 'AbortError') return;
-        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile ? '已补充 OMDb 数据' : viewModel.posterUrl ? '暂无 IMDb / OMDb 补充数据' : '暂无备用海报');
+        if (isActiveSearch(searchId, loadId)) setEnrichmentStatus(els.posterStatus, viewModel.posterUrl ? '海报已加载' : '暂无备用海报');
         console.debug('Poster enrichment skipped:', error);
-    });
-}
-
-function startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId) {
-    const imdbId = viewModel.detail?.imdbId || candidate.imdbId;
-    if (!imdbId) {
-        void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-        return;
-    }
-
-    setEnrichmentStatus(els.omdbStatus, '正在补充 IMDb / OMDb 数据…', true);
-    OmdbAPI.getById(imdbId, searchOptions).then(result => {
-        if (!isActiveSearch(searchId, loadId)) return;
-        // The direct profile path must enforce the same IMDb identity boundary
-        // as the poster fallback before attaching ratings or an image.
-        const omdbProfile = result?.imdbId === imdbId ? result : null;
-        if (omdbProfile) {
-            viewModel.omdbProfile = omdbProfile;
-            const safePoster = toSafeImageUrl(omdbProfile.poster);
-            if (!viewModel.posterUrl && safePoster) {
-                viewModel.posterUrl = safePoster;
-                viewModel.posterSource = 'fallback';
-                loadPoster(safePoster, viewModel.title, createPosterContext(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId));
-            }
-            renderTmdbProfile(viewModel);
-        }
-
-        if (!viewModel.posterUrl) {
-            // Both confirmed identities have already answered without an image.
-            // The poster endpoint would repeat those same provider lookups.
-            const confirmedNoPoster = omdbProfile?.omdb === true
-                && omdbProfile.imdbId === imdbId
-                && viewModel.detail?.imdbId === imdbId
-                && !toSafeImageUrl(viewModel.detail.poster);
-            if (confirmedNoPoster) setEnrichmentStatus(els.omdbStatus, '已补充 IMDb / OMDb 数据，暂无可用海报');
-            else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-            return;
-        }
-        setEnrichmentStatus(els.omdbStatus, omdbProfile ? '已补充 IMDb / OMDb 数据'
-            : viewModel.omdbProfile ? '本次未能更新，已保留已有 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
-    }).catch(error => {
-        if (error?.name === 'AbortError') return;
-        if (isActiveSearch(searchId, loadId)) {
-            if (viewModel.posterUrl) setEnrichmentStatus(els.omdbStatus, viewModel.omdbProfile
-                ? '本次未能更新，已保留已有 IMDb / OMDb 数据' : '暂无 IMDb / OMDb 补充数据');
-            else void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
-        }
-        console.debug('OMDb enrichment skipped:', error);
     });
 }
 
@@ -2204,7 +2091,8 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
         console.debug('Wiki enrichment skipped:', error);
     });
 
-    startOmdbEnrichment(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+    if (!viewModel.posterUrl && !viewModel.detail) void startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, searchOptions, loadId);
+    else setEnrichmentStatus(els.posterStatus, viewModel.posterUrl ? '海报已加载' : '暂无可用海报');
 }
 
 function startEnrichments(candidate, query, viewModel, searchId, searchOptions, loadId, detailPromise = Promise.resolve()) {
@@ -2241,7 +2129,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     setSearching(true);
     if (!retained) resetRatingBoxes();
     setEnrichmentStatus(els.wikiStatus, '等待详情确认后补充简介');
-    setEnrichmentStatus(els.omdbStatus, '等待详情确认后补充数据');
+    setEnrichmentStatus(els.posterStatus, '等待详情确认后补充数据');
     hideCandidatePicker();
     hideActorResults();
     els.error.classList.add('hidden');
@@ -2292,11 +2180,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             const existingPosterSource = viewModel.posterSource;
             const failedPosterUrls = viewModel.failedPosterUrls;
             const posterFallbackPending = viewModel.posterFallbackPending;
-            const existingOmdbProfile = viewModel.omdbProfile;
             const existingDoubanRating = viewModel.doubanRating;
             const existingDoubanImdbId = viewModel.doubanImdbId;
-            const conflictingImdb = Boolean(tmdbDetail.imdbId && existingOmdbProfile?.imdbId
-                && existingOmdbProfile.imdbId !== tmdbDetail.imdbId);
             const previousQueryKey = resourceQueryKey(selectedCandidate);
             const previousSynopsis = { summary: viewModel.summary, source: viewModel.overviewSource };
             const detailViewModel = buildTmdbViewModel(selectedCandidate, tmdbDetail, null, null);
@@ -2304,7 +2189,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             viewModel.failedPosterUrls = failedPosterUrls;
             viewModel.posterFallbackPending = posterFallbackPending;
             const detailPoster = toSafeImageUrl(tmdbDetail.poster);
-            if (existingPoster && !conflictingImdb && (existingPosterSource === 'fallback' || posterFallbackPending)
+            if (existingPoster && (existingPosterSource === 'fallback' || posterFallbackPending)
                 && (!detailPoster || failedPosterUrls.has(detailPoster))) {
                 viewModel.posterUrl = existingPoster;
                 viewModel.posterSource = existingPosterSource;
@@ -2312,9 +2197,6 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
                 viewModel.posterUrl = null;
             }
             if (viewModel.posterUrl !== existingPoster) viewModel.posterFallbackPending = false;
-            if (existingOmdbProfile && (!tmdbDetail.imdbId || existingOmdbProfile.imdbId === tmdbDetail.imdbId)) {
-                viewModel.omdbProfile = existingOmdbProfile;
-            }
             if (existingDoubanRating !== undefined) {
                 if (tmdbDetail.imdbId && existingDoubanImdbId && existingDoubanImdbId !== tmdbDetail.imdbId) {
                     delete viewModel.doubanRating;

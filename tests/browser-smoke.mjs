@@ -154,10 +154,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'Fast Broken Poster Movie': 115,
                     'Retained Enrichment Movie': 116,
                     'No Poster Movie': 117,
-                    'Failed OMDb Poster Movie': 118,
-                    'Unconfirmed OMDb Poster Movie': 119
                 };
-                window.__smoke.posterlessMode = ['No Poster Movie', 'Failed OMDb Poster Movie', 'Unconfirmed OMDb Poster Movie'].includes(query) ? query : '';
+                window.__smoke.posterlessMode = ['No Poster Movie'].includes(query) ? query : '';
                 if (query === 'Overlapping Actor') {
                     // A documentary containing the name clears the title threshold.
                     return json({
@@ -397,8 +395,6 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     115: 'Fast Broken Poster Movie',
                     116: 'Retained Enrichment Movie',
                     117: 'No Poster Movie',
-                    118: 'Failed OMDb Poster Movie',
-                    119: 'Unconfirmed OMDb Poster Movie',
                     200: 'Actor Movie',
                     331: 'Exact Title Actor',
                     201: 'Smoke Series'
@@ -455,17 +451,6 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
                 ? '旧片同名作品简介。'
                 : url.searchParams.get('q') === 'Canonical Renamed Movie' ? '详情确认后的新版作品简介。' : '中文烟测简介。' });
-            if (url.pathname === '/api/omdb') {
-                if (window.__smoke.posterlessMode === 'Failed OMDb Poster Movie') return json({ error: 'temporary OMDb outage' }, 503);
-                if (window.__smoke.posterlessMode) {
-                    const mismatched = window.__smoke.posterlessMode === 'Unconfirmed OMDb Poster Movie';
-                    return json({ omdb: true, imdb: mismatched ? 2.0 : 8.4,
-                        imdbId: mismatched ? 'tt7654321' : 'tt1234567', poster: mismatched ? canonicalPoster : null });
-                }
-                return window.__smoke.retentionRecovery && window.__smoke.detailAttempts[116] > 1
-                    ? json({ error: 'supplement outage' }, 503)
-                    : json({ omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster: window.__smoke.identityMode ? null : poster });
-            }
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
                 if (window.__smoke.resourceMode === 'large') return json({
@@ -565,19 +550,17 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 if (url.searchParams.get('title') === 'Recovered Retained Movie' && window.__smoke.retentionPosterMode) return json({ error: 'supplement outage' }, 503);
                 if (url.searchParams.get('title') === 'Retained Enrichment Movie') return window.__smoke.detailAttempts[116] > 1
                     ? json({ error: 'supplement outage' }, 503)
-                    : json({ tmdb: true, tmdbId: 116, mediaType: 'movie', poster: window.__smoke.retentionPosterMode ? fallbackPoster : poster, omdb: { omdb: true, imdb: 8.4, imdbId: 'tt1234567' } });
+                    : json({ tmdb: true, tmdbId: 116, mediaType: 'movie', poster: window.__smoke.retentionPosterMode ? fallbackPoster : poster });
                 if (url.searchParams.get('title') === 'Slow Broken Poster Movie') {
                     await new Promise(resolve => setTimeout(resolve, 650));
                     return json({ tmdb: true, tmdbId: 113, mediaType: 'movie', poster: fallbackPoster });
                 }
                 if (url.searchParams.get('title') === 'Identity Movie') return json({
                     tmdb: true, tmdbId: new URL(location.href).searchParams.get('poster-mismatch') === 'imdb' ? 110 : 202,
-                    mediaType: 'movie', poster: 'https://images.example/wrong.jpg',
-                    omdb: { omdb: true, imdb: 2, imdbId: 'tt7654321', poster: 'https://images.example/wrong.jpg' }
+                    mediaType: 'movie', poster: 'https://images.example/wrong.jpg'
                 });
                 if (url.searchParams.get('title') === 'No IMDb Movie') return json({
-                    tmdb: true, tmdbId: 104, mediaType: 'movie', poster,
-                    omdb: { omdb: true, imdb: 8.4, imdbId: 'tt1234567', poster }
+                    tmdb: true, tmdbId: 104, mediaType: 'movie', poster
                 });
                 return json({ tmdb: true, tmdbId: Number(url.searchParams.get('id') || 105), mediaType: 'movie', poster: fallbackPoster });
             }
@@ -608,8 +591,6 @@ async function runObserverFlow() {
     await assertSearchReady('Test Movie');
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#doubanBackupBox')).display"), 'none');
-    assert.equal(await evaluate("getComputedStyle(document.querySelector('#rottenRatingBox')).display"), 'none');
-    assert.equal(await evaluate("getComputedStyle(document.querySelector('#imdbRatingBox')).display"), 'flex');
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'resources should stay deferred before entering the viewport');
 
     await evaluate("document.querySelector('#resourcesSection')?.scrollIntoView({ block: 'start' })");
@@ -696,7 +677,7 @@ async function runProgressiveFlow() {
     assert.equal(await evaluate('document.querySelector("#loadingState")?.classList.contains("hidden")'), true);
     assert.equal(await evaluate('window.__smoke.detailResolved'), 0, 'the base result should render before slow detail resolves');
     await waitFor('window.__smoke.detailResolved === 1');
-    await waitFor("document.querySelector('#omdbFields')?.textContent.includes('Smoke Studio')");
+    await waitFor("document.querySelector('#profileFields')?.textContent.includes('Smoke Studio')");
 }
 
 async function runDetailRetryFlow() {
@@ -734,61 +715,19 @@ async function runResourceRetryAfterDetailRetryFlow() {
     assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/resource?q=Retry%20Detail%20Movie&refresh=1')));
 }
 
-async function runTitleOmdbFlow() {
-    await command('Page.navigate', { url: baseUrl });
-    await new Promise(resolve => setTimeout(resolve, 250));
-    await search('No IMDb Movie');
-    await assertSearchReady('No IMDb Movie');
-    await waitFor("document.querySelector('#omdbStatus')?.textContent.includes('已补充 OMDb 数据')");
-    const calls = await evaluate('window.__smoke.calls');
-    const posterCall = calls.find(call => call.startsWith('/api/poster?'));
-    assert.ok(posterCall, 'title-based metadata must use the identity-verified poster endpoint');
-    assert.equal(new URL(posterCall, baseUrl).searchParams.get('id'), '104');
-    assert.equal(new URL(posterCall, baseUrl).searchParams.get('type'), 'movie');
-    assert.equal(calls.some(call => call.startsWith('/api/omdb?title=')), false);
-    assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src')"), 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=',
-        'an existing TMDB poster must be preserved when adding verified metadata');
-}
-
 async function runPosterIdentityFlow(mismatch) {
     await command('Page.navigate', { url: `${baseUrl}?poster-mismatch=${mismatch}` });
     await search('Identity Movie');
     await assertSearchReady('Identity Movie');
-    await waitFor("window.__smoke.detailResolved === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') !== 'true'");
+    await waitFor("window.__smoke.detailResolved === 1 && document.querySelector('#posterStatus').getAttribute('aria-busy') !== 'true'");
     await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
-    await waitFor("window.__smoke.posterCalls === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') !== 'true'");
-    assert.match(await evaluate("document.querySelector('#omdbFields').textContent"), /8\.4/u,
-        'a same-title poster response must not overwrite the selected IMDb profile');
+    await waitFor("window.__smoke.posterCalls === 1 && document.querySelector('#posterStatus').getAttribute('aria-busy') !== 'true'");
     assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src').includes('wrong.jpg')"), false);
     const calls = await evaluate('window.__smoke.calls');
     const params = new URL(calls.find(call => call.startsWith('/api/poster?')), baseUrl).searchParams;
     assert.equal(params.get('id'), '110');
     assert.equal(params.get('type'), 'movie');
     assert.equal(params.get('imdb'), 'tt1234567');
-}
-
-async function runConfirmedPosterAbsenceFlow() {
-    for (const title of ['No Poster Movie', 'Failed OMDb Poster Movie', 'Unconfirmed OMDb Poster Movie']) {
-        await command('Page.navigate', { url: baseUrl });
-        await search(title);
-        await assertSearchReady(title);
-        await waitFor("window.__smoke.detailResolved === 1 && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
-        const confirmedAbsent = title === 'No Poster Movie';
-        assert.equal(await evaluate('window.__smoke.posterCalls'), confirmedAbsent ? 0 : 1,
-            'only a successful profile matching the confirmed IMDb identity can eliminate the repeated poster lookup');
-        if (confirmedAbsent) {
-            assert.match(await evaluate("document.querySelector('#omdbStatus').textContent"), /已补充.*暂无可用海报/u);
-            assert.equal(await evaluate("document.querySelector('#imdbRating').textContent"), '8.4');
-            assert.equal(await evaluate("document.querySelector('#showCover').getAttribute('src').startsWith('data:image/svg+xml')"), true);
-        } else {
-            await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
-            if (title === 'Unconfirmed OMDb Poster Movie') {
-                assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), true,
-                    'a mismatched IMDb profile must not add another work\'s rating or poster');
-                assert.equal(await evaluate("document.querySelector('#omdbFields').textContent.includes('2.0/10')"), false);
-            }
-        }
-    }
 }
 
 async function runActorResponsivePosterFlow() {
@@ -936,9 +875,9 @@ async function runActorFlow() {
     await evaluate("document.querySelector('#actorCreditList button[data-media-id=\\\"200\\\"]')?.click()");
     await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
     assert.equal(await evaluate("location.search.includes('id=200') && location.search.includes('type=movie')"), true);
-    await waitFor("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')");
+    await waitFor("document.querySelector('#profileFields button[data-actor-name=\\\"Clickable Actor\\\"]')");
 
-    await evaluate("document.querySelector('#omdbFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
+    await evaluate("document.querySelector('#profileFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Clickable Actor'");
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/search?q=Clickable%20Actor'))"), false,
         'cast controls should use their known person ID instead of repeating a name search');
@@ -1014,7 +953,7 @@ async function runDeepLinkFlow() {
     assert.equal(await evaluate("window.__smoke.calls.some(call => /wiki|douban|omdb|resource/.test(call))"), false,
         'unverified URL titles must not initiate supplementary searches');
     await assertSearchReady('Canonical Movie');
-    await waitFor("document.querySelector('#omdbStatus').textContent.includes('已补充')");
+    await waitFor("document.querySelector('#posterStatus').getAttribute('aria-busy') === 'false'");
     assert.equal(await evaluate("document.querySelector('#tmdbOverview').textContent"), 'A browser smoke test detail.');
     assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Movie');
@@ -1036,7 +975,6 @@ async function runDesktopReducedMotionFlow() {
     await search('Test Movie');
     await assertSearchReady('Test Movie');
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#resultsArea .fade-up')).animationName"), 'none');
-    assert.equal(await evaluate("getComputedStyle(document.querySelector('#rottenRatingBox')).display"), 'none');
 }
 
 async function runActorCandidateRaceFlow() {
@@ -1212,8 +1150,8 @@ async function runCanonicalEnrichmentFlow() {
     assert.equal(calls.find(url => url.pathname === '/api/wiki/zh')?.searchParams.get('year'), '2025');
     await waitFor("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=412'))");
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=411'))"), false);
-    await waitFor("window.__smoke.calls.some(call => call.includes('/api/poster?'))");
-    assert.equal(new URL((await evaluate("window.__smoke.calls.find(call => call.includes('/api/poster?'))")), baseUrl).searchParams.get('title'), 'Canonical Renamed Movie');
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/poster?'))"), false,
+        'confirmed detail posters need no supplementary request');
     assert.equal(await evaluate("document.body.textContent.includes('旧片同名作品简介。')"), false);
     assert.equal(await evaluate("document.body.textContent.includes('详情确认后的新版作品简介。')"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Renamed Movie');
@@ -1405,65 +1343,46 @@ async function runDetailRetryPreservesEnrichmentFlow() {
     await command('Page.navigate', { url: baseUrl });
     await search('Retained Enrichment Movie');
     await assertSearchReady('Retained Enrichment Movie');
-    await waitFor("document.querySelector('#dataNotice button') && !document.querySelector('#imdbRatingBox').classList.contains('hidden') && !document.querySelector('#doubanBackupBox').classList.contains('hidden') && document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')");
+    await waitFor("document.querySelector('#dataNotice button') && !document.querySelector('#doubanBackupBox').classList.contains('hidden') && document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')");
     const retained = await evaluate("({ synopsis: document.querySelector('#wikiSummary').textContent, score: document.querySelector('#recScore').textContent })");
     await evaluate("document.querySelector('#dataNotice button').click()");
     assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent"), retained.synopsis, 'pending detail retry must preserve the loaded synopsis');
-    assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), false, 'pending retry retains verified OMDb ratings');
     assert.equal(await evaluate("document.querySelector('#doubanBackupBox').classList.contains('hidden')"), false);
     await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice button')?.textContent.includes('重试详情')");
     await waitFor("document.querySelector('#wikiStatus').getAttribute('aria-busy') === 'false'");
     assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent"), retained.synopsis, 'failed refreshes retain the prior synopsis');
     assert.equal(await evaluate("document.querySelector('#recScore').textContent"), retained.score);
-    assert.equal(await evaluate("document.querySelector('#imdbRating').textContent"), '8.4');
     assert.equal(await evaluate("document.querySelector('#doubanBackupRating').textContent"), '9.1');
-    assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), false);
     await evaluate("document.querySelector('#searchInput').value = 'Fresh Movie'; document.querySelector('#searchForm').requestSubmit()");
     await assertSearchReady('Fresh Movie');
     assert.equal(await evaluate("document.querySelector('#doubanBackupBox').classList.contains('hidden')"), true, 'a different work must not inherit the retained rating');
 }
+
 
 async function runDetailRetryRecoveryIdentityFlow() {
     for (const recovery of ['same', 'canonical', 'imdb-conflict']) {
         await command('Page.navigate', { url: baseUrl });
         await search('Retained Enrichment Movie');
         await assertSearchReady('Retained Enrichment Movie');
-        await waitFor("document.querySelector('#dataNotice button') && !document.querySelector('#imdbRatingBox').classList.contains('hidden') && !document.querySelector('#doubanBackupBox').classList.contains('hidden') && document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')");
+        await waitFor("document.querySelector('#dataNotice button') && !document.querySelector('#doubanBackupBox').classList.contains('hidden') && document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')");
         await evaluate(`window.__smoke.retentionRecovery = ${JSON.stringify(recovery)}; document.querySelector('#dataNotice button').click()`);
-        await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice').classList.contains('hidden') && document.querySelector('#wikiStatus').getAttribute('aria-busy') === 'false' && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
+        await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice').classList.contains('hidden') && document.querySelector('#wikiStatus').getAttribute('aria-busy') === 'false' && document.querySelector('#posterStatus').getAttribute('aria-busy') === 'false'");
         const sameIdentity = recovery === 'same';
         const changedTitle = recovery === 'canonical';
         assert.equal(await evaluate("document.querySelector('#wikiSummary').textContent.includes('中文烟测简介')"), !changedTitle, 'retained synopsis must belong to the confirmed title and year');
         assert.equal(await evaluate("document.querySelector('#doubanBackupBox').classList.contains('hidden')"), !sameIdentity, 'a rating with a conflicting confirmed IMDb ID must be cleared');
-        assert.equal(await evaluate("document.querySelector('#imdbRatingBox').classList.contains('hidden')"), !sameIdentity, 'a changed IMDb ID must clear the prior rating even when its refresh fails');
         if (changedTitle) assert.equal(await evaluate("document.querySelector('#showTitle').textContent"), 'Recovered Retained Movie');
     }
 }
 
-async function runFallbackPosterRecoveryIdentityFlow() {
-    for (const recovery of ['same', 'canonical']) {
-        await command('Page.navigate', { url: baseUrl });
-        await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
-        await evaluate('window.__smoke.retentionPosterMode = true');
-        await search('Retained Enrichment Movie');
-        await assertSearchReady('Retained Enrichment Movie');
-        await waitFor(`document.querySelector('#dataNotice button') && document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
-        await evaluate(`window.__smoke.retentionRecovery = ${JSON.stringify(recovery)}; document.querySelector('#dataNotice button').click()`);
-        await waitFor("window.__smoke.detailAttempts[116] === 2 && document.querySelector('#dataNotice').classList.contains('hidden') && document.querySelector('#omdbStatus').getAttribute('aria-busy') === 'false'");
-        assert.equal(await evaluate(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`), recovery === 'same',
-            'a fallback poster from a conflicting IMDb identity must not survive canonical recovery');
-    }
-}
 
 try {
     await runResourceKeyboardAndLongTitleFlow();
     await runCompleteResourceVisibilityFlow();
     await runUnscannedResourceStatusFlow();
-    await runConfirmedPosterAbsenceFlow();
     await runActorResponsivePosterFlow();
-    await runDetailRetryPreservesEnrichmentFlow();
     await runDetailRetryRecoveryIdentityFlow();
-    await runFallbackPosterRecoveryIdentityFlow();
+    await runDetailRetryPreservesEnrichmentFlow();
     await runSharedIdentityValidationFlow();
     await runCanonicalEnrichmentFlow();
     await runAlternatingResourceRetryFlow();
@@ -1484,8 +1403,6 @@ try {
     await runDetailRetryFlow();
     await runResourceRetryAfterDetailRetryFlow();
     await runPosterIdentityFlow('tmdb');
-    await runPosterIdentityFlow('imdb');
-    await runTitleOmdbFlow();
     await runBrokenPosterFlow();
     await runUnsafePosterFlow();
     await runTimerFallbackFlow();
@@ -1500,7 +1417,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['fallback-poster-recovery-identity', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'confirmed-poster-absence', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'poster-imdb-identity', 'identity-verified-title-omdb', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

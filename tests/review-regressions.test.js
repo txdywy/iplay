@@ -81,7 +81,7 @@ test('TMDB redirects never forward bearer credentials or trust redirected payloa
 
 test('unexpected upstream exceptions do not expose request URLs or credentials to API clients', async t => {
     const ctx = mockUpstreams(t, async url => { throw new Error(`Fetch failed for ${url}; Authorization: Bearer private-bearer; bbs_token=private-cookie`); });
-    const response = await worker.fetch(request('/api/omdb?imdb=tt1234567'), { OMDB_API_KEY: 'private-omdb-key' }, ctx);
+    const response = await worker.fetch(request('/api/poster?title=Review'), { TMDB_API_KEY: 'test' }, ctx);
     const data = await response.json();
     assert.equal(response.status, 502);
     assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -103,8 +103,7 @@ test('all API failure paths hide raw diagnostics while logs redact authenticatio
     for (const path of [
         '/api/tmdb/search?q=Review', '/api/tmdb/search?q=tt1234567',
         '/api/tmdb/person?id=31&q=Review', '/api/tmdb/detail?id=42&type=movie',
-        '/api/douban/search?q=Review', '/api/douban/detail?id=42',
-        '/api/omdb?title=Review', '/api/poster?title=Review',
+        '/api/douban/search?q=Review', '/api/douban/detail?id=42', '/api/poster?title=Review',
         '/api/wiki/zh?q=Review', '/api/resource?q=Review'
     ]) {
         const response = await worker.fetch(request(path), env, ctx);
@@ -116,21 +115,6 @@ test('all API failure paths hide raw diagnostics while logs redact authenticatio
     assert.ok(logs.length > 0);
     assert.ok(logs.every(log => !log.includes('private-')));
     assert.ok(logs.some(log => log.includes('[REDACTED]')));
-    assert.equal(ctx.writes.length, 0);
-});
-
-test('provider error payloads cannot bypass safe public messages', async t => {
-    const ctx = mockUpstreams(t, async url => String(url).includes('themoviedb.org')
-        ? Response.json({ status_message: 'Failed: ?api_key=private-key; Bearer private-bearer' }, { status: 503 })
-        : Response.json({ Response: 'False', Error: 'Request limit reached: ?apikey=private-omdb-key' }));
-    for (const [path, status, message] of [
-        ['/api/tmdb/detail?id=42&type=movie', 503, 'TMDB unavailable'],
-        ['/api/omdb?imdb=tt1234567', 429, 'OMDb: Request limit reached!']
-    ]) {
-        const response = await worker.fetch(request(path), { TMDB_API_KEY: 'private-key', OMDB_API_KEY: 'private-omdb-key' }, ctx);
-        assert.equal(response.status, status);
-        assert.deepEqual(await response.json(), { error: message });
-    }
     assert.equal(ctx.writes.length, 0);
 });
 
@@ -323,37 +307,6 @@ test('selected poster identities never fall back to a same-title movie when the 
     assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('selected poster lookups preserve a known IMDb identity instead of title-search metadata', async t => {
-    const ctx = mockUpstreams(t, async input => {
-        const url = new URL(input);
-        if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
-        if (url.hostname === 'api.themoviedb.org') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
-        const exact = url.searchParams.get('i') === 'tt1111111';
-        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: exact ? 'series' : 'movie',
-            imdbID: exact ? 'tt1111111' : 'tt2222222', imdbRating: exact ? '8.8' : '2.0', Poster: 'https://example.org/poster.jpg' });
-    });
-    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv&imdb=tt1111111'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
-    const data = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(data.imdbId, 'tt1111111');
-    assert.equal(data.imdb, 8.8);
-    assert.equal(data.tmdbId, 101);
-    assert.equal(data.mediaType, 'tv');
-});
-
-test('title-based OMDb poster metadata must map back to the selected TMDB identity', async t => {
-    const ctx = mockUpstreams(t, async input => {
-        const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
-        if (url.pathname === '/3/find/tt2222222') return Response.json({ movie_results: [{ id: 202, title: 'Shared Title' }], tv_results: [] });
-        if (url.hostname === 'zh.wikipedia.org') return Response.json({ query: { search: [] } });
-        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'movie', imdbID: 'tt2222222', Poster: 'https://example.org/wrong.jpg' });
-    });
-    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&year=2024&id=101&type=tv'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
-    assert.equal(response.status, 404);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-});
-
 test('even an explicit IMDb ID cannot relabel a different TMDB work as the selection', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
@@ -366,23 +319,6 @@ test('even an explicit IMDb ID cannot relabel a different TMDB work as the selec
     assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('identity-verified title enrichment returns ratings even without an OMDb poster', async t => {
-    const ctx = mockUpstreams(t, async input => {
-        const url = new URL(input);
-        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({ id: 101, name: 'Shared Title', poster_path: null }));
-        if (url.pathname === '/3/find/tt1111111') return Response.json({ movie_results: [], tv_results: [{ id: 101, name: 'Shared Title' }] });
-        return Response.json({ Response: 'True', Title: 'Shared Title', Year: '2024', Type: 'series', imdbID: 'tt1111111', imdbRating: '8.8', Poster: 'N/A' });
-    });
-    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&id=101&type=tv'), { TMDB_API_KEY: 'test', OMDB_API_KEY: 'test' }, ctx);
-    const data = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(data.tmdbId, 101);
-    assert.equal(data.mediaType, 'tv');
-    assert.equal(data.imdbId, 'tt1111111');
-    assert.equal(data.imdb, 8.8);
-    assert.equal(data.poster, null);
-});
-
 test('poster identity parameters fail before upstream access when incomplete or invalid', async t => {
     let fetchCalls = 0;
     const ctx = mockUpstreams(t, async () => { fetchCalls += 1; return Response.json({}); });
@@ -392,15 +328,6 @@ test('poster identity parameters fail before upstream access when incomplete or 
         assert.equal(response.headers.get('cache-control'), 'no-store');
     }
     assert.equal(fetchCalls, 0);
-});
-
-test('OMDb year fallback cannot attach a different remake to the requested year', async t => {
-    const ctx = mockUpstreams(t, async url => new URL(url).searchParams.has('y')
-        ? Response.json({ Response: 'False', Error: 'Movie not found!' })
-        : Response.json({ Response: 'True', Title: 'Dune', Year: '1984', Poster: 'https://example.org/wrong.jpg' }));
-    const response = await worker.fetch(request('/api/omdb?title=Dune&year=2021'), { OMDB_API_KEY: 'test' }, ctx);
-    assert.equal(response.status, 404);
-    assert.equal(ctx.writes.length, 0);
 });
 
 test('HTTP 200 challenge detail pages are reported as incomplete resource scans', async t => {
@@ -528,24 +455,6 @@ test('unrelated Douban suggestions cannot become trusted TMDB aliases', async t 
     });
     const response = await worker.fetch(request('/api/tmdb/search?q=不存在的片名'), { TMDB_API_KEY: 'test' }, ctx);
     assert.deepEqual((await response.json()).results, []);
-});
-
-test('OMDb ID lookups reject a different identity and do not cache it', async t => {
-    const ctx = mockUpstreams(t, async () => Response.json({
-        Response: 'True', Title: 'Wrong Film', imdbID: 'tt7654321'
-    }));
-    const response = await worker.fetch(request('/api/omdb?imdb=tt1234567'), { OMDB_API_KEY: 'test' }, ctx);
-    assert.equal(response.status, 502);
-    assert.equal(ctx.writes.length, 0);
-});
-
-test('OMDb primary title lookup cannot attach a wrong-year remake', async t => {
-    const ctx = mockUpstreams(t, async () => Response.json({
-        Response: 'True', Title: 'Dune', Year: '1984', Poster: 'https://example.org/wrong.jpg'
-    }));
-    const response = await worker.fetch(request('/api/omdb?title=Dune&year=2021'), { OMDB_API_KEY: 'test' }, ctx);
-    assert.equal(response.status, 404);
-    assert.equal(ctx.writes.length, 0);
 });
 
 test('Wiki search never fetches an unrelated first result', async t => {

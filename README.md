@@ -31,7 +31,7 @@ iPlay 是一款拥有独特"暗黑电影院"复古美学的前端应用，结合
 
 ### Backend (后端代理抓取层)
 - **运行环境**：[Cloudflare Workers](https://workers.cloudflare.com/)
-- **核心逻辑**：TMDB 优先，豆瓣 / OMDb / Wikipedia 作为补充来源，Worker 统一做数据聚合和跨域代理
+- **核心逻辑**：TMDB 优先，豆瓣 / Wikipedia 作为补充来源，Worker 统一做数据聚合和跨域代理
 - **特性**：全球 CDN 边缘节点计算，处理跨域(CORS)和数据聚合
 
 ## 📁 项目结构
@@ -46,7 +46,7 @@ iplay/
 │   └── output.css          # Tailwind CLI 构建产物（已 minify）
 ├── js/
 │   ├── main.js             # 前端主逻辑：搜索、渲染、详情展示
-│   ├── api.js              # API 客户端封装（TMDB/Douban/Wiki/OMDb/Resource/Poster）
+│   ├── api.js              # API 客户端封装（TMDB/Douban/Wiki/Resource/Poster）
 │   ├── resources.js        # 按页面合并资源快照与密码证据的纯状态逻辑
 │   ├── match.js             # TMDB 候选排序与歧义确认规则
 │   ├── seasons.js           # 剧集季数与每季集数格式化
@@ -68,14 +68,12 @@ iplay/
 3. 在 Worker 的 **Settings** -> **Variables** 中配置：
    - `TMDB_ACCESS_TOKEN`：TMDB v4 Read Access Token（推荐）
    - 或 `TMDB_API_KEY`：TMDB v3 API Key（二选一）
-   - `OMDB_API_KEY`：可选；配置后启用 IMDb / Rotten Tomatoes 等 OMDb 补充数据，项目不内置 Key
    - `CORS_ALLOWED_ORIGINS`：可选，额外允许的前端 Origin，多个值用英文逗号分隔
 4. Wrangler 会读取 `wrangler.toml`，自动配置生产限流 bindings、`ENVIRONMENT=production` 和 `0 */6 * * *` 定时预热。
 5. 记录下部署成功后的 Worker 域名（例如：`https://iplay-api.yourname.workers.dev`）。
 6. 如果使用 Cloudflare CLI，也可以执行：
    ```bash
    npm run wrangler -- secret put TMDB_ACCESS_TOKEN
-   npm run wrangler -- secret put OMDB_API_KEY
    ```
    然后按提示粘贴对应的密钥值。
 7. 首次配置或自动发布故障时，可使用本机 Wrangler OAuth 部署：
@@ -116,7 +114,7 @@ iplay/
    python3 -m http.server 8080
    ```
 4. 打开 `http://localhost:8080`，搜索一个中文片名、一个中文剧集名和一个英文片名。
-5. 确认 TMDB 结果优先展示，IMDb / Rotten Tomatoes 作为外部评分补充，Douban 仅在需要时补缺；同名结果会先要求选择候选，剧集详情会显示总季数、总集数和每季集数。
+5. 确认 TMDB 结果优先展示，Douban 仅在需要时补缺；同名结果会先要求选择候选，剧集详情会显示总季数、总集数和每季集数。
 
 ## 🛠 自定义你的打分算法
 如果你想修改类型偏好的权重，请打开 `js/scorer.js`，修改 `PREFERENCE_WEIGHTS` 常量：
