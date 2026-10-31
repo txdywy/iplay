@@ -10,6 +10,7 @@
 | TMDB 电影/剧集字段混用 | 请求 movie/42 却收到同 ID、只有 `name` 的 TV 数据时，原实现返回 200 并缓存；同时带两类字段的 TV 数据会采用电影标题与年份。现在详情校验要求对应类型的标题字段；搜索排名、归一化、详情和备用海报均使用对应媒体类型的标题、原名与日期。反例先失败，修复后通过。 |
 | HTML 数字实体截断 Unicode | `&#x20bb7;` 被 `fromCharCode` 截断，搜索“𠮷祥”时正确 WPZY 帖子被过滤。现按完整 Unicode 码点解码，非法码点替换为 U+FFFD；扩展汉字、十进制 emoji 与公开资源链接的回归通过。 |
 | ESLint 间接依赖存在中危公告 | 初次 npm audit 报告 minimatch 公告及四项传播记录，共五项中危。按[维护者公告 GHSA-g3hv-75wg-m249](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)将 minimatch override 到修复版 11.0.1，保留当前 ESLint；重新安装、lint 和审计通过。 |
+| 资源上限 smoke 存在时序竞争 | PR CI 成功后，主分支 browser-smoke 等待“待启动”超时，且无应用异常。滚动触发 IntersectionObserver 自动扫描，导致该文案已消失。测试改为接受等待启动或已经发起请求两种状态，继续核对 12/13 扫描状态与未扫描原帖入口。 |
 
 资源缓存升至 v14，海报聚合缓存升至 v5；旧的错误类型 TMDB 原始详情由已有缓存校验和淘汰机制重新获取。发布元数据和生成入口同步为 1.0.23。
 
