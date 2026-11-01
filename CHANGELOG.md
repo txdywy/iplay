@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.25] - 2026-11-01
+
+### Fixed
+
+- Clear exhausted poster state and show an unavailable message when the fallback image also fails, rather than leaving a successful recovery notice.
+- Keep the search scoring benchmark comparable to its historical baseline by disabling follow-up prefetch only in the instrumented benchmark module. Production prefetch remains covered independently.
+
+### Tests
+
+- Add browser coverage for primary and fallback image failures, including a terminal status and no retry loop.
+
 ## [1.0.24] - 2026-11-01
 
 ### Removed
