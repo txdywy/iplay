@@ -826,6 +826,21 @@ async function runBrokenPosterFlow() {
     assert.equal(await evaluate("window.__smoke.requestOptions.find(call => call.path === '/api/poster' && call.refresh === '1')?.cache"), 'no-store');
 }
 
+async function runExhaustedPosterFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Broken Poster Movie');
+    await assertSearchReady('Broken Poster Movie');
+    await waitFor('window.__smoke.detailResolved === 1');
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
+    await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
+    await waitFor("document.querySelector('#showCover').getAttribute('src').startsWith('data:image/svg+xml')");
+    assert.equal(await evaluate("document.querySelector('#posterStatus').textContent"), '暂无可用海报',
+        'a failed fallback must not keep claiming a usable poster was found');
+    assert.equal(await evaluate("document.querySelector('#posterStatus').getAttribute('aria-busy')"), 'false');
+    assert.equal(await evaluate('window.__smoke.posterCalls'), 1, 'exhausted poster fallback must not loop');
+}
+
 async function runUnsafePosterFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -1403,6 +1418,7 @@ try {
     await runDetailRetryFlow();
     await runResourceRetryAfterDetailRetryFlow();
     await runPosterIdentityFlow('tmdb');
+    await runExhaustedPosterFlow();
     await runBrokenPosterFlow();
     await runUnsafePosterFlow();
     await runTimerFallbackFlow();
@@ -1417,7 +1433,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

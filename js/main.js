@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.24';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.24';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.24';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.24';
-import { RELEASE_VERSION } from './release.js?v=1.0.24';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.25';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.25';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.25';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.25';
+import { RELEASE_VERSION } from './release.js?v=1.0.25';
 import {
     findBestMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.24';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.24';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.24';
+} from './match.js?v=1.0.25';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.25';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.25';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -749,6 +749,7 @@ function handlePosterLoadError() {
             context.viewModel.posterFallbackPending = false;
         }
         loadPoster(null, context.title, { ...context, fallbackAttempted: true });
+        setEnrichmentStatus(els.posterStatus, '暂无可用海报');
         return;
     }
 
@@ -773,6 +774,8 @@ function handlePosterLoadError() {
                 return;
             }
 
+            viewModel.posterUrl = null;
+            viewModel.posterSource = 'none';
             loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
             setEnrichmentStatus(els.posterStatus, '暂无可用海报');
         })
@@ -780,6 +783,8 @@ function handlePosterLoadError() {
             if (error?.name === 'AbortError') return;
             if (!isActiveSearch(searchId, loadId) || posterLoadToken !== token) return;
             viewModel.posterFallbackPending = false;
+            viewModel.posterUrl = null;
+            viewModel.posterSource = 'none';
             loadPoster(null, viewModel.title, { ...context, fallbackAttempted: true });
             setEnrichmentStatus(els.posterStatus, '备用海报暂时不可用');
             console.debug('Broken poster fallback skipped:', error);

@@ -19,6 +19,12 @@ const releaseUrl = new URL('../js/release.js', import.meta.url).href;
 
 async function loadWorker(source, instrument = false) {
     let moduleSource = source.replace(/from ['"]\.\.\/js\/release\.js['"]/, `from '${releaseUrl}'`);
+    // Compare the same scoring workload on both revisions. Search prefetch was
+    // added after the baseline and has its own correctness/browser regressions;
+    // it must not be counted as additional title-search attempts in this probe.
+    moduleSource = moduleSource
+        .replaceAll('prefetch: { query, env, ctx, deadline }', 'prefetch: null')
+        .replaceAll('prefetch: stopFallback ? null : { query, env, ctx, deadline }', 'prefetch: null');
     if (instrument) {
         const needle = 'function scoreSearchText(query, candidate) {';
         assert.ok(moduleSource.includes(needle));
@@ -85,7 +91,7 @@ try {
     assert.ok(scoreCalculations.optimized < scoreCalculations.baseline);
     const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
     const report = {
-        profile: 'Node public Worker route; six sequential TMDB fallbacks, 20 results each, repeated bilingual titles; mocked network/cache',
+        profile: 'Node public Worker search scoring; six sequential TMDB fallbacks, 20 results each, repeated bilingual titles; mocked network/cache, follow-up prefetch disabled',
         limitations: 'Synthetic local Node elapsed time, including parsing/normalization/serialization; not workerd CPU, production latency or field Core Web Vitals.',
         baselineRef: baseRef,
         nodeVersion: process.version,
