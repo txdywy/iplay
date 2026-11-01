@@ -148,6 +148,50 @@ test('TMDB details reject mismatched identities and title-less payloads', async 
     }
 });
 
+test('long confirmed titles reach enrichment endpoints while TMDB search remains bounded', async t => {
+    const title = 'Long Canonical '.repeat(9).trim();
+    assert.ok([...title].length > 100 && [...title].length < 300);
+    const calls = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        calls.push(`${url.hostname}${url.pathname}`);
+        if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/42') {
+            return Response.json(tmdbDetail({
+                id: 42, title, original_title: title, release_date: '2024-01-01',
+                poster_path: '/confirmed-poster.jpg', vote_average: 8, vote_count: 1000
+            }));
+        }
+        if (url.hostname === 'by669.org' && url.pathname === '/api/discussions') return Response.json({ data: [] });
+        if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        if (url.hostname === 'movie.douban.com' && url.pathname === '/j/subject_suggest') return Response.json([]);
+        if (url.hostname === 'zh.wikipedia.org' && url.pathname === '/w/api.php') return Response.json({ query: { search: [{ title }] } });
+        if (url.hostname === 'zh.wikipedia.org' && url.pathname.startsWith('/api/rest_v1/page/summary/')) {
+            return Response.json({ title, description: '2024 film', extract: `${title} is a 2024 film.` });
+        }
+        throw new Error(`Unexpected upstream: ${url.hostname}${url.pathname}`);
+    });
+    const env = { TMDB_API_KEY: 'test' };
+
+    const detail = await worker.fetch(request('/api/tmdb/detail?id=42&type=movie'), env, ctx);
+    assert.equal(detail.status, 200);
+    assert.equal((await detail.json()).title, title);
+
+    for (const path of [
+        `/api/resource?q=${encodeURIComponent(title)}`,
+        `/api/douban/search?q=${encodeURIComponent(title)}`,
+        `/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=2024`,
+        `/api/poster?title=${encodeURIComponent(title)}&year=2024&id=42&type=movie`
+    ]) {
+        const response = await worker.fetch(request(path), env, ctx);
+        assert.equal(response.status, 200, path);
+    }
+
+    const beforeRejectedSearch = calls.length;
+    const search = await worker.fetch(request(`/api/tmdb/search?q=${encodeURIComponent(title)}`), env, ctx);
+    assert.equal(search.status, 400, 'ordinary TMDB search retains the 100-character limit');
+    assert.equal(calls.length, beforeRejectedSearch);
+});
+
 test('TMDB details reject the opposite media schema even when its numeric ID matches', async t => {
     let payload;
     const ctx = mockUpstreams(t, async () => Response.json(payload));

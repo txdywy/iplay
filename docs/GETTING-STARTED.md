@@ -99,6 +99,12 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
     : 'https://iplay.your-account.workers.dev';
 ```
 
+修改后重新构建前端，确保生成的 JavaScript 使用新地址：
+
+```bash
+npm run build
+```
+
 如果前端部署到自定义域名或 GitHub Pages，还要在 Worker 中把该站点的 Origin 加入 `CORS_ALLOWED_ORIGINS`。
 
 ### 7. 本地预览
@@ -121,8 +127,9 @@ python3 -m http.server 8080
 #### 替代方式：使用 GitHub Pages 部署
 
 1. Fork 本仓库到你的 GitHub 账号
-2. 修改 `js/api.js` 中的 `API_BASE` 并提交
-3. 在仓库 **Settings** -> **Pages** 中，选择 `main` 分支作为 Source 进行部署
+2. 修改 `js/api.js` 中的 `API_BASE`
+3. 运行 `npm run build`，再提交构建产物
+4. 在仓库 **Settings** -> **Pages** 中，选择 `main` 分支作为 Source 进行部署
 
 ---
 

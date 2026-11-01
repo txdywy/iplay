@@ -37,10 +37,11 @@ function getCandidateTitle(item) {
 export function findBestMatch(results, query, titleFn) {
     if (!Array.isArray(results) || results.length === 0) return null;
 
+    const exact = findExactMatch(results, query, titleFn);
+    if (exact) return exact;
+
     const normalizedQuery = normalizeSearchText(query);
     if (!normalizedQuery) return null;
-    const exact = results.find(item => normalizeSearchText(titleFn(item)) === normalizedQuery);
-    if (exact) return exact;
 
     const loose = results.find(item => {
         const normalizedTitle = normalizeSearchText(titleFn(item));
@@ -50,6 +51,22 @@ export function findBestMatch(results, query, titleFn) {
     if (loose) return loose;
 
     return null;
+}
+
+export function findExactMatch(results, queries, titleFn) {
+    if (!Array.isArray(results) || results.length === 0) return null;
+
+    const candidates = (Array.isArray(queries) ? queries : [queries])
+        .map(normalizeSearchText)
+        .filter(Boolean);
+    if (candidates.length === 0) return null;
+    const normalizedQueries = new Set(candidates);
+
+    return results.find(item => {
+        const titles = titleFn(item);
+        return (Array.isArray(titles) ? titles : [titles])
+            .some(title => normalizedQueries.has(normalizeSearchText(title)));
+    }) || null;
 }
 
 export function pickBestTmdbMatch(results, query) {

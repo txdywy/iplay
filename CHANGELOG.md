@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.26] - 2026-11-01
+
+### Fixed
+
+- Require an exact same-year title or original-title match before attaching a Douban rating to a confirmed work.
+- Parse Quark links wrapped in Chinese punctuation and keep foreign-provider extraction codes away from nearby Quark shares.
+- Allow canonical titles up to 300 Unicode characters in enrichment endpoints while retaining the 100-character TMDB search limit.
+- Reconcile all selected resource pages before applying the 100-link response cap so password conflicts do not depend on response timing.
+- Reload saved genre preferences during each score calculation and omit zero-weight genres from avoidance warnings.
+
+### Documentation
+
+- Rebuild frontend assets after changing `API_BASE` in the deployment guides.
+
+### Tests
+
+- Add regressions for exact Douban identity, long canonical titles, Chinese-wrapped shares, provider-code isolation, preference updates and resource response ordering.
+
 ## [1.0.25] - 2026-11-01
 
 ### Fixed

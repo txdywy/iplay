@@ -79,6 +79,20 @@ test('resource search never attaches a Baidu share password to the preceding Qua
     ]), [{ url: 'https://pan.quark.cn/s/quark-public' }]);
 });
 
+test('resource search recognizes Quark links wrapped in Chinese brackets and parentheses', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>（https://pan.quark.cn/s/fullwidth-one）</p>'
+        + '<p>【https://pan.quark.cn/s/fullwidth-two】</p>'
+        + '<p>《https://pan.quark.cn/s/fullwidth-three》</p>'
+        + '<p>https://pan.quark.cn/s/fullwidth-four（提取码：A1b2）</p>'
+    ]), [
+        { url: 'https://pan.quark.cn/s/fullwidth-one' },
+        { url: 'https://pan.quark.cn/s/fullwidth-two' },
+        { url: 'https://pan.quark.cn/s/fullwidth-three' },
+        { url: 'https://pan.quark.cn/s/fullwidth-four', password: 'A1b2' }
+    ]);
+});
+
 test('resource search binds a leading password inside the next paragraph to that paragraph link', async t => {
     assert.deepEqual(await searchQuarkPages(t, [
         '<p>https://pan.quark.cn/s/no-code</p>'
@@ -146,6 +160,13 @@ test('resource search does not treat a provider-labelled Baidu code as a Quark p
     assert.deepEqual(await searchQuarkPages(t, [
         '<p>https://pan.quark.cn/s/public-with-note 百度提取码：6868</p>'
     ]), [{ url: 'https://pan.quark.cn/s/public-with-note' }]);
+});
+
+test('resource search ignores a Baidu code after a provider label with punctuation', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>夸克：https://pan.quark.cn/s/punctuated-provider-public '
+        + '【百度网盘】：提取码：6868 https://pan.baidu.com/s/baidu-share</p>'
+    ]), [{ url: 'https://pan.quark.cn/s/punctuated-provider-public' }]);
 });
 
 test('resource search omits conflicting password parameters in one URL instead of guessing from prose', async t => {

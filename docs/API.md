@@ -36,7 +36,7 @@ https://iplayw.hackx64.eu.org
 - **发布标识**：响应头 `X-iPlay-Version` 标识 Worker 发布版本，与前端版本一起用于部署验证。
 - **CORS**：默认允许 `https://iplay.hackx64.eu.org`、本地 Wrangler 地址和 `http://localhost:8080` / `http://127.0.0.1:8080`；其他 Origin 通过 `CORS_ALLOWED_ORIGINS` 配置。
 - **超时**：前端普通请求默认超时为 **12000ms**，资源搜索和海报聚合为 **18000ms**，支持通过 `AbortController` 取消；Worker 对可回退的多上游接口设置约 **11000ms** 总预算，对资源和海报聚合设置约 **15000ms** 总预算。
-- **参数限制**：搜索词与标题去除首尾空白后最长 100 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
+- **参数限制**：TMDB 与人物搜索词去除首尾空白后最长 100 个 Unicode 字符；作为已确认作品名称使用的豆瓣、Wiki、资源和海报参数最长 300 个 Unicode 字符；ID、媒体类型、年份和 IMDb ID 会做格式校验。
 
 TMDB 上游错误按 HTTP 状态处理，即使正文是 HTML 或为空，也不会将认证失败、限流或服务不可用误判为 JSON 解析失败。TMDB 重定向不会被跟随，避免运行时向其他地址转发凭据；没有其他可用结果时按上游不可用返回 `502`，聚合接口仍可保留成功的其他来源。
 
@@ -409,7 +409,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
 }
 ```
 
-**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页最多并发 6 个请求，连接空闲后立即调度下一页，不等待整批最慢页面；结果仍按来源顺序对账，避免网络时序改变排序和密码归属。单页最多提取 25 个链接、整次请求最多返回 100 个链接，已知达到上限或超出约 15 秒总预算时停止启动新请求，但会完成并核对已经开始的页面。一个提供方或任一选中详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`；超过固定详情页上限的其他帖子保留为 `unattempted`，不重复扫描同一批，但前端会展示已扫描/总来源数并保留这些原帖入口。两提供方都失败时返回 `502` 且不缓存。
+**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页最多并发 6 个请求，连接空闲后立即调度下一页，不等待整批最慢页面；结果仍按来源顺序对账，避免网络时序改变排序和密码归属。单页最多提取 25 个链接、整次请求最多返回 100 个链接；Worker 会扫描完整个最多 12 页的已选集合后再裁剪响应，以便后续重复链接仍能参与密码冲突核对。超出约 15 秒总预算时停止启动新请求，并保留已开始页面的证据。一个提供方或任一选中详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`；超过固定详情页上限的其他帖子保留为 `unattempted`，不重复扫描同一批，但前端会展示已扫描/总来源数并保留这些原帖入口。两提供方都失败时返回 `502` 且不缓存。
 
 分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
 
@@ -498,7 +498,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v14-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v15-cache.local/?q={query}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 

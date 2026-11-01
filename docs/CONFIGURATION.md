@@ -128,7 +128,7 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
        : 'https://iplayw.hackx64.eu.org';
    ```
 3. Replace the URL with your deployed Worker URL (e.g., `https://your-worker.your-subdomain.workers.dev`).
-4. Save the file and rebuild the frontend if necessary.
+4. Save the file and run `npm run build` so the generated JavaScript bundle includes the new URL.
 
 > **Important:** The Worker allows `https://iplay.hackx64.eu.org`, local Wrangler origins, and `http://localhost:8080` / `http://127.0.0.1:8080` by default. Add other static-host origins through `CORS_ALLOWED_ORIGINS`; responses vary on `Origin` rather than using a wildcard.
 

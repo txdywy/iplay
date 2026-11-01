@@ -1322,7 +1322,7 @@ test('resource search reports a provider outage without caching an empty result'
 });
 
 test('resource search rejects overlong queries before fan-out', async () => {
-    const query = 'x'.repeat(101);
+    const query = 'x'.repeat(301);
     const response = await worker.fetch(
         new Request(`https://worker.test/api/resource?q=${query}`, {
             headers: { 'cf-connecting-ip': 'test-resource-query-length' }

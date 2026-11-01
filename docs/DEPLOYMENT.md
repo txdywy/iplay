@@ -84,16 +84,16 @@ compatibility_date = "2024-04-23"
 
 ### 部署前准备
 
-1. 先构建样式和 JavaScript：
-
-```bash
-npm run build
-```
-
-2. 打开 `js/api.js`，把 `API_BASE` 修改成你自己的 Worker 域名。
+1. 打开 `js/api.js`，把 `API_BASE` 修改成你自己的 Worker 域名。
 
 ```javascript
 const API_BASE = "https://your-worker.example.workers.dev";
+```
+
+2. 配置完成后再构建样式和 JavaScript：
+
+```bash
+npm run build
 ```
 
 ### 发布步骤

@@ -441,6 +441,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     : json([{ id: '413', title: 'Retained Enrichment Movie', year: '2024' }]);
                 if (url.searchParams.get('q') === 'Canonical Renamed Movie') return json([
                     { id: '411', title: 'Canonical Renamed Movie', year: '2024' },
+                    { id: '410', title: 'Canonical Renamed Movie Returns', year: '2025' },
                     { id: '412', title: 'Canonical Renamed Movie', year: '2025' }
                 ]);
                 return json([]);
@@ -1165,6 +1166,8 @@ async function runCanonicalEnrichmentFlow() {
     assert.equal(calls.find(url => url.pathname === '/api/wiki/zh')?.searchParams.get('year'), '2025');
     await waitFor("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=412'))");
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=411'))"), false);
+    assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/douban/detail?id=410'))"), false,
+        'a same-year title prefix must not receive the confirmed title\'s supplementary rating');
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.includes('/api/poster?'))"), false,
         'confirmed detail posters need no supplementary request');
     assert.equal(await evaluate("document.body.textContent.includes('旧片同名作品简介。')"), false);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    findExactMatch,
     findBestMatch,
     normalizeSearchText,
     pickBestTmdbMatch,
@@ -67,4 +68,18 @@ test('supplementary title matching rejects unrelated and empty titles', () => {
     assert.equal(findBestMatch([{ title: 'Unrelated' }], 'Dune', item => item.title), null);
     assert.equal(findBestMatch([{ title: '' }], 'Dune', item => item.title), null);
     assert.equal(findBestMatch([{ title: 'Dune' }], '', item => item.title), null);
+});
+
+test('exact title matching accepts alternate canonical titles without accepting prefixes', () => {
+    const results = [
+        { id: 1, title: 'Canonical Renamed Movie Returns', original_title: '別名' },
+        { id: 2, title: 'Localized Title', original_title: 'Original Movie' }
+    ];
+
+    assert.equal(findExactMatch(results, ['Canonical Renamed Movie', 'Original Movie'], item => [item.title, item.original_title]).id, 2);
+    assert.equal(findExactMatch(
+        [{ id: 3, title: 'Canonical Renamed Movie Returns', original_title: 'Other Work' }],
+        'Canonical Renamed Movie',
+        item => [item.title, item.original_title]
+    ), null);
 });
