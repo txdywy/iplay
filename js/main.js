@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.25';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.25';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.25';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.25';
-import { RELEASE_VERSION } from './release.js?v=1.0.25';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.26';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.26';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.26';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.26';
+import { RELEASE_VERSION } from './release.js?v=1.0.26';
 import {
-    findBestMatch,
+    findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.25';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.25';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.25';
+} from './match.js?v=1.0.26';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.26';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.26';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -654,9 +654,9 @@ function scrollToVisible(element) {
     });
 }
 
-function pickBestDoubanMatch(results, query, year) {
+function pickBestDoubanMatch(results, query, year, originalTitle = '') {
     const sameYear = year ? results.filter(item => String(item?.year || '') === String(year)) : results;
-    return findBestMatch(sameYear, query, item => item.title);
+    return findExactMatch(sameYear, [query, originalTitle], item => [item?.title, item?.original_title]);
 }
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -2057,7 +2057,9 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
     DoubanAPI.search(enrichmentQuery, searchOptions).then(async doubanSearchResult => {
         if (!isActiveSearch(searchId, loadId)) return;
         const doubanCandidates = Array.isArray(doubanSearchResult) ? doubanSearchResult : [];
-        const doubanMatch = pickBestDoubanMatch(doubanCandidates, enrichmentQuery, candidate.year);
+        const doubanMatch = pickBestDoubanMatch(
+            doubanCandidates, enrichmentQuery, candidate.year, candidate.originalTitle
+        );
         if (doubanMatch && doubanMatch.id) {
             const doubanResult = await DoubanAPI.getDetail(doubanMatch.id, searchOptions).catch(error => {
                 if (error?.name === 'AbortError') throw error;

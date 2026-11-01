@@ -17,28 +17,38 @@ const PREFERENCE_WEIGHTS = {
     '灾难': { score: -1.5, reason: '环境压抑' }
 };
 
-try {
-    const customWeights = typeof window !== 'undefined'
-        ? window.localStorage.getItem('iplay_preference_weights')
-        : null;
-    if (customWeights) {
+let preferenceStorageErrorLogged = false;
+
+function getPreferenceWeights() {
+    const weights = { ...PREFERENCE_WEIGHTS };
+
+    try {
+        const customWeights = typeof window !== 'undefined'
+            ? window.localStorage.getItem('iplay_preference_weights')
+            : null;
+        if (!customWeights) return weights;
+
         const parsed = JSON.parse(customWeights);
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-            for (const [genre, value] of Object.entries(parsed)) {
-                const score = typeof value === 'number' ? value : Number(value?.score);
-                if (Number.isFinite(score)) {
-                    PREFERENCE_WEIGHTS[genre] = {
-                        score: Math.max(-5, Math.min(5, score)),
-                        reason: typeof value?.reason === 'string' && value.reason.trim()
-                            ? value.reason.trim().slice(0, 120)
-                            : `自定义偏好：${genre}`
-                    };
-                }
-            }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return weights;
+
+        for (const [genre, value] of Object.entries(parsed)) {
+            const score = typeof value === 'number' ? value : Number(value?.score);
+            if (!Number.isFinite(score)) continue;
+            weights[genre] = {
+                score: Math.max(-5, Math.min(5, score)),
+                reason: typeof value?.reason === 'string' && value.reason.trim()
+                    ? value.reason.trim().slice(0, 120)
+                    : `自定义偏好：${genre}`
+            };
+        }
+    } catch (error) {
+        if (!preferenceStorageErrorLogged) {
+            console.error('Failed to load custom preference weights', error);
+            preferenceStorageErrorLogged = true;
         }
     }
-} catch (e) {
-    console.error('Failed to load custom preference weights', e);
+
+    return weights;
 }
 
 function getRatingLabel(source) {
@@ -49,6 +59,7 @@ function getRatingLabel(source) {
 
 export function calculateRecommendationScore(data = {}) {
     const { rating, votes, genres, hasWiki, source } = data;
+    const preferenceWeights = getPreferenceWeights();
     const report = { pros: [], cons: [] };
     const ratingLabel = getRatingLabel(source);
     const numericRating = Number(rating);
@@ -96,12 +107,12 @@ export function calculateRecommendationScore(data = {}) {
 
     if (safeGenres.length > 0) {
         safeGenres.forEach(genre => {
-            const pref = Object.prototype.hasOwnProperty.call(PREFERENCE_WEIGHTS, genre) ? PREFERENCE_WEIGHTS[genre] : null;
+            const pref = Object.prototype.hasOwnProperty.call(preferenceWeights, genre) ? preferenceWeights[genre] : null;
             if (pref) {
                 preferenceScore += pref.score * 2.5;
                 if (pref.score > 0) {
                     report.pros.push(pref.reason);
-                } else {
+                } else if (pref.score < 0) {
                     report.cons.push(pref.reason);
                     if (pref.score <= -2.5) hasFatalFlaw = true;
                 }

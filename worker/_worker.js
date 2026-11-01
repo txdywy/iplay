@@ -201,6 +201,7 @@ function logEvent(level, event, details = {}) {
 }
 
 const MAX_QUERY_LENGTH = 100;
+const MAX_MEDIA_TITLE_LENGTH = 300;
 
 function validateRequiredText(value, label, maxLength = MAX_QUERY_LENGTH) {
     const text = typeof value === "string" ? value.trim() : "";
@@ -1900,7 +1901,7 @@ const DOUBAN_DETAIL_HEADERS = {
 };
 
 async function handleDoubanSearch(query, ctx) {
-    const queryCheck = validateRequiredText(query, "query");
+    const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
@@ -2070,7 +2071,7 @@ async function handleDoubanDetail(id, ctx) {
 // Capture complete URL-like occurrences, including foreign providers, so their
 // passwords stay within their own links. Never truncate a malformed Quark path
 // into a different, apparently valid share.
-const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\),，。；;]+/gi;
+const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\),，。；;、（）【】《》]+/gi;
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})(?![a-z0-9])/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://wpzy.org";
@@ -2277,7 +2278,7 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
         if (!isValidQuarkPassword(match[1])) continue;
 
         const passwordIndex = match.index;
-        if (/(?:百度(?:网盘)?|迅雷|阿里(?:云盘|网盘)?|天翼(?:云盘)?|UC(?:网盘)?|115(?:网盘)?|123(?:云盘)?)\s*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 24), passwordIndex))) {
+        if (/(?:百度(?:网盘)?|迅雷|阿里(?:云盘|网盘)?|天翼(?:云盘)?|UC(?:网盘)?|115(?:网盘)?|123(?:云盘)?)(?=[\s:：()（）【】\x5B\x5D，、,]|$)[\s:：()（）【】\x5B\x5D，、,]*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 24), passwordIndex))) {
             continue;
         }
         while (followingLink && followingLink.end <= passwordIndex) {
@@ -2609,10 +2610,9 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
     let attemptedPages = 0;
     const pages = resources.map(entry => ({ url: entry.url, source: entry.source, status: "unattempted" }));
     const results = [];
-    const foundUrls = new Set();
     let nextIndex = 0;
     async function scanPages() {
-        while (nextIndex < maxPages && !isDeadlineExpired(deadline) && foundUrls.size < RESOURCE_MAX_QUARK_URLS_TOTAL) {
+        while (nextIndex < maxPages && !isDeadlineExpired(deadline)) {
             const index = nextIndex++;
             const entry = resources[index];
             attemptedPages++;
@@ -2620,14 +2620,13 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
                 const value = await fetchResourcePageQuarkUrls(entry.url, entry.title,
                     entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
                 results[index] = { status: "fulfilled", value };
-                for (const item of value) if (item.url) foundUrls.add(item.url);
             } catch (reason) {
                 results[index] = { status: "rejected", reason };
             }
         }
     }
-    // Refill free connections immediately, but reconcile in source order so
-    // network timing cannot choose a different password/source or result order.
+    // Scan the entire fixed page selection before enforcing the response cap.
+    // This keeps duplicate-password conflict checks independent of response timing.
     await Promise.all(Array.from({ length: Math.min(RESOURCE_DETAIL_CONCURRENCY, maxPages) }, scanPages));
 
     for (const [index, group] of results.entries()) {
@@ -2704,7 +2703,7 @@ function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOUR
 }
 
 async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
-    const queryCheck = validateRequiredText(query, "query");
+    const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
     const wpzySession = await getWpzySession(env);
@@ -2725,11 +2724,11 @@ async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
 }
 
 async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession } = {}) {
-    const queryCheck = validateRequiredText(query, "query");
+    const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v14-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v15-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
 
@@ -2787,7 +2786,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
 }
 
 async function handlePosterSearch(title, year, env, ctx, { refresh = false, tmdbId = null, mediaType = null, imdbId = null } = {}) {
-    const titleCheck = validateRequiredText(title, "title");
+    const titleCheck = validateRequiredText(title, "title", MAX_MEDIA_TITLE_LENGTH);
     if (titleCheck.error) return titleCheck.error;
     title = titleCheck.value;
 
@@ -2821,7 +2820,7 @@ async function handlePosterSearch(title, year, env, ctx, { refresh = false, tmdb
 }
 
 async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = false, identity } = {}) {
-    const titleCheck = validateRequiredText(title, "title");
+    const titleCheck = validateRequiredText(title, "title", MAX_MEDIA_TITLE_LENGTH);
     if (titleCheck.error) return titleCheck.error;
     title = titleCheck.value;
 
@@ -3017,7 +3016,7 @@ async function searchZhWikiTitles(query, deadline = null, { mediaType = null, ye
 }
 
 async function handleWikiZh(query, ctx, options = {}) {
-    const queryCheck = validateRequiredText(query, "query");
+    const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 

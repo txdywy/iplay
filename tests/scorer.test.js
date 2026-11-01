@@ -55,3 +55,29 @@ test('scoring works without Object.hasOwn and still ignores inherited genre keys
     assert.equal(score(data).score, calculateRecommendationScore(data).score);
     assert.equal(score({ ...data, genres: ['剧情', 'constructor', '__proto__'] }).score, score(data).score);
 });
+
+test('custom preference changes take effect on the next score and zero scores add no warning', async () => {
+    const source = (await readFile(new URL('../js/scorer.js', import.meta.url), 'utf8'))
+        .replaceAll('export function ', 'function ');
+    const storage = { value: null, getItem() { return this.value; } };
+    const errors = [];
+    const score = runInNewContext(`
+        globalThis.window = { localStorage: globalThis.storage };
+        globalThis.console = { error: (...args) => globalThis.errors.push(args) };
+        ${source}; calculateRecommendationScore
+    `, { storage, errors });
+    const data = { rating: 8, votes: 10000, genres: ['恐怖'], summary: 'A sufficiently detailed summary.', hasWiki: true, source: 'tmdb' };
+    const defaultResult = score(data);
+
+    storage.value = JSON.stringify({ 恐怖: { score: 0, reason: 'Neutral now' } });
+    const neutralResult = score(data);
+    assert.ok(neutralResult.score > defaultResult.score);
+    assert.equal(neutralResult.report.cons.includes('Neutral now'), false);
+    assert.equal(neutralResult.report.cons.some(reason => reason.includes('恐怖')), false);
+
+    storage.value = JSON.stringify({ 恐怖: { score: 2, reason: 'New preference' } });
+    const updatedResult = score(data);
+    assert.ok(updatedResult.score > neutralResult.score);
+    assert.ok(updatedResult.report.pros.includes('New preference'));
+    assert.deepEqual(errors, []);
+});

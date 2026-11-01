@@ -77,16 +77,62 @@ test('out-of-order completions preserve duplicate password evidence and failed-p
     assert.equal(data.resourceMeta.pages[7].quarkUrls[0].password,'BBBB');
 });
 
-test('known result caps stop scheduling new work while preserving already-started page evidence', async t => {
+test('the response cap does not stop scans needed to reconcile later duplicate passwords', async t => {
     const { search, started, peak } = setup(t, async page => Array.from({length:25},(_,i)=>
         `https://pan.quark.cn/s/page-${page}-${i}`).join('\n'));
     const data = await search();
     assert.equal(data.quarkUrls.length,100);
-    assert.ok(started.length<12,'do not scan remaining pages after enough unique shares are known');
+    assert.equal(started.length,12,'scan the bounded selected set before applying the aggregate result cap');
     assert.ok(peak()<=6);
     assert.equal(data.resourceMeta.attemptedPages,started.length);
     assert.equal(data.resourceMeta.pages.filter(page=>page.status==='ok').length,started.length);
     assert.deepEqual(data.quarkUrls.map(item=>item.url),Array.from({length:100},(_,i)=>`https://pan.quark.cn/s/page-${Math.floor(i/25)+1}-${i%25}`));
+});
+
+test('password conflict results do not depend on whether the cap fills before or after late pages', async t => {
+    async function runOrder(order, subtest) {
+        const releases = new Map();
+        const started = [];
+        const { search } = setup(subtest, page => {
+            started.push(page);
+            return new Promise(resolve => releases.set(page, resolve));
+        });
+        const pending = search();
+        const tick = () => new Promise(resolve => globalThis.setImmediate(resolve));
+
+        for (const page of order) {
+            for (let attempt = 0; !releases.has(page) && attempt < 100; attempt += 1) await tick();
+            assert.ok(releases.has(page), `detail page ${page} should have been scheduled; started ${started.join(',')}`);
+            const body = page === 1
+                ? ['https://pan.quark.cn/s/shared?pwd=aaaa', ...Array.from({ length: 24 }, (_, i) => `https://pan.quark.cn/s/first-${i}`)].join('\n')
+                : page >= 2 && page <= 4
+                    ? Array.from({ length: 25 }, (_, i) => `https://pan.quark.cn/s/page-${page}-${i}`).join('\n')
+                    : page === 12 ? 'https://pan.quark.cn/s/shared?pwd=bbbb' : 'No shares';
+            releases.get(page)(body);
+            await tick();
+        }
+
+        const data = await pending;
+        assert.equal(data.partial, false);
+        assert.equal(data.resourceMeta.attemptedPages, 12);
+        assert.equal(data.quarkUrls.length, 100);
+        const shared = data.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/shared');
+        assert.equal(shared.passwordConflict, true);
+        assert.equal(shared.password, undefined);
+        return data.quarkUrls.map(item => ({ url: item.url, password: item.password, passwordConflict: item.passwordConflict }));
+    }
+
+    let capFirstResult;
+    let conflictFirstResult;
+    await t.test('the cap fills before the conflicting page responds', async subtest => {
+        capFirstResult = await runOrder(Array.from({ length: 12 }, (_, i) => i + 1), subtest);
+        assert.ok(capFirstResult.some(item => item.passwordConflict));
+    });
+    await t.test('the conflicting page responds before the cap fills', async subtest => {
+        conflictFirstResult = await runOrder([5, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 6], subtest);
+        assert.ok(conflictFirstResult.some(item => item.passwordConflict));
+    });
+    assert.deepEqual(conflictFirstResult, capFirstResult);
 });
 
 test('an expired aggregate deadline leaves queued pages unattempted', async t => {
