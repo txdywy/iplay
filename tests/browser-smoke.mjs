@@ -905,6 +905,16 @@ async function runActorFlow() {
 
     await evaluate('history.back()');
     await waitFor("history.state?.kind === 'detail' && new URL(location.href).searchParams.get('id') === '200' && document.querySelector('#resultsArea:not(.hidden) #showTitle')?.textContent === 'Actor Movie' && document.querySelector('#searchStatus').textContent.includes('详情已加载')");
+    // Fragment navigation fires popstate too; it must not reload the view.
+    const callsBeforeSkipLink = await evaluate('window.__smoke.calls.length');
+    await evaluate("document.querySelector('a[href=\"#mainContent\"]').click()");
+    assert.equal(await evaluate('location.hash'), '#mainContent');
+    await evaluate('new Promise(resolve => setTimeout(resolve, 300))', { awaitPromise: true });
+    await evaluate('history.back()');
+    await waitFor("location.hash === ''");
+    await evaluate('new Promise(resolve => setTimeout(resolve, 300))', { awaitPromise: true });
+    assert.equal(await evaluate('window.__smoke.calls.length'), callsBeforeSkipLink, 'the skip link must not refetch the current detail');
+    assert.equal(await evaluate("document.querySelector('#resultsArea:not(.hidden) #showTitle')?.textContent"), 'Actor Movie');
     await evaluate('history.back()');
     await waitFor("history.state?.kind === 'actor' && new URL(location.href).searchParams.get('actor') === 'Smoke Actor' && document.querySelector('#actorResultsArea:not(.hidden) #actorResultsTitle')?.textContent === 'Smoke Actor' && document.querySelectorAll('#actorCreditList button[data-media-id]').length === 2");
     await evaluate('history.back()');
@@ -925,6 +935,15 @@ async function runExactActorIntentFlow() {
     await assertSearchReady('Exact Title Actor');
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/person'))"), false,
         'an exact title keeps title intent even when an actor shares its name');
+
+    // Restoring a shared actor link that resolves to a title replaces its entry;
+    // pushing would make Back restore the same link and push it again.
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await command('Page.navigate', { url: `${baseUrl}?actor=Exact%20Title%20Actor` });
+    await waitFor("history.state?.kind === 'detail' && new URL(location.href).searchParams.has('id')");
+    await evaluate('history.back()');
+    await waitFor("history.state?.kind === 'home' && location.search === ''");
 }
 
 async function runPrefetchedFollowUpFlow() {

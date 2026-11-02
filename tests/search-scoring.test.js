@@ -100,3 +100,13 @@ test('six fallback searches with repeated title pairs keep the upstream request 
     assert.ok(data.results.every(item => item.matchScore < 0.72));
     assert.equal(data.searchMeta.year, '2023');
 });
+
+test('a possessive title is not read as a season marker', async t => {
+    setup(t, async () => Response.json({ results: [
+        { id: 402900, media_type: 'movie', title: "Ocean's 8", original_title: "Ocean's 8", release_date: '2018-06-07', vote_count: 9000 }
+    ] }));
+    const data = await search("Ocean's 8");
+    assert.equal(data.searchMeta.season, null);
+    assert.equal(data.searchMeta.mediaType, null);
+    assert.deepEqual(data.results.map(item => item.id), [402900]);
+});

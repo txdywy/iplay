@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.27] - 2026-11-02
+
+### Fixed
+
+- Stop reading the possessive in titles such as "Ocean's 8" as a season marker, which filtered the film out of TMDB search.
+- Ignore fragment-only history steps (the skip link and its Back step) instead of reloading the current detail or clearing the search box.
+- Keep the history mode when a restored shared actor link resolves to a title, so Back no longer re-pushes the same entry.
+
+### Tests
+
+- Add regressions for possessive titles, fragment navigation and restored actor links that resolve to titles.
+
 ## [1.0.26] - 2026-11-01
 
 ### Fixed
