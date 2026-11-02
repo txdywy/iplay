@@ -196,6 +196,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 }
                 const candidatePoster = query === 'Unsafe Poster Movie'
                         ? 'javascript:alert(1)'
+                        : query === 'Slow Broken Poster Movie' ? 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg'
                         : window.__smoke.posterlessMode || (query === 'Retained Enrichment Movie' && window.__smoke.retentionPosterMode) ? null : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
@@ -417,7 +418,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const response = json({
                     ...candidate(title, id),
                     year: id === 111 || (id === 116 && window.__smoke.retentionRecovery === 'canonical') ? '2025' : '2024',
-                    poster: (id >= 117 && id <= 119) || (id === 116 && window.__smoke.retentionPosterMode) ? null : id === 112 ? canonicalPoster : poster,
+                    poster: (id >= 117 && id <= 119) || (id === 116 && window.__smoke.retentionPosterMode) ? null : id === 113 ? 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg' : id === 112 ? canonicalPoster : poster,
                     genres: ['Drama'],
                     runtime: 120,
                     status: 'Released',
@@ -921,6 +922,24 @@ async function runActorFlow() {
     await waitFor("history.state?.kind === 'home' && location.search === '' && document.querySelector('#actorResultsArea')?.classList.contains('hidden') && document.querySelector('#resultsArea')?.classList.contains('hidden') && document.querySelector('#searchInput')?.value === ''");
 }
 
+async function runSameUrlHistoryFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    const firstEntry = await evaluate('history.state.entryId');
+    const firstUrl = await evaluate('location.href');
+    await evaluate("document.querySelector('#searchInput').form.requestSubmit()");
+    await waitFor(`history.state.entryId !== ${JSON.stringify(firstEntry)}`);
+    await waitFor("document.querySelector('#searchStatus').textContent.includes('详情已加载')");
+    assert.equal(await evaluate('location.href'), firstUrl);
+    await evaluate("document.querySelector('#searchInput').value = ''; document.querySelector('#searchInput').form.requestSubmit()");
+    await waitFor("!document.querySelector('#errorState').classList.contains('hidden')");
+    await evaluate('history.back()');
+    await waitFor("!document.querySelector('#resultsArea').classList.contains('hidden') && document.querySelector('#errorState').classList.contains('hidden')");
+    assert.equal(await evaluate('history.state.entryId'), firstEntry);
+    assert.equal(await evaluate("document.querySelector('#showTitle').textContent"), 'Test Movie');
+}
+
 async function runExactActorIntentFlow() {
     await command('Page.navigate', { url: baseUrl });
     await search('Overlapping Actor');
@@ -1252,6 +1271,7 @@ async function runPosterFallbackDetailRaceFlow() {
     await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
     await waitFor('window.__smoke.posterCalls === 1');
     await waitFor('window.__smoke.detailResolved === 1');
+    await evaluate("document.querySelector('#showCover').dispatchEvent(new Event('error'))");
     await waitFor(`document.querySelector('#showCover').getAttribute('src') === ${JSON.stringify(fallbackPoster)}`);
     assert.equal(await evaluate('window.__smoke.posterCalls'), 1, 'detail repaint must not discard an in-flight verified fallback');
     await command('Page.navigate', { url: baseUrl });
@@ -1445,6 +1465,7 @@ try {
     await runUnsafePosterFlow();
     await runTimerFallbackFlow();
     await runActorFlow();
+    await runSameUrlHistoryFlow();
     await runExactActorIntentFlow();
     await runPrefetchedFollowUpFlow();
     await runActorCandidateFlow();
@@ -1455,7 +1476,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

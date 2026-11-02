@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.28] - 2026-11-02
+
+### Fixed
+
+- Recognize season markers attached directly to Chinese titles, and let an exact whole-title match override a season-like title prefix.
+- Preserve a pending poster fallback when a browser repeats the primary image error during detail repaint.
+- Restore history entries with identical URLs by tracking their entry identity while continuing to ignore fragment-only navigation.
+- Parse Quark shares wrapped in ASCII parentheses or square brackets.
+- Merge password evidence for globally retained shares across page sampling limits and keep that evidence in page snapshots.
+
+### Tests
+
+- Cover Chinese season suffixes, literal season-like film titles, ASCII-wrapped shares, cross-page password conflicts, repeated image failures, and same-URL history restoration.
+
 ## [1.0.27] - 2026-11-02
 
 ### Fixed

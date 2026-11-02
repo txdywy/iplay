@@ -33,6 +33,12 @@ async function searchQuarkPages(t, pages) {
     const response = await worker.fetch(resourceRequest('https://worker.test/api/resource?q=配对测试'), {}, { waitUntil() {} });
     assert.equal(response.status, 200);
     const result = await response.json();
+    for (const page of result.resourceMeta.pages) {
+        for (const item of page.quarkUrls || []) {
+            assert.equal(item.sourceUrl, page.url);
+            assert.equal(typeof item.sourceTitle, 'string');
+        }
+    }
     for (const item of result.quarkUrls) {
         assert.ok(Object.keys(item).every(key => ['title', 'url', 'password', 'passwordConflict', 'sourceUrl', 'sourceTitle'].includes(key)));
         if ('passwordConflict' in item) {
@@ -319,4 +325,29 @@ test('resource search keeps only canonical Quark share URLs from escaped page co
         { url: 'https://pan.quark.cn/s/no-pass', password: 'n0P5' },
         { url: 'https://pan.quark.cn/s/cross-page', password: 'm3Rg' }
     ]);
+});
+
+test('resource search recognizes ASCII-wrapped links and adjacent passwords', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>[https://pan.quark.cn/s/ascii-one]</p>'
+        + '<p>https://pan.quark.cn/s/ascii-two(提取码：A1b2)</p>'
+        + '<p>https://pan.quark.cn/s/ascii-three[提取码：C3d4]</p>'
+    ]), [
+        { url: 'https://pan.quark.cn/s/ascii-one' },
+        { url: 'https://pan.quark.cn/s/ascii-two', password: 'A1b2' },
+        { url: 'https://pan.quark.cn/s/ascii-three', password: 'C3d4' }
+    ]);
+});
+
+test('password conflicts beyond a page cap reconcile with shares retained on another page in either order', async t => {
+    const cappedPage = Array.from({ length: 25 }, (_, index) => `https://pan.quark.cn/s/new-${index}`).join('\n')
+        + '\nhttps://pan.quark.cn/s/cross-page?pwd=new2';
+    const retainedPage = 'https://pan.quark.cn/s/cross-page?pwd=old1';
+    for (const pages of [[retainedPage, cappedPage], [cappedPage, retainedPage]]) {
+        const result = await searchQuarkPages(t, pages);
+        assert.equal(result.length, 26);
+        assert.deepEqual(result.find(item => item.url.endsWith('/cross-page')), {
+            url: 'https://pan.quark.cn/s/cross-page'
+        });
+    }
 });
