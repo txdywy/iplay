@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.26';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.26';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.26';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.26';
-import { RELEASE_VERSION } from './release.js?v=1.0.26';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.27';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.27';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.27';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.27';
+import { RELEASE_VERSION } from './release.js?v=1.0.27';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.26';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.26';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.26';
+} from './match.js?v=1.0.27';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.27';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.27';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1766,6 +1766,10 @@ let activeDetailState = null;
 let lastSearchQuery = '';
 let searchRetryAction = null;
 
+// The query string identifies the app state. Fragment navigation, such as the
+// skip link, also fires popstate and must not reload the current view.
+let historySearch = null;
+
 function getAppHistoryUrl(url) {
     const nextUrl = url instanceof URL ? url : new URL(url, window.location.href);
     return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
@@ -1777,6 +1781,7 @@ function pushActorHistory(query, personId) {
     url.searchParams.set('actor', query);
     if (personId) url.searchParams.set('person', String(personId));
     window.history.pushState({ kind: 'actor', query, personId }, '', getAppHistoryUrl(url));
+    historySearch = window.location.search;
 }
 
 function updateActorHistory(query, personId) {
@@ -1796,6 +1801,7 @@ function pushDetailHistory(candidate, { replace = false } = {}) {
         mediaType: candidate.mediaType || '',
         title: candidate.title || candidate.originalTitle || ''
     }, '', getAppHistoryUrl(url));
+    historySearch = window.location.search;
 }
 
 function isActiveSearch(searchId, loadId = null) {
@@ -2405,7 +2411,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         }
 
         if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
-        await loadCandidateDetails(candidate, query, searchId, searchOptions);
+        await loadCandidateDetails(candidate, query, searchId, searchOptions, { historyMode });
 
     } catch (err) {
         if (err?.name === 'AbortError') return;
@@ -2488,6 +2494,7 @@ document.querySelectorAll('[data-share-current]').forEach(button => {
 });
 
 async function restoreUrlState() {
+    historySearch = window.location.search;
     const params = new URL(window.location.href).searchParams;
     const actor = params.get('actor')?.trim();
     if (actor) {
@@ -2536,6 +2543,7 @@ async function restoreUrlState() {
 }
 
 window.addEventListener('popstate', () => {
+    if (window.location.search === historySearch) return;
     void restoreUrlState();
 });
 

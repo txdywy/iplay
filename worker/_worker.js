@@ -1021,7 +1021,9 @@ function parseChineseNumber(value) {
 }
 
 function extractSearchSeason(text) {
-    const match = text.match(/(?:\b(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
+    // A bare "s" marker must be its own word: the possessive in "Ocean's 8"
+    // is part of a film title, not a season number.
+    const match = text.match(/(?:(?<![\p{L}\p{N}'’])(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
     if (!match) return { value: null, match: "" };
     const value = parseChineseNumber(match[1] || match[2]);
     return value && value <= 99 ? { value, match: match[0] } : { value: null, match: "" };
