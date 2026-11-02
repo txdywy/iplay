@@ -65,7 +65,6 @@ test('result enrichment keeps the critical path independent from resource scanni
     assert.match(mainJs, /海报加载失败，正在查找备用海报/);
     assert.match(mainJs, /TmdbAPI\.searchPerson\(query, options\)/);
     assert.match(mainJs, /dataset\.actorName = name/);
-    assert.match(mainJs, /pushState\(\{ kind: 'actor'/);
     assert.match(mainJs, /addEventListener\('popstate'/);
     assert.match(mainJs, /mediaType: mediaType \|\| undefined/);
     const enrichmentBlock = mainJs.slice(mainJs.indexOf('function startEnrichments'), mainJs.indexOf('async function loadCandidateDetails'));

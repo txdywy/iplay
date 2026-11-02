@@ -110,3 +110,32 @@ test('a possessive title is not read as a season marker', async t => {
     assert.equal(data.searchMeta.mediaType, null);
     assert.deepEqual(data.results.map(item => item.id), [402900]);
 });
+
+test('a season marker attached to a Chinese title keeps the TV intent and cleans the query', async t => {
+    setup(t, async url => Response.json({ results: url.searchParams.get('query') === '黑袍纠察队'
+        ? [{ id: 76479, media_type: 'tv', name: '黑袍纠察队' }] : [] }));
+    const data = await search('黑袍纠察队S04');
+    assert.equal(data.searchMeta.season, 4);
+    assert.equal(data.searchMeta.normalizedQuery, '黑袍纠察队');
+    assert.equal(data.searchMeta.mediaType, 'tv');
+    assert.deepEqual(data.results.map(item => item.id), [76479]);
+});
+
+test('an exact whole movie title overrides a season-like prefix', async t => {
+    const title = 'S21: The Khmer Rouge Killing Machine';
+    setup(t, async () => Response.json({ results: [{ id: 1, media_type: 'movie', title }] }));
+    const data = await search(title);
+    assert.equal(data.searchMeta.season, null);
+    assert.equal(data.searchMeta.mediaType, null);
+    assert.equal(data.searchMeta.normalizedQuery, title);
+    assert.equal(data.searchMeta.attempts, 1);
+    assert.deepEqual(data.results.map(item => item.id), [1]);
+});
+
+test('a base-title match still preserves an explicit season request', async t => {
+    setup(t, async () => Response.json({ results: [{ id: 1668, media_type: 'tv', name: 'Friends' }] }));
+    const data = await search('Friends S02');
+    assert.equal(data.searchMeta.season, 2);
+    assert.equal(data.searchMeta.mediaType, 'tv');
+    assert.deepEqual(data.results.map(item => item.id), [1668]);
+});

@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.27';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.27';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.27';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.27';
-import { RELEASE_VERSION } from './release.js?v=1.0.27';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.28';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.28';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.28';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.28';
+import { RELEASE_VERSION } from './release.js?v=1.0.28';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.27';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.27';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.27';
+} from './match.js?v=1.0.28';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.28';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.28';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -740,6 +740,9 @@ function handlePosterLoadError() {
     els.cover.setAttribute('aria-busy', 'false');
     if (failedSource === POSTER_PLACEHOLDER) return;
     if (!context || context.token !== token || context.source !== failedSource) return;
+    // A repaint can cause browsers to emit another error for the same broken
+    // primary image while its replacement request is still in flight.
+    if (context.viewModel?.posterFallbackPending) return;
     context.viewModel?.failedPosterUrls.add(failedSource);
 
     if (context.fallbackAttempted || !context.searchOptions || !context.viewModel) {
@@ -823,8 +826,10 @@ function loadPoster(posterUrl, title = '', context = {}) {
 
     els.cover.dataset.posterToken = String(token);
     els.cover.alt = title ? `${title} 海报` : '影视海报';
-    els.cover.setAttribute('srcset', getTmdbPosterSourceSet(safePosterUrl));
-    els.cover.setAttribute('sizes', safePosterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '');
+    const sourceSet = getTmdbPosterSourceSet(safePosterUrl);
+    const sizes = safePosterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '';
+    if (els.cover.getAttribute('srcset') !== sourceSet) els.cover.setAttribute('srcset', sourceSet);
+    if (els.cover.getAttribute('sizes') !== sizes) els.cover.setAttribute('sizes', sizes);
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
     if (els.cover.getAttribute('src') === nextSource) {
         if (els.cover.complete) els.cover.setAttribute('aria-busy', 'false');
@@ -1766,9 +1771,42 @@ let activeDetailState = null;
 let lastSearchQuery = '';
 let searchRetryAction = null;
 
-// The query string identifies the app state. Fragment navigation, such as the
-// skip link, also fires popstate and must not reload the current view.
+// App history entries can share a query string, so track entry identity as
+// well. Fragment-only navigation should continue to leave the current view alone.
 let historySearch = null;
+let historyHash = null;
+let historyEntryId = null;
+let historyEntrySequence = 0;
+
+function createHistoryEntryId() {
+    return globalThis.crypto?.randomUUID?.()
+        || `${Date.now().toString(36)}-${++historyEntrySequence}-${Math.random().toString(36).slice(2)}`;
+}
+
+function rememberHistoryEntry() {
+    historySearch = window.location.search;
+    historyHash = window.location.hash;
+    historyEntryId = window.history.state?.entryId ?? null;
+}
+
+function stampCurrentHistoryEntry() {
+    const state = window.history.state;
+    const entryId = state && typeof state === 'object' ? state.entryId : null;
+    if (!entryId) {
+        const nextState = {
+            ...(state && typeof state === 'object' ? state : {}),
+            entryId: createHistoryEntryId()
+        };
+        window.history.replaceState(nextState, '', getAppHistoryUrl(window.location.href));
+    }
+    rememberHistoryEntry();
+}
+
+function setAppHistoryState(method, state, url) {
+    const entryId = method === 'replaceState' && window.history.state?.entryId || createHistoryEntryId();
+    window.history[method]({ ...state, entryId }, '', url);
+    rememberHistoryEntry();
+}
 
 function getAppHistoryUrl(url) {
     const nextUrl = url instanceof URL ? url : new URL(url, window.location.href);
@@ -1780,8 +1818,7 @@ function pushActorHistory(query, personId) {
     url.search = '';
     url.searchParams.set('actor', query);
     if (personId) url.searchParams.set('person', String(personId));
-    window.history.pushState({ kind: 'actor', query, personId }, '', getAppHistoryUrl(url));
-    historySearch = window.location.search;
+    setAppHistoryState('pushState', { kind: 'actor', query, personId }, getAppHistoryUrl(url));
 }
 
 function updateActorHistory(query, personId) {
@@ -1795,13 +1832,12 @@ function pushDetailHistory(candidate, { replace = false } = {}) {
     url.searchParams.set('id', String(candidate.id));
     if (candidate.mediaType) url.searchParams.set('type', candidate.mediaType);
     if (candidate.title || candidate.originalTitle) url.searchParams.set('title', candidate.title || candidate.originalTitle);
-    window.history[replace ? 'replaceState' : 'pushState']({
+    setAppHistoryState(replace ? 'replaceState' : 'pushState', {
         kind: 'detail',
         id: candidate.id,
         mediaType: candidate.mediaType || '',
         title: candidate.title || candidate.originalTitle || ''
-    }, '', getAppHistoryUrl(url));
-    historySearch = window.location.search;
+    }, getAppHistoryUrl(url));
 }
 
 function isActiveSearch(searchId, loadId = null) {
@@ -2494,7 +2530,7 @@ document.querySelectorAll('[data-share-current]').forEach(button => {
 });
 
 async function restoreUrlState() {
-    historySearch = window.location.search;
+    stampCurrentHistoryEntry();
     const params = new URL(window.location.href).searchParams;
     const actor = params.get('actor')?.trim();
     if (actor) {
@@ -2539,11 +2575,20 @@ async function restoreUrlState() {
     }
 
     resetInitialView();
-    window.history.replaceState({ kind: 'home' }, '', window.location.href);
+    setAppHistoryState('replaceState', { kind: 'home' }, window.location.href);
 }
 
-window.addEventListener('popstate', () => {
-    if (window.location.search === historySearch) return;
+window.addEventListener('popstate', event => {
+    const search = window.location.search;
+    const hash = window.location.hash;
+    const currentEntryId = event.state?.entryId ?? null;
+    if (search === historySearch && hash !== historyHash) {
+        historySearch = search;
+        historyHash = hash;
+        historyEntryId = currentEntryId;
+        return;
+    }
+    if (search === historySearch && hash === historyHash && currentEntryId === historyEntryId) return;
     void restoreUrlState();
 });
 

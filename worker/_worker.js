@@ -1021,9 +1021,9 @@ function parseChineseNumber(value) {
 }
 
 function extractSearchSeason(text) {
-    // A bare "s" marker must be its own word: the possessive in "Ocean's 8"
-    // is part of a film title, not a season number.
-    const match = text.match(/(?:(?<![\p{L}\p{N}'’])(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
+    // A bare "s" marker must not be part of a Latin word or possessive ("Ocean's 8"),
+    // while Chinese titles commonly put the marker directly after the title ("庆余年S02").
+    const match = text.match(/(?:(?:(?<![\p{L}\p{N}'’])|(?<=\p{Script=Han}))(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
     if (!match) return { value: null, match: "" };
     const value = parseChineseNumber(match[1] || match[2]);
     return value && value <= 99 ? { value, match: match[0] } : { value: null, match: "" };
@@ -1733,13 +1733,18 @@ async function handleTmdbSearch(query, env, ctx) {
                 if (path === "/search/multi" && !exactPerson) exactPerson = findExactTmdbActor(data.results, intent.originalQuery);
                 // A literal title such as "The Truman Show" is stronger evidence
                 // than type/year words inferred from the text of that title.
-                if (path === "/search/multi" && !intent.season) {
+                if (path === "/search/multi") {
                     const titles = data.results.filter(item => isValidTmdbSearchItem(item))
                         .flatMap(item => [getTmdbTitle(item), getTmdbOriginalTitle(item)]);
                     const literalMatch = getLiteralSearchEvidence(titles, intent);
-                    if (literalMatch && literalMatch.length >= (intent.literalEvidenceLength || 0)) {
+                    // A whole-query title match proves that a season-like prefix
+                    // belongs to the title (for example "S21: ..."). A title
+                    // match after removing "s02" must keep the season intent.
+                    if (literalMatch && (!intent.season || literalMatch.wholeQuery)
+                        && literalMatch.length >= (intent.literalEvidenceLength || 0)) {
                         intent.literalEvidenceLength = literalMatch.length;
                         intent.mediaType = literalMatch.mediaType;
+                        if (literalMatch.wholeQuery) intent.season = null;
                         // A year appended to a literal title still constrains
                         // the requested remake. Only an exact whole-title match
                         // proves that the digits themselves belong to the name.
@@ -2073,7 +2078,7 @@ async function handleDoubanDetail(id, ctx) {
 // Capture complete URL-like occurrences, including foreign providers, so their
 // passwords stay within their own links. Never truncate a malformed Quark path
 // into a different, apparently valid share.
-const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\),，。；;、（）【】《》]+/gi;
+const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\(),\x5B\x5D，。；;、（）【】《》]+/gi;
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})(?![a-z0-9])/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://wpzy.org";
@@ -2254,19 +2259,37 @@ function* iterateResourceLinks(text) {
     }
 }
 
-function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY) {
+function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY, trackedUrls = null, extraEntries = null) {
     if (!text) return [];
 
     const normalizedText = normalizeResourcePageText(text);
     const links = iterateResourceLinks(normalizedText);
     const entries = new Map();
+    const tracked = extraEntries instanceof Map ? extraEntries : null;
     const retainOccurrence = occurrence => {
         if (!occurrence?.url) return;
         const existing = entries.get(occurrence.url);
         if (existing) {
             mergeQuarkPassword(existing, occurrence);
+        } else if (tracked?.has(occurrence.url)) {
+            const trackedEntry = tracked.get(occurrence.url);
+            if (trackedEntry) mergeQuarkPassword(trackedEntry, occurrence);
+            else tracked.set(occurrence.url, {
+                url: occurrence.url,
+                ...(occurrence.password ? { password: occurrence.password } : {}),
+                _passwordRank: occurrence._passwordRank,
+                _passwordConflict: occurrence._passwordConflict
+            });
         } else if (entries.size < maxEntries) {
             entries.set(occurrence.url, {
+                url: occurrence.url,
+                ...(occurrence.password ? { password: occurrence.password } : {}),
+                _passwordRank: occurrence._passwordRank,
+                _passwordConflict: occurrence._passwordConflict
+            });
+        } else if (tracked && trackedUrls?.has(occurrence.url)
+            && (occurrence._passwordRank || occurrence._passwordConflict)) {
+            tracked.set(occurrence.url, {
                 url: occurrence.url,
                 ...(occurrence.password ? { password: occurrence.password } : {}),
                 _passwordRank: occurrence._passwordRank,
@@ -2415,7 +2438,24 @@ function isQuarkResourceText(text) {
     ));
 }
 
-async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = `${BY669_BASE}/`, deadline = null, wpzySession = null) {
+function mapResourcePageQuarkEntries(text, resourceTitle, sourceUrl, trackedUrls = null, extraEntries = null) {
+    const entries = collectQuarkEntries(text, RESOURCE_MAX_QUARK_URLS_PER_PAGE, trackedUrls, extraEntries);
+    const withSource = ({ url, password, _passwordRank, _passwordConflict }) => ({
+            title: resourceTitle,
+            url,
+            ...(password ? { password } : {}),
+            _passwordRank,
+            _passwordConflict,
+            sourceUrl,
+            sourceTitle: resourceTitle
+        });
+    if (extraEntries) {
+        for (const [url, entry] of extraEntries) extraEntries.set(url, withSource(entry));
+    }
+    return entries.map(withSource);
+}
+
+async function fetchResourcePageText(resourceUrl, referer = `${BY669_BASE}/`, deadline = null, wpzySession = null) {
     const safeResourceUrl = resolveResourceUrl(resourceUrl, BY669_BASE);
     if (!safeResourceUrl) throw createHttpError("Blocked untrusted resource URL", 502);
 
@@ -2445,17 +2485,7 @@ async function fetchResourcePageQuarkUrls(resourceUrl, resourceTitle, referer = 
         if (isWpzyLoginPage(text)) throw createResourceAccessError("login_required");
         if (isWpzyRestrictedPage(text)) throw createResourceAccessError("access_restricted");
     }
-    const quarkEntries = collectQuarkEntries(text, RESOURCE_MAX_QUARK_URLS_PER_PAGE);
-
-    return quarkEntries.map(({ url, password, _passwordRank, _passwordConflict }) => ({
-        title: resourceTitle,
-        url,
-        ...(password ? { password } : {}),
-        _passwordRank,
-        _passwordConflict,
-        sourceUrl: safeResourceUrl,
-        sourceTitle: resourceTitle
-    }));
+    return { text, sourceUrl: safeResourceUrl };
 }
 
 async function fetchBy669Resources(query, deadline = null) {
@@ -2619,7 +2649,7 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             const entry = resources[index];
             attemptedPages++;
             try {
-                const value = await fetchResourcePageQuarkUrls(entry.url, entry.title,
+                const value = await fetchResourcePageText(entry.url,
                     entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
                 results[index] = { status: "fulfilled", value };
             } catch (reason) {
@@ -2634,7 +2664,7 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
     for (const [index, group] of results.entries()) {
         if (!group) continue;
         const page = pages[index];
-        if (group.status !== "fulfilled" || !Array.isArray(group.value)) {
+        if (group.status !== "fulfilled" || typeof group.value?.text !== "string") {
             failedPages += 1;
             if (group.reason?.resourceIssue === "access_restricted") restrictedPages += 1;
             if (group.reason?.resourceIssue === "login_required") loginRequiredPages += 1;
@@ -2644,11 +2674,9 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
         }
 
         page.status = "ok";
-        // Keep each page's evidence independent of the global reconciliation:
-        // refreshes must be able to replace one page while retaining failed ones.
-        page.quarkUrls = group.value.map(item => serializeQuarkEntry(item, { includeRank: true }));
-
-        for (const item of group.value) {
+        const resource = resources[index];
+        const primaryEntries = mapResourcePageQuarkEntries(group.value.text, resource.title, group.value.sourceUrl);
+        for (const item of primaryEntries) {
             if (!item.url) continue;
             const existing = quarkUrlsByUrl.get(item.url);
             if (existing) {
@@ -2666,6 +2694,36 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             quarkUrlsByUrl.set(item.url, entry);
             quarkUrls.push(entry);
         }
+    }
+
+    // Reconcile later occurrences of globally retained shares even when they
+    // fall beyond another page's 25 new-share sampling limit. Keep the extra
+    // evidence in page snapshots so future partial refreshes can reconcile it.
+    const retainedUrls = new Set(quarkUrlsByUrl.keys());
+    for (const [index, group] of results.entries()) {
+        if (group?.status !== "fulfilled" || typeof group.value?.text !== "string") continue;
+        const resource = resources[index];
+        const extraEntries = new Map();
+        const pageEntries = mapResourcePageQuarkEntries(
+            group.value.text,
+            resource.title,
+            group.value.sourceUrl,
+            retainedUrls,
+            extraEntries
+        );
+        pages[index].quarkUrls = [...pageEntries, ...extraEntries.values()]
+            .map(item => serializeQuarkEntry(item, { includeRank: true }));
+
+        for (const item of extraEntries.values()) {
+            const existing = quarkUrlsByUrl.get(item.url);
+            if (!existing) continue;
+            if (mergeQuarkPassword(existing, item)) {
+                existing.title = item.title;
+                existing.sourceUrl = item.sourceUrl;
+                existing.sourceTitle = item.sourceTitle;
+            }
+        }
+        group.value = null;
     }
 
     return {
