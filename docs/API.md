@@ -375,7 +375,7 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `q` | string | 是 | 搜索关键词 |
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
-| `year` | number | 否 | 已选作品年份。提供时会附加到上游搜索词，并校验 By669 标题及醉都音标题或正文小标题的年份。 |
+| `year` | number | 否 | 已选作品年份。提供时会附加到上游搜索词，并校验 By669 标题年份；醉都音合集的小标题未写年份时，可由帖子标题或该作品小节中的正文年份证明，分享链接中的数字不计为年份。 |
 | `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
@@ -416,7 +416,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 }
 ```
 
-`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。Worker 并行查询三个来源，再轮流从各来源选择最多 12 个详情页，将去重后的分享汇总到 `quarkUrls`。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，筛选标题或正文小标题与查询匹配的夸克资源，并在 `resourceMeta.providers.zuidouyin` 中报告来源状态。
+`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
 
 详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
 

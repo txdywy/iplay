@@ -106,7 +106,7 @@ Successful responses use `poster-v6-cache.local` with a 24-hour TTL. Explicit re
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **Poster Handler** | `_worker.js` | TMDB-only poster lookup by selected ID/type or legacy title/year; explicit refresh and 24-hour success caching. |
 | **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
-| **Resource Handler** | `_worker.js` | Searches By669, WPZY and 醉都音 in parallel, selects up to 12 pages across sources and deduplicates up to 100 Quark links. 醉都音 returns public post content with its search results. Complete results are cached for 12h. |
+| **Resource Handler** | `_worker.js` | Searches By669, WPZY and 醉都音 in parallel, fetches up to 12 forum detail pages across sources and deduplicates up to 100 Quark links. 醉都音 returns public post content with its search results, so its posts take no detail-page slot; a heading-only match contributes just that work's section of a collection post. Complete results are cached for 12h. |
 
 ---
 
