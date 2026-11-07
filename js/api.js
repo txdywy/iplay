@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.28';
+import { RELEASE_VERSION } from './release.js?v=1.0.29';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -18,9 +18,10 @@ const PREFETCH_TTL_MS = 300000;
 const PREFETCH_MAX_ENTRIES = 8;
 const prefetchedResponses = new Map();
 
-function tmdbDetailUrl(id, type) {
+function tmdbDetailUrl(id, type, season) {
     let url = `${API_BASE}/api/tmdb/detail?id=${encodeURIComponent(id)}`;
     if (type !== undefined && type !== null) url += `&type=${encodeURIComponent(type)}`;
+    if (season !== undefined && season !== null) url += `&season=${encodeURIComponent(season)}`;
     return `${url}&${RELEASE_PARAM}`;
 }
 
@@ -171,8 +172,9 @@ export const TmdbAPI = {
         return readPrefetched(url, requestOptions) || fetchWithTimeout(url, requestOptions);
     },
     async getDetail(id, type, options = {}) {
-        const url = tmdbDetailUrl(id, type);
-        return readPrefetched(url, options) || fetchWithTimeout(url, options);
+        const { season, ...requestOptions } = options;
+        const url = tmdbDetailUrl(id, type, season);
+        return readPrefetched(url, requestOptions) || fetchWithTimeout(url, requestOptions);
     }
 };
 
@@ -204,12 +206,17 @@ export const WikiAPI = {
 };
 
 export const ResourceAPI = {
-    async search(query, options = {}, { refresh = false } = {}) {
+    async search(query, options = {}, { refresh = false, identity = null } = {}) {
         const refreshParam = refresh ? '&refresh=1' : '';
+        const identityParams = identity ? [
+            `&id=${encodeURIComponent(identity.mediaId)}`,
+            `&type=${encodeURIComponent(identity.mediaType)}`,
+            `&year=${encodeURIComponent(identity.year || '')}`
+        ].join('') : '';
         // The Worker cache is scoped to its current provider credentials. Always
         // reach it so a browser cannot reuse results from a revoked session.
         const requestOptions = { ...options, cache: 'no-store' };
-        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${refreshParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions, RESOURCE_TIMEOUT_MS);
+        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${identityParams}${refreshParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions, RESOURCE_TIMEOUT_MS);
     }
 };
 

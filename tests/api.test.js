@@ -87,6 +87,20 @@ test('TMDB person API encodes pagination, type filters, and person selection', a
     assert.equal(requestedUrl, `http://localhost:8787/api/tmdb/person?q=A%20B&id=900&offset=36&limit=60&mediaType=movie&v=${RELEASE_VERSION}`);
 });
 
+test('TMDB detail API forwards a requested season to Worker validation', async t => {
+    let requestedUrl = '';
+    t.mock.method(globalThis, 'fetch', async url => {
+        requestedUrl = String(url);
+        return Response.json({ id: 42, mediaType: 'tv', title: 'Friends' });
+    });
+    const { TmdbAPI } = await import('../js/api.js');
+    await TmdbAPI.getDetail(42, 'tv', { season: 2 });
+    const url = new URL(requestedUrl);
+    assert.equal(url.searchParams.get('id'), '42');
+    assert.equal(url.searchParams.get('type'), 'tv');
+    assert.equal(url.searchParams.get('season'), '2');
+});
+
 test('resource and poster retries request fresh Worker data', async t => {
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];
@@ -136,6 +150,22 @@ test('resource requests reach the Worker after provider access changes even with
     assert.deepEqual((await ResourceAPI.search('same version')).quarkUrls, []);
     assert.deepEqual((await ResourceAPI.search('same version', { cache: 'force-cache' })).quarkUrls, []);
     assert.equal(workerRequests, 3, 'each request must consult current Worker access and its isolated internal cache');
+});
+
+test('resource requests carry the selected TMDB identity and release year', async t => {
+    let requestedUrl = '';
+    t.mock.method(globalThis, 'fetch', async url => {
+        requestedUrl = String(url);
+        return Response.json({ resources: [] });
+    });
+    await ResourceAPI.search('Shared Title', {}, {
+        identity: { mediaId: 42, mediaType: 'movie', year: '2024' }
+    });
+    const url = new URL(requestedUrl);
+    assert.equal(url.searchParams.get('q'), 'Shared Title');
+    assert.equal(url.searchParams.get('id'), '42');
+    assert.equal(url.searchParams.get('type'), 'movie');
+    assert.equal(url.searchParams.get('year'), '2024');
 });
 
 test('API client timeout aborts a request after the documented default', async t => {

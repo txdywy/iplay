@@ -80,7 +80,7 @@ export function calculateRecommendationScore(data = {}) {
         baseScore = 45 + (safeRating - 8.0) * 10;
         report.pros.push(`口碑优良 (${safeRating.toFixed(1)})`);
     } else if (safeRating >= 7.0) {
-        baseScore = 35 + (safeRating - 7.0) * 10;
+        baseScore = 28 + (safeRating - 7.0) * 17;
     } else if (safeRating > 0) {
         baseScore = safeRating * 4;
         report.cons.push(`${ratingLabel}较低 (${safeRating.toFixed(1)})`);

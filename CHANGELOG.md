@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.29] - 2026-11-07
+
+### Fixed
+
+- Smooth recommendation scores at the 7.0 rating boundary.
+- Reject Wikipedia summaries when either the description or extracted introduction identifies a different media type.
+- Keep resource searches scoped to the selected TMDB identity and release year, and preserve complete cached results when a refresh is partial.
+- Reject poster matches whose IMDb ID conflicts with the selected work.
+- Validate requested TV seasons against TMDB detail and preserve the season in shared URLs.
+
+### Tests
+
+- Add regressions for score continuity, media-type conflicts, resource identity and refresh caching, poster identity, and requested seasons.
+
 ## [1.0.28] - 2026-11-02
 
 ### Fixed

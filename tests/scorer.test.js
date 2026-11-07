@@ -26,6 +26,12 @@ test('recommendation labels preserve all documented score boundaries', () => {
     assert.equal(getRecommendationLabel(85).label, '天选好剧 🌟');
 });
 
+test('recommendation score changes smoothly across the 7.0 rating boundary', () => {
+    const score = rating => calculateRecommendationScore({ rating, summary: 'A sufficiently detailed summary.' }).score;
+    assert.ok(Math.abs(score(7.0) - score(6.9)) <= 2);
+    assert.ok(score(7.1) > score(7.0));
+});
+
 test('fatal preference matches cap the recommendation below 60', () => {
     const result = calculateRecommendationScore({
         rating: 10,
