@@ -1530,7 +1530,7 @@ test('resource search keeps each provider in its own response collection', async
         const value = String(url);
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({
-                data: [{ id: '1', attributes: { title: '测试资源' } }]
+                data: [{ id: '1', attributes: { title: '测试 资源' } }]
             });
         }
         if (value.startsWith('https://wpzy.org/search.htm')) {
@@ -1872,7 +1872,7 @@ test('resource search short-caches raw results when every detail page fails', as
         const value = String(url);
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({
-                data: [{ id: '1', attributes: { title: '测试资源' } }]
+                data: [{ id: '1', attributes: { title: 'detail-outage 资源' } }]
             });
         }
         if (value.startsWith('https://wpzy.org/search.htm')) {
@@ -2145,7 +2145,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
         const value = String(url);
         if (new URL(value).hostname === 'zuidouyin.com') return Response.json([]);
         if (value.startsWith('https://by669.org/api/discussions')) {
-            return Response.json({ data: [{ id: 'metadata-1', attributes: { title: 'Metadata resource' } }] });
+            return Response.json({ data: [{ id: 'metadata-1', attributes: { title: 'partial-metadata resource' } }] });
         }
         if (value.startsWith('https://wpzy.org/search.htm')) {
             return new Response('temporarily unavailable', { status: 503 });

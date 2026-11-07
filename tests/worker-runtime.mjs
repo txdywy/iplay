@@ -87,7 +87,7 @@ async function upstream(request) {
     if (url.hostname === 'zuidouyin.com') {
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
         assert.equal(url.searchParams.get('rest_route'), '/wp/v2/posts');
-        if (url.searchParams.get('search') === 'Runtime Index 2006') return Response.json([
+        if (url.searchParams.get('search') === 'Runtime Index') return Response.json([
             { id: 42, title: { rendered: 'Runtime Index (2006)' },
                 content: { protected: false, rendered: '<p>https://pan.quark.cn/s/runtime-index?pwd=A1b2</p>' } }
         ]);

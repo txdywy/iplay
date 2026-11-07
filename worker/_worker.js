@@ -283,6 +283,7 @@ const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024;
 const RESOURCE_MAX_DETAIL_PAGES = 12;
 const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
 const RESOURCE_MAX_ZUIDOUYIN_POSTS = 4;
+const ZUIDOUYIN_SEARCH_PAGE_SIZE = 10;
 const RESOURCE_DETAIL_CONCURRENCY = 6;
 const RESOURCE_MAX_PROVIDER_RESULTS = 50;
 const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
@@ -2407,6 +2408,11 @@ function stripHtml(value) {
     return decodeHtmlEntities(value.replace(/<[^<>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
+// Inline formatting such as <strong>斗破</strong>苍穹 is part of one word.
+function stripInlineHtml(value) {
+    return stripHtml(value.replace(/<\/?(?:span|em|b|strong|font|mark|i|u|a|code|small|sup|sub)\b[^<>]*>/gi, ""));
+}
+
 function resolveResourceUrl(rawUrl, baseUrl) {
     if (typeof rawUrl !== "string" || rawUrl.length > RESOURCE_MAX_URL_LENGTH) return "";
     try {
@@ -2471,6 +2477,75 @@ async function fetchAllowedResource(resourceUrl, options = {}, deadline = null, 
     throw new Error("Too many resource redirects");
 }
 
+// Resource titles are free text such as "《狂飙》2023 全39集" or
+// "【美影】GT赛车：极速狂飙（2023）". A substring test accepts other works that
+// merely contain the query ("极速狂飙", "F1：狂飙飞车"), so a match must start
+// and end at a title boundary. Common release prefixes and suffixes count as
+// boundaries; a trailing number other than a year names another work.
+const RESOURCE_TITLE_PREFIX_PATTERN = /(?:电视剧|电影|剧集|连续剧|动漫|动画|番剧|纪录片|综艺|国产剧|国剧|美剧|英剧|韩剧|日剧|泰剧|港剧|台剧|剧|国漫|日漫|美漫|国影|美影|港影|日影|韩影|首发|主演|又名|片名|译名)$/u;
+const RESOURCE_TITLE_SUFFIX_PATTERN = /^(?:第|全|共|电视剧|电影|剧集|连续剧|动漫|动画|国语|粤语|国粤|中字|中英|双语|简繁|字幕|高清|超清|蓝光|原盘|完结|已完结|完整|更新|夸克|百度|迅雷|阿里|网盘|年番|合集|系列|未删减|无删减|导演剪辑|加长|特别篇|番外|主演|又名|豆瓣|评分|季|部|集)/u;
+const RESOURCE_SEPARATOR_PATTERN = /[\p{P}\p{S}\s]/u;
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createResourceTitleMatcher(query) {
+    const normalized = String(query || "").normalize("NFKC").toLowerCase().trim();
+    const chars = Array.from(normalized);
+    if (!chars.some(char => !RESOURCE_SEPARATOR_PATTERN.test(char))) return () => false;
+    // Punctuation and spacing inside the name may differ between sites.
+    let source = "";
+    let pendingSeparator = false;
+    for (const char of chars) {
+        if (RESOURCE_SEPARATOR_PATTERN.test(char)) {
+            pendingSeparator = true;
+            continue;
+        }
+        if (source && pendingSeparator) source += "[\\p{P}\\p{S}\\s]*";
+        pendingSeparator = false;
+        source += escapeRegExp(char);
+    }
+    const pattern = new RegExp(source, "gu");
+    const isWord = char => /[\p{L}\p{N}]/u.test(char || "");
+    return title => {
+        const text = String(title || "").normalize("NFKC").toLowerCase();
+        for (const match of text.matchAll(pattern)) {
+            const before = text.slice(0, match.index);
+            const after = text.slice(match.index + match[0].length);
+            const previous = Array.from(before).at(-1);
+            const next = Array.from(after)[0];
+            const leftOk = !isWord(previous) || (/\p{N}/u.test(previous) && !/\p{N}/u.test(match[0][0]))
+                || RESOURCE_TITLE_PREFIX_PATTERN.test(before);
+            if (!leftOk) continue;
+            if (!isWord(next)) return true;
+            if (/\p{N}/u.test(next)) {
+                // "狂飙2023" carries a year; "流浪地球2" is a sequel.
+                if (/^(?:19|20)\d{2}(?!\d)/u.test(after) || /^(?:4k|8k|1080|2160|720)/u.test(after)) return true;
+                continue;
+            }
+            if (/\p{Script=Han}/u.test(next) && RESOURCE_TITLE_SUFFIX_PATTERN.test(after)) return true;
+        }
+        return false;
+    };
+}
+
+// Movies need the release year or a covered range such as "（2019-2023年）".
+// Series threads usually state the latest season's year, so any year from the
+// first air year onwards, or no year at all, is consistent with the series.
+function resourceTitleHasYear(text, releaseYear, mediaType = null) {
+    if (!releaseYear) return true;
+    const value = String(text || "").replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " ");
+    if (new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u").test(value)) return true;
+    const year = Number(releaseYear);
+    for (const range of value.matchAll(/(?:^|\D)((?:19|20)\d{2})\s*(?:-|–|—|~|～|至|到)\s*((?:19|20)\d{2})(?!\d)/gu)) {
+        if (Number(range[1]) <= year && year <= Number(range[2])) return true;
+    }
+    if (mediaType !== "tv") return false;
+    const years = Array.from(value.matchAll(/(?:^|\D)((?:19|20)\d{2})(?!\d)/gu), match => Number(match[1]));
+    return years.length === 0 || years.some(value => value >= year);
+}
+
 function isQuarkResourceText(text) {
     return Boolean(text && (
         text.includes("夸克")
@@ -2529,7 +2604,10 @@ async function fetchResourcePageText(resourceUrl, referer = `${BY669_BASE}/`, de
     return { text, sourceUrl: safeResourceUrl };
 }
 
-async function fetchBy669Resources(query, deadline = null, releaseYear = "") {
+async function fetchBy669Resources(query, deadline = null, releaseYear = "", mediaType = null) {
+    // By669 full-text search with an appended year takes several seconds
+    // longer and returns the same threads, so filter the year locally.
+    const matchesTitle = createResourceTitleMatcher(query);
     const res = await fetchAllowedResource(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
         headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
     }, deadline);
@@ -2553,7 +2631,7 @@ async function fetchBy669Resources(query, deadline = null, releaseYear = "") {
         if (!resourceId || resourceId.length > 200) continue;
 
         const title = item.attributes.title.trim().slice(0, 300);
-        if (releaseYear && !new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u").test(title)) continue;
+        if (!matchesTitle(title) || !resourceTitleHasYear(title, releaseYear, mediaType)) continue;
 
         resources.push({
             title,
@@ -2566,11 +2644,17 @@ async function fetchBy669Resources(query, deadline = null, releaseYear = "") {
     return resources;
 }
 
-function parseWpzysResources(html, query) {
+// WPZY pads the highlighted keyword with spaces, turning "狂飙营救" into
+// "狂飙 营救". Chinese titles do not separate words, so match without them.
+function collapseHanSpaces(text) {
+    return text.replace(/(\p{Script=Han})\s+(?=\p{Script=Han})/gu, "$1");
+}
+
+function parseWpzysResources(html, query, releaseYear = "", mediaType = null) {
     const resources = [];
     let hasResultItems = false;
     const seenUrls = new Set();
-    const normalizedQuery = normalizeMatchText(query);
+    const matchesTitle = createResourceTitleMatcher(query);
     const itemPattern = /<li\b[^<>]*\bdata-href=["']([^"'<>]*thread-\d+\.htm[^"'<>]*)["'][^<>]*>/gi;
     const itemEndPattern = /<\/li\s*>/gi;
     let match;
@@ -2597,14 +2681,13 @@ function parseWpzysResources(html, query) {
         const titleEndPattern = /<\/a\s*>/gi;
         titleEndPattern.lastIndex = titleMatch ? titleMatch.index + titleMatch[0].length : block.length;
         const titleEnd = titleEndPattern.exec(block);
-        const title = stripHtml(titleEnd
+        const title = stripInlineHtml(titleEnd
             ? block.slice(titleMatch.index + titleMatch[0].length, titleEnd.index)
             : block).slice(0, 300).trim();
-        const normalizedTitle = normalizeMatchText(title);
 
         if (!title) continue;
         hasResultItems = true;
-        if (normalizedQuery && !normalizedTitle.includes(normalizedQuery)) continue;
+        if (!matchesTitle(collapseHanSpaces(title)) || !resourceTitleHasYear(title, releaseYear, mediaType)) continue;
         if (!isQuarkResourceText(block)) continue;
 
         seenUrls.add(url);
@@ -2645,7 +2728,7 @@ function isWpzyEmptySearchPage(html) {
         && /找到约\s*0\s*条结果/.test(stripHtml(html));
 }
 
-async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
+async function fetchWpzysResources(query, deadline = null, wpzySession = null, releaseYear = "", mediaType = null) {
     const res = await fetchAllowedResource(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
         headers: {
             "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
@@ -2669,7 +2752,7 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
         throw createHttpError("WPZY returned a challenge page", 502);
     }
     if (isWpzyLoginPage(html)) throw createResourceAccessError("login_required");
-    const parsed = parseWpzysResources(html, query);
+    const parsed = parseWpzysResources(html, query, releaseYear, mediaType);
     if (!parsed.hasResultItems && !isWpzyEmptySearchPage(html)) {
         throw createHttpError("WPZY returned an unrecognized search page", 502);
     }
@@ -2693,7 +2776,7 @@ function extractZuidouyinSections(html) {
         headings.push({
             level: Number(match[1]),
             start: match.index,
-            heading: stripHtml(html.slice(contentStart, close))
+            heading: stripInlineHtml(html.slice(contentStart, close))
         });
     }
     return headings.map((entry, index) => {
@@ -2702,18 +2785,19 @@ function extractZuidouyinSections(html) {
     });
 }
 
-async function fetchZuidouyinPosts(query, deadline, releaseYear) {
+async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = null) {
     const normalizedQuery = compactSearchText(query);
     if (!normalizedQuery) return [];
-    const yearPattern = releaseYear ? new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u") : null;
     // Share tokens may contain digits that look like a year; only prose counts.
-    const hasYear = value => !yearPattern || yearPattern.test(value.replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " "));
-    const namesWork = value => compactSearchText(value).includes(normalizedQuery);
+    const hasYear = value => resourceTitleHasYear(value, releaseYear, mediaType);
+    const namesWork = createResourceTitleMatcher(query);
 
     const url = new URL(ZUIDOUYIN_BASE);
     url.searchParams.set("rest_route", "/wp/v2/posts");
-    url.searchParams.set("search", releaseYear ? `${query} ${releaseYear}` : query);
-    url.searchParams.set("per_page", RESOURCE_MAX_ZUIDOUYIN_POSTS);
+    // Titles state years as ranges such as "2017-2026", which a year search
+    // term would miss. Fetch a few more posts and verify identity locally.
+    url.searchParams.set("search", query);
+    url.searchParams.set("per_page", ZUIDOUYIN_SEARCH_PAGE_SIZE);
     url.searchParams.set("_fields", "id,title,content");
     const response = await fetchUpstream(url.href, {
         headers: {
@@ -2731,7 +2815,8 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear) {
     if (!Array.isArray(posts)) throw createHttpError("Zuidouyin returned an invalid response", 502);
 
     const matches = new Map();
-    for (const post of posts.slice(0, RESOURCE_MAX_ZUIDOUYIN_POSTS)) {
+    for (const post of posts.slice(0, ZUIDOUYIN_SEARCH_PAGE_SIZE)) {
+        if (matches.size >= RESOURCE_MAX_ZUIDOUYIN_POSTS) break;
         if (!Number.isSafeInteger(post?.id) || post.id < 1 || matches.has(post.id)) continue;
         const rawTitle = post.title?.rendered;
         const content = post.content?.rendered;
@@ -2746,7 +2831,7 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear) {
             ? content
             : extractZuidouyinSections(content)
                 .filter(section => namesWork(section.heading)
-                    && (hasYear(title) || hasYear(section.heading) || hasYear(stripHtml(section.html))))
+                    && hasYear(`${title}\n${section.heading}\n${stripHtml(section.html)}`))
                 .map(section => section.html)
                 .join("\n");
         if (!text || (!isQuarkResourceText(title) && !isQuarkResourceText(text))) continue;
@@ -2946,7 +3031,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v17-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v18-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) return cached;
 
@@ -2962,11 +3047,11 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
 
     try {
         const deadline = createDeadline(RESOURCE_TOTAL_TIMEOUT_MS);
-        const providerQuery = identity.year ? `${query} ${identity.year}` : query;
+        // Search by title only; each provider verifies the year in its titles.
         const [by669Result, wpzysResult, zuidouyinResult] = await Promise.allSettled([
-            fetchBy669Resources(providerQuery, deadline, identity.year),
-            fetchWpzysResources(providerQuery, deadline, wpzySession),
-            fetchZuidouyinPosts(query, deadline, identity.year)
+            fetchBy669Resources(query, deadline, identity.year, identity.mediaType),
+            fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType),
+            fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType)
         ]);
 
         const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });

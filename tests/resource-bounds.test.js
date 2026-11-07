@@ -70,7 +70,7 @@ test('near-limit detail pages cannot amplify aggregate resource responses with g
 
 test('source metadata remains bounded with maximum-length titles and encoded discussion IDs', async t => {
     const discussions = Array.from({ length: 50 }, (_, i) => ({
-        id: `${i}${'界'.repeat(198)}`, attributes: { title: '界'.repeat(10000) }
+        id: `${i}${'界'.repeat(198)}`, attributes: { title: `Bounded ${'界'.repeat(10000)}` }
     }));
     const { search, calls } = setup(t, { pages: [], discussions });
     const { data, text } = await search();

@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.31';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.31';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.31';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.31';
-import { RELEASE_VERSION } from './release.js?v=1.0.31';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.32';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.32';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.32';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.32';
+import { RELEASE_VERSION } from './release.js?v=1.0.32';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.31';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.31';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.31';
+} from './match.js?v=1.0.32';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.32';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.32';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
