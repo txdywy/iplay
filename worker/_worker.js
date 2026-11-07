@@ -2676,11 +2676,39 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
     return parsed.resources;
 }
 
+const ZUIDOUYIN_MAX_HEADINGS = 200;
+const ZUIDOUYIN_MAX_HEADING_LENGTH = 1000;
+
+// Split a WordPress post body into work sections. A section starts at an
+// h2-h6 heading and ends before the next heading of the same or higher level,
+// so a collection post only contributes the shares listed under that work.
+function extractZuidouyinSections(html) {
+    const headings = [];
+    const lower = html.toLowerCase();
+    for (const match of html.matchAll(/<h([2-6])\b[^<>]*>/gi)) {
+        if (headings.length >= ZUIDOUYIN_MAX_HEADINGS) break;
+        const contentStart = match.index + match[0].length;
+        const close = lower.indexOf(`</h${match[1]}`, contentStart);
+        if (close < 0 || close - contentStart > ZUIDOUYIN_MAX_HEADING_LENGTH) continue;
+        headings.push({
+            level: Number(match[1]),
+            start: match.index,
+            heading: stripHtml(html.slice(contentStart, close))
+        });
+    }
+    return headings.map((entry, index) => {
+        const next = headings.slice(index + 1).find(other => other.level <= entry.level);
+        return { heading: entry.heading, html: html.slice(entry.start, next ? next.start : html.length) };
+    });
+}
+
 async function fetchZuidouyinPosts(query, deadline, releaseYear) {
     const normalizedQuery = compactSearchText(query);
     if (!normalizedQuery) return [];
     const yearPattern = releaseYear ? new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u") : null;
-    const matchesWork = title => (!yearPattern || yearPattern.test(title)) && compactSearchText(title).includes(normalizedQuery);
+    // Share tokens may contain digits that look like a year; only prose counts.
+    const hasYear = value => !yearPattern || yearPattern.test(value.replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " "));
+    const namesWork = value => compactSearchText(value).includes(normalizedQuery);
 
     const url = new URL(ZUIDOUYIN_BASE);
     url.searchParams.set("rest_route", "/wp/v2/posts");
@@ -2688,7 +2716,11 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear) {
     url.searchParams.set("per_page", RESOURCE_MAX_ZUIDOUYIN_POSTS);
     url.searchParams.set("_fields", "id,title,content");
     const response = await fetchUpstream(url.href, {
-        headers: { Accept: "application/json" },
+        headers: {
+            "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
+            "Accept": "application/json",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
+        },
         redirect: "manual"
     }, remainingDeadlineMs(deadline, RESOURCE_TIMEOUT_MS));
     if (!response.ok) {
@@ -2702,16 +2734,22 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear) {
     for (const post of posts.slice(0, RESOURCE_MAX_ZUIDOUYIN_POSTS)) {
         if (!Number.isSafeInteger(post?.id) || post.id < 1 || matches.has(post.id)) continue;
         const rawTitle = post.title?.rendered;
-        const text = post.content?.rendered;
-        if (typeof rawTitle !== "string" || typeof text !== "string" || post.content.protected !== false) continue;
+        const content = post.content?.rendered;
+        if (typeof rawTitle !== "string" || typeof content !== "string" || post.content.protected !== false) continue;
         const title = stripHtml(rawTitle).slice(0, 300).trim();
-        if (!title || !text.trim()) continue;
-        // WordPress also searches article bodies. Only a post title or a
+        if (!title || !content.trim()) continue;
+        // WordPress also searches article bodies. Only the post title or a
         // work heading identifies a match, including alternate-language names.
-        const titleMatches = matchesWork(title)
-            || Array.from(text.matchAll(/<h[2-6]\b[^<>]*>([^<>]*)<\/h[2-6]\s*>/gi), match => match[1])
-                .some(heading => matchesWork(decodeHtmlEntities(heading)));
-        if (!titleMatches || (!isQuarkResourceText(title) && !isQuarkResourceText(text))) continue;
+        // Collection headings rarely repeat the year; accept it from the
+        // post title, the heading or that work's own section.
+        const text = namesWork(title) && hasYear(title)
+            ? content
+            : extractZuidouyinSections(content)
+                .filter(section => namesWork(section.heading)
+                    && (hasYear(title) || hasYear(section.heading) || hasYear(stripHtml(section.html))))
+                .map(section => section.html)
+                .join("\n");
+        if (!text || (!isQuarkResourceText(title) && !isQuarkResourceText(text))) continue;
         matches.set(post.id, {
             title, url: `${ZUIDOUYIN_BASE}/?p=${post.id}`, isQuark: true, source: "zuidouyin", text
         });
@@ -2722,24 +2760,35 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear) {
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
-    const maxPages = Math.min(resources.length, RESOURCE_MAX_DETAIL_PAGES);
+    // The caller bounds fetched pages; prefetched posts are already bounded.
+    const maxPages = Math.min(resources.length, RESOURCE_MAX_DETAIL_PAGES + RESOURCE_MAX_ZUIDOUYIN_POSTS);
     let failedPages = 0;
     let restrictedPages = 0;
     let loginRequiredPages = 0;
     let attemptedPages = 0;
     const pages = resources.map(entry => ({ url: entry.url, source: entry.source, status: "unattempted" }));
     const results = [];
-    let nextIndex = 0;
+    const fetchIndexes = [];
+    for (let index = 0; index < maxPages; index++) {
+        const entry = resources[index];
+        // A post body returned with the search result is evidence already in
+        // hand; an exhausted deadline must not discard it.
+        if (!isPrefetchedResource(entry)) {
+            fetchIndexes.push(index);
+            continue;
+        }
+        attemptedPages++;
+        results[index] = { status: "fulfilled", value: { text: entry.text, sourceUrl: entry.url } };
+    }
+    let nextFetch = 0;
     async function scanPages() {
-        while (nextIndex < maxPages && !isDeadlineExpired(deadline)) {
-            const index = nextIndex++;
+        while (nextFetch < fetchIndexes.length && !isDeadlineExpired(deadline)) {
+            const index = fetchIndexes[nextFetch++];
             const entry = resources[index];
             attemptedPages++;
             try {
-                const value = entry.source === "zuidouyin"
-                    ? { text: entry.text, sourceUrl: entry.url }
-                    : await fetchResourcePageText(entry.url,
-                        entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
+                const value = await fetchResourcePageText(entry.url,
+                    entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
                 results[index] = { status: "fulfilled", value };
             } catch (reason) {
                 results[index] = { status: "rejected", reason };
@@ -2748,7 +2797,7 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
     }
     // Scan the entire fixed page selection before enforcing the response cap.
     // This keeps duplicate-password conflict checks independent of response timing.
-    await Promise.all(Array.from({ length: Math.min(RESOURCE_DETAIL_CONCURRENCY, maxPages) }, scanPages));
+    await Promise.all(Array.from({ length: Math.min(RESOURCE_DETAIL_CONCURRENCY, fetchIndexes.length) }, scanPages));
 
     for (const [index, group] of results.entries()) {
         if (!group) continue;
@@ -2833,13 +2882,23 @@ function serializeQuarkEntry({ title, url, password, sourceUrl, sourceTitle, _pa
     };
 }
 
+// Entries that already carry their post body cost no request, so only pages
+// that must be fetched count toward the detail-page budget. Interleaving keeps
+// every provider represented before the response-wide share cap applies.
+const isPrefetchedResource = entry => typeof entry?.text === "string";
+
 function selectResourceDetails(...groups) {
     const selected = [];
+    let fetchedPages = 0;
     for (let index = 0; groups.some(group => index < group.length); index++) {
         for (const group of groups) {
             if (index >= group.length) continue;
-            selected.push(group[index]);
-            if (selected.length === RESOURCE_MAX_DETAIL_PAGES) return selected;
+            const entry = group[index];
+            if (!isPrefetchedResource(entry)) {
+                if (fetchedPages >= RESOURCE_MAX_DETAIL_PAGES) continue;
+                fetchedPages += 1;
+            }
+            selected.push(entry);
         }
     }
     return selected;

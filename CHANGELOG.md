@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.31] - 2026-11-07
+
+### Fixed
+
+- Only collect Quark shares listed under the matched work heading in 醉都音 collection posts, so other works in the same post are no longer attributed to the search.
+- Match 醉都音 work headings that contain inline markup such as `<strong>`.
+- Accept a requested release year from the post title or the matched work section when a collection heading omits it; share tokens no longer count as year evidence.
+- Stop 醉都音 posts, whose bodies arrive with the search response, from consuming the 12 fetched detail-page slots, and keep their evidence when the scan deadline expires.
+- Send the same browser User-Agent to 醉都音 as to the other resource providers.
+
 ## [1.0.30] - 2026-11-07
 
 ### Added

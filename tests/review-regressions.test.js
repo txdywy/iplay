@@ -1030,3 +1030,75 @@ test('separate Worker execution contexts never share credentials or request-scop
     const data = await Promise.all(responses.map(response => response.json()));
     assert.deepEqual(data.map(item => item.results[0].id), [41, 42]);
 });
+
+function indexPost(id, title, rendered) {
+    return { id, title: { rendered: title }, content: { protected: false, rendered } };
+}
+
+async function searchPublicIndex(t, posts, path, { by669 = [], onIndex = null } = {}) {
+    const detailUrls = [];
+    const ctx = mockUpstreams(t, async (input, options) => {
+        const url = new URL(input);
+        if (url.hostname === 'zuidouyin.com') {
+            onIndex?.(url, options);
+            return Response.json(posts);
+        }
+        if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        if (url.pathname === '/api/discussions') return Response.json({ data: by669 });
+        detailUrls.push(url.href);
+        return new Response(`夸克 https://pan.quark.cn/s/forum-${url.pathname.split('/').at(-1)}`);
+    });
+    const response = await worker.fetch(request(path), {}, ctx);
+    assert.equal(response.status, 200);
+    return { data: await response.json(), detailUrls };
+}
+
+test('a public index collection only contributes shares listed under the matched work heading', async t => {
+    const { data } = await searchPublicIndex(t, [
+        indexPost(1, '2024 国漫合集 夸克', [
+            '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/doupo-main</p>',
+            '<h3>特别篇</h3><p>https://pan.quark.cn/s/doupo-special</p>',
+            '<h2>完美世界</h2><p>夸克 https://pan.quark.cn/s/perfect-world</p>'
+        ].join('')),
+        indexPost(2, '动画合集二', '<h3 class="wp-block-heading"><strong>斗破</strong>苍穹</h3><p>夸克 https://pan.quark.cn/s/doupo-nested</p><h3>其他</h3><p>https://pan.quark.cn/s/other</p>'),
+        indexPost(3, '无关合集', '<h2>其他作品</h2><p>斗破苍穹 夸克 https://pan.quark.cn/s/body-mention</p>')
+    ], `/api/resource?q=${encodeURIComponent('斗破苍穹')}`);
+    assert.deepEqual(data.zuidouyinResources.map(item => item.url), ['https://zuidouyin.com/?p=1', 'https://zuidouyin.com/?p=2']);
+    assert.deepEqual(data.quarkUrls.map(item => item.url), [
+        'https://pan.quark.cn/s/doupo-main',
+        'https://pan.quark.cn/s/doupo-special',
+        'https://pan.quark.cn/s/doupo-nested'
+    ]);
+});
+
+test('public index work headings accept a year from the post title or their own section only', async t => {
+    const { data } = await searchPublicIndex(t, [
+        indexPost(1, '2018 动画合集', '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/title-year</p>'),
+        indexPost(2, '动画合集', '<h2>斗破苍穹</h2><p>2018年首播 夸克 https://pan.quark.cn/s/section-year</p><h2>其他</h2><p>2018</p>'),
+        indexPost(3, '动画合集三', '<h2>斗破苍穹</h2><p>2017年首播 夸克 https://pan.quark.cn/s/wrong-year</p><h2>其他 2018</h2>'),
+        indexPost(4, '动画合集四', '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/x2018y</p>')
+    ], `/api/resource?q=${encodeURIComponent('斗破苍穹')}&id=1&type=tv&year=2018`);
+    assert.deepEqual(data.quarkUrls.map(item => item.url), [
+        'https://pan.quark.cn/s/title-year',
+        'https://pan.quark.cn/s/section-year'
+    ]);
+});
+
+test('prefetched public index posts do not consume forum detail-page slots', async t => {
+    let indexHeaders = null;
+    const by669 = Array.from({ length: 14 }, (_, id) => ({ id: `slot-${id}`, attributes: { title: `Slot Title 夸克 ${id}` } }));
+    const posts = Array.from({ length: 4 }, (_, index) =>
+        indexPost(index + 1, `Slot Title 夸克 ${index}`, `https://pan.quark.cn/s/index-${index}`));
+    const { data, detailUrls } = await searchPublicIndex(t, posts, '/api/resource?q=Slot%20Title', {
+        by669, onIndex: (_url, options) => { indexHeaders = new globalThis.Headers(options.headers); }
+    });
+    assert.equal(detailUrls.length, 12);
+    assert.match(indexHeaders.get('User-Agent'), /Mozilla\/5\.0/);
+    assert.equal(data.resourceMeta.attemptedPages, 16);
+    assert.equal(data.resourceMeta.pages.filter(page => page.status === 'ok').length, 16);
+    assert.equal(data.resourceMeta.pages.filter(page => page.status === 'unattempted').length, 2);
+    assert.equal(data.partial, false);
+    for (let index = 0; index < 4; index++) {
+        assert.ok(data.quarkUrls.some(item => item.url === `https://pan.quark.cn/s/index-${index}`));
+    }
+});
