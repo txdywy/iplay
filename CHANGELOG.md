@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.30] - 2026-11-07
+
+### Added
+
+- Search the 醉都音 public film and TV index for Quark shares and show the original posts alongside By669 resources.
+- Use the `动画片` and `动画版` suffixes to find animated works with the same title as live-action adaptations.
+
 ## [1.0.29] - 2026-11-07
 
 ### Fixed

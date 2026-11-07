@@ -20,6 +20,7 @@ try {
         globalThis.caches = { default: { match: async () => null, put: async () => {} } };
         globalThis.fetch = async input => {
             const url = new URL(input);
+            if (url.hostname === 'zuidouyin.com') return Response.json([]);
             if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
             if (url.pathname === '/api/discussions') return Response.json({ data: Array.from({length:12}, (_,i)=>({id:String(i+1),attributes:{title:'Performance Movie 夸克'}})) });
             const page = Number(url.pathname.split('/').at(-1));

@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.29';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.29';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.29';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.29';
-import { RELEASE_VERSION } from './release.js?v=1.0.29';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.30';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.30';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.30';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.30';
+import { RELEASE_VERSION } from './release.js?v=1.0.30';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.29';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.29';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.29';
+} from './match.js?v=1.0.30';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.30';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.30';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1113,22 +1113,21 @@ function hideResourceNotice() {
     els.resourceNotice.classList.add('hidden');
 }
 
-function renderResourceNotice(resourceResult, onRetry) {
+function renderResourceNotice(resourceResult, totalSources, onRetry) {
     if (!els.resourceNotice) return;
     clearNode(els.resourceNotice);
 
     const meta = resourceResult?.resourceMeta || {};
     const providers = meta.providers || {};
+    const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音' };
     const failedProviders = Object.entries(providers)
         .filter(([, status]) => status === 'failed')
-        .map(([provider]) => provider === 'by669' ? '资源页' : provider === 'wpzys' ? 'WPZY' : provider);
+        .map(([provider]) => providerLabels[provider] || provider);
     const failedPages = Number(meta.failedPages) || 0;
     const restrictedPages = Number(meta.restrictedPages) || 0;
     const loginRequiredPages = Number(meta.loginRequiredPages) || 0;
     const loginRequired = meta.providerIssues?.wpzys === 'login_required' || loginRequiredPages > 0;
     const unavailablePages = Math.max(0, failedPages - restrictedPages - loginRequiredPages);
-    const totalSources = (Array.isArray(resourceResult?.resources) ? resourceResult.resources.length : 0)
-        + (Array.isArray(resourceResult?.wpzysResources) ? resourceResult.wpzysResources.length : 0);
     const attemptedPages = Number(meta.attemptedPages);
     const unattemptedSources = Number.isFinite(attemptedPages) ? Math.max(0, totalSources - attemptedPages) : 0;
     const notes = [];
@@ -1969,17 +1968,17 @@ function createResourceRetry(candidate, searchId, searchOptions, loadId) {
 }
 
 function renderResourceResult(resourceResult, onRetry) {
-    const resources = Array.isArray(resourceResult.resources) ? resourceResult.resources : [];
-    const wpzysResources = Array.isArray(resourceResult.wpzysResources) ? resourceResult.wpzysResources : [];
+    const resources = [...resourceResult.resources, ...resourceResult.zuidouyinResources];
+    const wpzysResources = resourceResult.wpzysResources;
+    const totalSources = resources.length + wpzysResources.length;
     renderResourceList(resources);
     renderWpzysResourceList(wpzysResources, resourceResult.resourceMeta);
     renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
     if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
         setResourceStatus('资源扫描部分完成，已保留可用结果');
-        renderResourceNotice(resourceResult, onRetry);
+        renderResourceNotice(resourceResult, totalSources, onRetry);
     } else {
         hideResourceNotice();
-        const totalSources = resources.length + wpzysResources.length;
         const attemptedPages = Number(resourceResult.resourceMeta?.attemptedPages);
         if (Number.isFinite(attemptedPages) && attemptedPages < totalSources) {
             setResourceStatus(`已扫描 ${attemptedPages}/${totalSources} 个来源，未扫描的帖子仍可直接打开`);

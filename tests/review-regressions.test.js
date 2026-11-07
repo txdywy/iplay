@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
+import { mergeResourceState } from '../js/resources.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 import { tmdbDetail } from './fixtures/tmdb.js';
 
@@ -464,6 +465,13 @@ test('resource searches scope release-year results and cached data to the select
             assert.equal(url.searchParams.get('keyword'), 'Shared Work 2024');
             return new Response([1998, 2024].map(year => `<li data-href="./thread-${year}.htm"><a href="./thread-${year}.htm">Shared Work ${year} 夸克</a></li>`).join(''));
         }
+        if (url.hostname === 'zuidouyin.com') {
+            assert.equal(url.searchParams.get('search'), 'Shared Work 2024');
+            return Response.json([1998, 2024].map(year => ({
+                id: year, title: { rendered: '公用片名 夸克' },
+                content: { protected: false, rendered: `<h4>Shared Work (${year})</h4><p>https://pan.quark.cn/s/index-${year}</p>` }
+            })));
+        }
         if (url.pathname === '/d/2024' || url.pathname === '/thread-2024.htm') {
             return new Response('https://pan.quark.cn/s/shared-2024');
         }
@@ -486,6 +494,7 @@ test('resource searches scope release-year results and cached data to the select
     await Promise.all(ctx.writes);
     assert.deepEqual(first.resources.map(item => item.title), ['Shared Work 2024 夸克']);
     assert.deepEqual(first.wpzysResources.map(item => item.title), ['Shared Work 2024 夸克']);
+    assert.deepEqual(first.zuidouyinResources.map(item => item.url), ['https://zuidouyin.com/?p=2024']);
     assert.deepEqual(secondIdentity.resources, first.resources);
     assert.equal(cache.size, 2, 'distinct selected TMDB IDs receive distinct cache entries');
 });
@@ -494,6 +503,7 @@ test('a partial resource refresh preserves a previously complete Worker cache en
     let providerUnavailable = false;
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
+        if (url.hostname === 'zuidouyin.com') return Response.json([]);
         if (url.hostname === 'by669.org' && url.pathname === '/api/discussions') {
             if (providerUnavailable) return new Response('Unavailable', { status: 503 });
             return Response.json({ data: [{ id: '42', attributes: { title: 'Cached Work 夸克' } }] });
@@ -892,6 +902,7 @@ test('resource metadata marks all unselected search pages as unattempted', async
     let detailCalls = 0;
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
+        if (url.hostname === 'zuidouyin.com') return Response.json([]);
         if (url.pathname === '/api/discussions') return Response.json({ data: Array.from({ length: 15 }, (_, id) => ({
             id: `limited-${id}`, attributes: { title: `Limited 夸克 ${id}` }
         })) });
@@ -906,6 +917,83 @@ test('resource metadata marks all unselected search pages as unattempted', async
     assert.equal(data.resourceMeta.pages.filter(page => page.status === 'ok').length, 12);
     assert.equal(data.resourceMeta.pages.filter(page => page.status === 'unattempted').length, 3);
     assert.ok(data.resourceMeta.pages.filter(page => page.status === 'unattempted').every(page => !('quarkUrls' in page)));
+});
+
+test('the public index returns attributed Quark evidence when neither forum has matches', async t => {
+    const query = '樱兰高校男公关部';
+    const title = `《${query}》（2006 年动画及真人版合集）[夸克网盘]`;
+    const share = 'https://pan.quark.cn/s/public-index-anime';
+    const sourceUrl = 'https://zuidouyin.com/?p=42';
+    let indexRequests = 0;
+    let indexAvailable = true;
+    const ctx = mockUpstreams(t, async (input, options) => {
+        const url = new URL(input);
+        if (url.hostname === 'by669.org') return Response.json({ data: [] });
+        if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        assert.equal(url.origin, 'https://zuidouyin.com');
+        assert.equal(url.pathname, '/');
+        assert.equal(url.searchParams.get('rest_route'), '/wp/v2/posts');
+        assert.equal(url.searchParams.get('search'), `${query} 2006`);
+        assert.equal(url.searchParams.get('per_page'), '4');
+        assert.equal(options.redirect, 'manual');
+        assert.equal(new globalThis.Headers(options.headers).get('Cookie'), null);
+        indexRequests++;
+        if (!indexAvailable) return new Response(null, { status: 302, headers: { Location: 'https://untrusted.example/redirect' } });
+        return Response.json([
+            { id: 42, link: 'https://untrusted.example/redirect', title: { rendered: title },
+                content: { protected: false, rendered: `<p><a href="${share}?pwd=A1b2">合集</a></p>` } },
+            { id: 43, title: { rendered: '其他作品 [夸克网盘]' },
+                content: { protected: false, rendered: `<p>提到${query} https://pan.quark.cn/s/unrelated</p>` } },
+            { id: 44, title: { rendered: title },
+                content: { protected: true, rendered: '<p>https://pan.quark.cn/s/locked</p>' } }
+        ]);
+    });
+    const env = { WPZY_COOKIE: 'bbs_token=fixture-cookie' };
+    const url = `/api/resource?q=${encodeURIComponent(query)}&id=1043&type=tv&year=2006`;
+    const response = await worker.fetch(request(url), env, ctx);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.equal(indexRequests, 1, 'post content should arrive in the same request as search');
+    assert.equal(data.partial, false);
+    assert.deepEqual(data.resources, []);
+    assert.deepEqual(data.wpzysResources, []);
+    assert.deepEqual(data.zuidouyinResources, [{ title, url: sourceUrl, isQuark: true, source: 'zuidouyin' }]);
+    const evidence = { url: share, title, password: 'A1b2', sourceUrl, sourceTitle: title };
+    assert.deepEqual(data.quarkUrls, [evidence]);
+    assert.deepEqual(data.resourceMeta.pages, [
+        { url: sourceUrl, source: 'zuidouyin', status: 'ok', quarkUrls: [{ ...evidence, passwordRank: 2 }] }
+    ]);
+    indexAvailable = false;
+    const degraded = await worker.fetch(request(`${url}&refresh=1`), env, ctx);
+    assert.equal(degraded.status, 200);
+    assert.equal(indexRequests, 2, 'the supplemental source is queried once per scan');
+    const partial = await degraded.json();
+    assert.deepEqual(partial.resourceMeta.providers, { by669: 'ok', wpzys: 'ok', zuidouyin: 'failed' });
+    assert.equal(partial.partial, true);
+    assert.deepEqual(partial.zuidouyinResources, []);
+});
+
+test('an index share within the Worker result cap stays visible after frontend deduplication', async t => {
+    const share = 'https://pan.quark.cn/s/rare-index-share';
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        if (url.hostname === 'zuidouyin.com') return Response.json([
+            { id: 42, title: { rendered: 'Crowded Title' }, content: { protected: false, rendered: share } }
+        ]);
+        if (url.pathname === '/api/discussions') return Response.json({
+            data: Array.from({ length: 4 }, (_, id) => ({ id, attributes: { title: 'Crowded Title' } }))
+        });
+        const page = url.pathname.split('/').at(-1);
+        return new Response(Array.from({ length: 25 }, (_, i) => `https://pan.quark.cn/s/page-${page}-${i}`).join('\n'));
+    });
+    const response = await worker.fetch(request('/api/resource?q=Crowded%20Title'), {}, ctx);
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.quarkUrls.length, 100);
+    const displayed = mergeResourceState(null, result).result.quarkUrls;
+    assert.deepEqual(displayed.map(item => item.url), result.quarkUrls.map(item => item.url));
+    assert.ok(displayed.some(item => item.url === share));
 });
 
 test('Wiki summaries reject a different remake year stated only in the introduction', async t => {

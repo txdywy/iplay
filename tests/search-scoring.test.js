@@ -139,3 +139,27 @@ test('a base-title match still preserves an explicit season request', async t =>
     assert.equal(data.searchMeta.mediaType, 'tv');
     assert.deepEqual(data.results.map(item => item.id), [1668]);
 });
+
+test('an animation suffix distinguishes the animated work from a same-title live-action series', async t => {
+    const name = '樱兰高校男公关部';
+    const calls = setup(t, async url => Response.json({ results: url.searchParams.get('query') === name
+        ? [
+            { id: 1, media_type: 'tv', name, first_air_date: '2011-07-22', genre_ids: [18], vote_count: 2000 },
+            { id: 2, media_type: 'tv', name, first_air_date: '2006-04-05', genre_ids: [16, 35] }
+        ] : [] }));
+    const data = await search(`${name} 动画片`);
+    assert.ok(calls.some(url => url.searchParams.get('query') === name));
+    assert.equal(data.searchMeta.normalizedQuery, name);
+    assert.deepEqual(data.results.map(item => [item.id, item.year]), [[2, '2006']]);
+});
+
+test('a literal title ending in an animation suffix takes priority over the genre hint', async t => {
+    const title = '我的第一部动画片';
+    setup(t, async url => Response.json({ results: url.searchParams.get('query') === title
+        ? [{ id: 1, media_type: 'movie', title, release_date: '2020-01-01', genre_ids: [99] }] : [] }));
+    for (const query of [title, `${title} 2020`]) {
+        const data = await search(query);
+        assert.equal(data.searchMeta.normalizedQuery, title);
+        assert.deepEqual(data.results.map(item => item.id), [1]);
+    }
+});
