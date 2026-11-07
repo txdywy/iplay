@@ -120,10 +120,10 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 |--------|------|--------------|-------------|
 | `GET` | `/api/tmdb/search` | `q` (string) | Search TMDB for movies and TV shows. Normalizes title intent, ranks by match confidence, and uses bounded fallback queries. |
 | `GET` | `/api/tmdb/person` | `q` (string), `id`, `offset`, `limit`, `mediaType` | Match an actor name or load a selected person; returns paginated movie / TV cast credits, counts, and match metadata. |
-| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; retries the alternate valid type only after a `404`. |
+| `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv), optional `season` (1–99, TV only) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; confirms a requested season exists; retries the alternate valid type only after a `404` for untyped requests. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
-| `GET` | `/api/resource` | `q` (string) | Search By669 and WPZY, then extract and deduplicate Quark netdisk URLs. |
+| `GET` | `/api/resource` | `q` (string), optional paired `id` / `type`, optional `year` | Search By669 and WPZY, then extract and deduplicate Quark netdisk URLs; scope results and cache by selected work identity. |
 | `GET` | `/api/poster` | `title`, optional `year`, paired `id` / `type`, `refresh=1` | TMDB poster lookup. |
 | `GET` | `/api/wiki/zh` | `q` (string), optional `type` / `year` | Related Chinese Wikipedia summary with media/year validation. |
 

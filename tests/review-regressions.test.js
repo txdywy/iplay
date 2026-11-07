@@ -57,6 +57,29 @@ test('a non-JSON TMDB 404 preserves explicit identity and legacy type recovery',
     assert.deepEqual(calls, ['/3/movie/42', '/3/tv/42']);
 });
 
+test('TMDB details confirm requested seasons and reject absent or invalid seasons', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        assert.equal(url.pathname, '/3/tv/42');
+        return Response.json(tmdbDetail({
+            id: 42,
+            name: 'Friends',
+            number_of_seasons: 2,
+            seasons: [
+                { season_number: 1, episode_count: 24 },
+                { season_number: 2, episode_count: 24 }
+            ]
+        }));
+    });
+    const existing = await worker.fetch(request('/api/tmdb/detail?id=42&type=tv&season=2'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(existing.status, 200);
+    const absent = await worker.fetch(request('/api/tmdb/detail?id=42&type=tv&season=99'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(absent.status, 404);
+    assert.match((await absent.json()).error, /第 99 季/);
+    const invalid = await worker.fetch(request('/api/tmdb/detail?id=42&type=tv&season=100'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(invalid.status, 400);
+});
+
 test('TMDB redirects never forward bearer credentials or trust redirected payloads', async t => {
     const forwarded = [];
     let discarded = false;
@@ -351,6 +374,22 @@ test('selected poster identities never fall back to a same-title movie when the 
     assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
+test('poster searches reject an IMDb ID that conflicts with the selected TMDB identity', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/3/tv/101') return Response.json(tmdbDetail({
+            id: 101,
+            name: 'Shared Title',
+            poster_path: '/series.jpg',
+            external_ids: { imdb_id: 'tt1111111' }
+        }));
+        throw new Error(`Unexpected upstream URL ${url.pathname}`);
+    });
+    const response = await worker.fetch(request('/api/poster?title=Shared%20Title&id=101&type=tv&imdb=tt2222222'), { TMDB_API_KEY: 'test' }, ctx);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: 'No poster found' });
+});
+
 test('even an explicit IMDb ID cannot relabel a different TMDB work as the selection', async t => {
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
@@ -409,6 +448,85 @@ test('HTTP 200 resource detail maintenance pages stay partial and recoverable fo
         assert.deepEqual(data.quarkUrls, []);
         assert.equal(response.headers.get('cache-control'), 'no-store');
     }
+});
+
+test('resource searches scope release-year results and cached data to the selected TMDB identity', async t => {
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.hostname === 'by669.org' && url.pathname === '/api/discussions') {
+            const query = url.searchParams.get('filter[q]');
+            assert.equal(query, 'Shared Work 2024');
+            return Response.json({ data: [1998, 2024].map(year => ({
+                id: String(year), attributes: { title: `Shared Work ${year} 夸克` }
+            })) });
+        }
+        if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') {
+            assert.equal(url.searchParams.get('keyword'), 'Shared Work 2024');
+            return new Response([1998, 2024].map(year => `<li data-href="./thread-${year}.htm"><a href="./thread-${year}.htm">Shared Work ${year} 夸克</a></li>`).join(''));
+        }
+        if (url.pathname === '/d/2024' || url.pathname === '/thread-2024.htm') {
+            return new Response('https://pan.quark.cn/s/shared-2024');
+        }
+        throw new Error(`Unexpected upstream URL ${url}`);
+    });
+    const cache = new Map();
+    globalThis.caches.default = {
+        async match(request) { return cache.get(request.url)?.clone() || null; },
+        async put(request, response) { cache.set(request.url, response.clone()); }
+    };
+
+    async function search(id) {
+        const response = await worker.fetch(request(`/api/resource?q=Shared%20Work&id=${id}&type=movie&year=2024`), {}, ctx);
+        return response.json();
+    }
+
+    const first = await search(42);
+    await Promise.all(ctx.writes);
+    const secondIdentity = await search(43);
+    await Promise.all(ctx.writes);
+    assert.deepEqual(first.resources.map(item => item.title), ['Shared Work 2024 夸克']);
+    assert.deepEqual(first.wpzysResources.map(item => item.title), ['Shared Work 2024 夸克']);
+    assert.deepEqual(secondIdentity.resources, first.resources);
+    assert.equal(cache.size, 2, 'distinct selected TMDB IDs receive distinct cache entries');
+});
+
+test('a partial resource refresh preserves a previously complete Worker cache entry', async t => {
+    let providerUnavailable = false;
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.hostname === 'by669.org' && url.pathname === '/api/discussions') {
+            if (providerUnavailable) return new Response('Unavailable', { status: 503 });
+            return Response.json({ data: [{ id: '42', attributes: { title: 'Cached Work 夸克' } }] });
+        }
+        if (url.hostname === 'by669.org' && url.pathname === '/d/42') {
+            return new Response('https://pan.quark.cn/s/cached-work');
+        }
+        if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        throw new Error(`Unexpected upstream URL ${url}`);
+    });
+    const cache = new Map();
+    globalThis.caches.default = {
+        async match(request) { return cache.get(request.url)?.clone() || null; },
+        async put(request, response) { cache.set(request.url, response.clone()); }
+    };
+
+    async function search(refresh = false) {
+        const suffix = refresh ? '&refresh=1' : '';
+        const response = await worker.fetch(request(`/api/resource?q=Cached%20Work${suffix}`), {}, ctx);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        return response.json();
+    }
+
+    const complete = await search();
+    await Promise.all(ctx.writes);
+    providerUnavailable = true;
+    const refreshed = await search(true);
+    const subsequent = await search();
+    assert.equal(complete.partial, false);
+    assert.equal(refreshed.partial, true, 'refresh should report a partial scan so the UI can show its recovery state');
+    assert.equal(subsequent.partial, false, 'the complete cached result remains available to later requests');
+    assert.notDeepEqual(refreshed.quarkUrls, complete.quarkUrls, 'partial refresh results should describe the current scan');
+    assert.deepEqual(subsequent.quarkUrls, complete.quarkUrls);
 });
 
 test('Douban streaming text chunks preserve full ratings, votes and genres', async t => {
@@ -684,6 +802,19 @@ test('Wiki lead classification ignores the article title when no description is 
         : Response.json({ query: { search: [{ title }] } }));
     const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent(title)}&type=movie&year=2024`), {}, ctx);
     assert.equal(response.status, 200);
+});
+
+test('Wiki rejects conflicting media types between the description and introduction', async t => {
+    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
+        ? Response.json({
+            title: 'Shared Work',
+            description: '2024年电影',
+            extract: '《Shared Work》是一部2024年电视剧。'
+        })
+        : Response.json({ query: { search: [{ title: 'Shared Work' }] } }));
+    const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=movie&year=2024'), {}, ctx);
+    assert.equal(response.status, 404);
+    assert.equal(ctx.writes.length, 0);
 });
 
 test('Wiki summaries cannot override an explicit non-media title suffix with a contradictory description', async t => {

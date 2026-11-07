@@ -210,7 +210,7 @@ GET /api/tmdb/person?q={actorName}
 上游响应必须包含请求的 `external_ids` 对象以及 `credits.cast`、`credits.crew` 数组。缺失或类型错误返回 `502`，不缓存；已有残缺缓存会被删除并重新请求。合法空数组和没有 IMDb ID 的对象仍受支持。
 
 ```
-GET /api/tmdb/detail?id={id}&type={type}
+GET /api/tmdb/detail?id={id}&type={type}&season={season}
 ```
 
 **Query Parameters：**
@@ -219,6 +219,7 @@ GET /api/tmdb/detail?id={id}&type={type}
 |------|------|------|------|
 | `id` | number | 是 | TMDB 媒体 ID |
 | `type` | string | 否 | 指定类型：`movie` 或 `tv`；指定后不会跨类型回退（两种 ID 属于不同命名空间）；未指定时才尝试两种类型 |
+| `season` | number | 否 | 请求指定的电视剧季号（1–99）；只适用于 `type=tv`。季号不存在时返回 `404`，参数无效或用于电影时返回 `400` |
 
 **Example Request：**
 
@@ -362,7 +363,7 @@ curl "https://iplayw.hackx64.eu.org/api/douban/detail?id=26266893"
 搜索影视资源的夸克网盘分享链接。
 
 ```
-GET /api/resource?q={query}
+GET /api/resource?q={query}&id={id}&type={type}&year={year}
 ```
 
 **Query Parameters：**
@@ -370,12 +371,15 @@ GET /api/resource?q={query}
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `q` | string | 是 | 搜索关键词 |
+| `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
+| `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
+| `year` | number | 否 | 已选作品年份；提供时会附加到上游搜索词并校验 By669 标题年份 |
 | `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
 
 ```bash
-curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球"
+curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=movie&year=2019"
 ```
 
 **Example Response：**
@@ -498,7 +502,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v15-cache.local/?q={query}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v16-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
@@ -526,7 +530,9 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务会�
 
 分享链接明确提供的 `person` 或影视 `id` 必须是 1–12 位正整数；空值、零、负数、混合字符或过长值会显示错误且不请求 API。未提供 `person` 的旧版演员姓名链接仍支持姓名搜索。
 
-剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。
+剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。搜索词带季号时，Worker 会确认该季存在后才允许加载豆瓣、Wikipedia 与资源补充信息；复制或恢复详情链接时也会保留季号。
+
+资源请求会附带所选作品的 TMDB ID、媒体类型和年份。Worker 按作品身份隔离缓存，年份会参与上游搜索与结果校验；部分失败的刷新不会用不完整结果覆盖先前完整缓存。
 
 ### 通用配置
 

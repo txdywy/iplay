@@ -137,6 +137,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     });
                 }
                 const ids = {
+                    'Friends s99': 118,
                     'Test Movie': 100,
                     'Slow Movie': 101,
                     'Fresh Movie': 102,
@@ -156,6 +157,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     'No Poster Movie': 117,
                 };
                 window.__smoke.posterlessMode = ['No Poster Movie'].includes(query) ? query : '';
+                if (query === 'Friends s99') {
+                    return json({
+                        results: [{ ...candidate('Friends', 118), mediaType: 'tv' }],
+                        searchMeta: { matchScore: 1, matchedBy: 'title-exact', season: 99, mediaType: 'tv' }
+                    });
+                }
                 if (query === 'Overlapping Actor') {
                     // A documentary containing the name clears the title threshold.
                     return json({
@@ -377,6 +384,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/tmdb/detail') {
                 window.__smoke.detailCalls += 1;
                 const id = Number(url.searchParams.get('id'));
+                if (url.searchParams.get('season') === '99') {
+                    return json({ error: '未找到第 99 季，该剧目前有 10 季。' }, 404);
+                }
                 const titles = {
                     100: 'Test Movie',
                     101: 'Slow Movie',
@@ -616,7 +626,7 @@ async function runObserverFlow() {
     await waitFor("window.__smoke.copied === 'e5F6'");
     assert.equal(await evaluate('window.__smoke.copied'), 'e5F6');
     const calls = await evaluate('window.__smoke.calls');
-    assert.ok(calls.some(call => call.includes('/api/resource?q=Test%20Movie&refresh=1')));
+    assert.ok(calls.some(call => call.includes('/api/resource?q=Test%20Movie&id=') && call.includes('&refresh=1')));
     assert.deepEqual(await evaluate("window.__smoke.requestOptions.filter(call => call.path === '/api/resource' && call.refresh === '1').map(call => call.cache)"), ['no-store', 'no-store']);
 }
 
@@ -714,7 +724,7 @@ async function runResourceRetryAfterDetailRetryFlow() {
     await waitFor('window.__smoke.resourceCalls === 3');
     await waitFor("document.querySelector('#quarkUrlList a')?.getAttribute('href') === 'https://pan.quark.cn/s/smoke'");
     assert.equal(await evaluate("document.querySelector('#resourcesNotice').classList.contains('hidden')"), true);
-    assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/resource?q=Retry%20Detail%20Movie&refresh=1')));
+    assert.ok((await evaluate('window.__smoke.calls')).some(call => call.includes('/api/resource?q=Retry%20Detail%20Movie&id=') && call.includes('&refresh=1')));
 }
 
 async function runPosterIdentityFlow(mismatch) {
@@ -1018,7 +1028,7 @@ async function runDeepLinkFlow() {
     await waitFor('window.__smoke.resourceCalls === 1');
     const calls = await evaluate('window.__smoke.calls');
     assert.ok(calls.some(call => call.includes('/api/wiki/zh?q=Canonical%20Movie')));
-    assert.ok(calls.some(call => call.includes('/api/resource?q=Canonical%20Movie')));
+    assert.ok(calls.some(call => call.includes('/api/resource?q=Canonical%20Movie&id=')));
     assert.equal(calls.some(call => call.includes('Wrong%20Title')), false);
 }
 
@@ -1215,6 +1225,19 @@ async function runCanonicalEnrichmentFlow() {
     await waitFor('window.__smoke.resourceCalls === 1');
     const resourceCalls = (await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource?'))")).map(call => new URL(call, baseUrl));
     assert.deepEqual(resourceCalls.map(url => url.searchParams.get('q')), ['Canonical Renamed Movie']);
+    assert.equal(resourceCalls[0].searchParams.get('id'), '111');
+    assert.equal(resourceCalls[0].searchParams.get('type'), 'movie');
+    assert.equal(resourceCalls[0].searchParams.get('year'), '2025');
+}
+
+async function runMissingSeasonFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Friends s99');
+    await waitFor("document.querySelector('#dataNotice[role=alert]')?.textContent.includes('未找到第 99 季')");
+    const detailCall = (await evaluate("window.__smoke.calls.find(call => call.startsWith('/api/tmdb/detail'))"));
+    assert.equal(new URL(detailCall, baseUrl).searchParams.get('season'), '99');
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'an unverified season must not trigger media enrichments');
+    assert.equal(new URL(await evaluate('location.href')).searchParams.get('season'), '99', 'the selected season remains shareable');
 }
 
 async function runAlternatingResourceRetryFlow() {
@@ -1442,6 +1465,7 @@ try {
     await runDetailRetryPreservesEnrichmentFlow();
     await runSharedIdentityValidationFlow();
     await runCanonicalEnrichmentFlow();
+    await runMissingSeasonFlow();
     await runAlternatingResourceRetryFlow();
     await runCanonicalDetailRetryResourceFlow();
     await runUpdatedPosterFlow();
@@ -1476,7 +1500,7 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-detail-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
 } finally {
     socket.close();
 }

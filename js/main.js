@@ -1,16 +1,16 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.28';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.28';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.28';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.28';
-import { RELEASE_VERSION } from './release.js?v=1.0.28';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.29';
+import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.29';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.29';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.29';
+import { RELEASE_VERSION } from './release.js?v=1.0.29';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.28';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.28';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.28';
+} from './match.js?v=1.0.29';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.29';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.29';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 
@@ -1826,16 +1826,18 @@ function updateActorHistory(query, personId) {
     pushActorHistory(query, personId);
 }
 
-function pushDetailHistory(candidate, { replace = false } = {}) {
+function pushDetailHistory(candidate, { replace = false, season = null } = {}) {
     const url = new URL(window.location.href);
     url.search = '';
     url.searchParams.set('id', String(candidate.id));
     if (candidate.mediaType) url.searchParams.set('type', candidate.mediaType);
     if (candidate.title || candidate.originalTitle) url.searchParams.set('title', candidate.title || candidate.originalTitle);
+    if (season !== null && season !== undefined) url.searchParams.set('season', String(season));
     setAppHistoryState(replace ? 'replaceState' : 'pushState', {
         kind: 'detail',
         id: candidate.id,
         mediaType: candidate.mediaType || '',
+        season: season ?? null,
         title: candidate.title || candidate.originalTitle || ''
     }, getAppHistoryUrl(url));
 }
@@ -2042,7 +2044,14 @@ async function loadResources(candidate, searchId, searchOptions, loadId, { refre
     const queryKey = resourceQueryKey(candidate);
 
     try {
-        const resourceResult = await ResourceAPI.search(query, searchOptions, { refresh });
+        const resourceResult = await ResourceAPI.search(query, searchOptions, {
+            refresh,
+            identity: {
+                mediaId: candidate.id,
+                mediaType: candidate.mediaType,
+                year: candidate.year
+            }
+        });
         if (!resourceResult) throw new Error('资源服务返回了空结果');
         if (!isActiveSearch(searchId, loadId) || resourceQueryKey(candidate) !== queryKey) return;
         resourceResultState = {
@@ -2157,7 +2166,7 @@ function startEnrichments(candidate, query, viewModel, searchId, searchOptions, 
         });
 }
 
-async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push', deferEnrichments = false } = {}) {
+async function loadCandidateDetails(candidate, query, searchId, searchOptions, { isRetry = false, historyMode = 'push', deferEnrichments = false, requestedSeason = null } = {}) {
     if (!isActiveSearch(searchId)) return;
 
     const requestedType = candidate?.mediaType || candidate?.type || null;
@@ -2174,7 +2183,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         ...(retained?.candidate || candidate),
         mediaType: retained?.candidate.mediaType || requestedType
     };
-    if (!isRetry && historyMode === 'push') pushDetailHistory(selectedCandidate);
+    if (!isRetry && historyMode === 'push') pushDetailHistory(selectedCandidate, { season: requestedSeason });
     setSearching(true);
     if (!retained) resetRatingBoxes();
     setEnrichmentStatus(els.wikiStatus, '等待详情确认后补充简介');
@@ -2221,7 +2230,8 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     scrollToVisible(els.results);
     focusResultHeading();
 
-    const detailPromise = TmdbAPI.getDetail(selectedCandidate.id, selectedCandidate.mediaType, candidateOptions)
+    const detailOptions = requestedSeason === null ? candidateOptions : { ...candidateOptions, season: requestedSeason };
+    const detailPromise = TmdbAPI.getDetail(selectedCandidate.id, selectedCandidate.mediaType, detailOptions)
         .then(tmdbDetail => {
             if (!isActiveSearch(searchId, loadId)) return null;
 
@@ -2273,7 +2283,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             renderBackupDoubanRating(viewModel.doubanRating);
             posterContext.enrichmentQuery = tmdbDetail.title || enrichmentQuery;
             posterContext.year = tmdbDetail.year || '';
-            pushDetailHistory(selectedCandidate, { replace: true });
+            pushDetailHistory(selectedCandidate, { replace: true, season: requestedSeason });
             if (deferEnrichments) {
                 if (els.input.value === query) els.input.value = viewModel.title;
             }
@@ -2290,13 +2300,13 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             if (isActiveSearch(searchId, loadId)) {
                 setSearchStatus(deferEnrichments ? '该链接的详情尚未确认，请重试或重新搜索' : `已找到“${viewModel.title}”，基础信息已加载`);
                 showDataNotice({
-                    title: 'TMDB 详情暂时不可用',
-                    detail: deferEnrichments
+                    title: requestedSeason ? `未找到第 ${requestedSeason} 季` : 'TMDB 详情暂时不可用',
+                    detail: requestedSeason ? error.message : deferEnrichments
                         ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
                         : retained ? '详情更新失败，已保留当前资料、简介和补充评分，可稍后重试。'
                             : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
                     actionLabel: '重试详情',
-                    onAction: () => loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments }),
+                    onAction: () => loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments, requestedSeason }),
                     tone: 'error'
                 });
             }
@@ -2368,6 +2378,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         if (searchId !== currentSearchId) return;
 
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
+        const requestedSeason = Number(tmdbSearch?.searchMeta?.season) || null;
         const titleMatchScore = toFiniteNumber(tmdbSearch?.searchMeta?.matchScore);
         // An exact actor name outranks works that merely contain it, such as
         // documentaries or compilations; an equally exact title still wins.
@@ -2435,7 +2446,10 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         if (requiresConfirmation) {
             renderCandidatePicker(rankedCandidates, query, selectedCandidate => {
                 if (!isActiveSearch(searchId)) return;
-                void loadCandidateDetails(selectedCandidate, query, searchId, searchOptions).catch(error => {
+                void loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, {
+                    requestedSeason,
+                    deferEnrichments: requestedSeason !== null
+                }).catch(error => {
                     if (error?.name !== 'AbortError') showSearchError(error, query, searchId);
                 });
             });
@@ -2447,7 +2461,11 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         }
 
         if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
-        await loadCandidateDetails(candidate, query, searchId, searchOptions, { historyMode });
+        await loadCandidateDetails(candidate, query, searchId, searchOptions, {
+            historyMode,
+            requestedSeason,
+            deferEnrichments: requestedSeason !== null
+        });
 
     } catch (err) {
         if (err?.name === 'AbortError') return;
@@ -2552,6 +2570,7 @@ async function restoreUrlState() {
     const idText = params.get('id')?.trim() || '';
     if (params.has('id')) {
         const mediaType = params.get('type')?.trim().toLowerCase() ?? null;
+        const seasonText = params.get('season')?.trim() ?? null;
         const title = params.get('title')?.trim() || `TMDB ${idText}`;
         els.input.value = title;
         const { searchId, searchOptions } = beginSearchSession(title);
@@ -2562,12 +2581,19 @@ async function restoreUrlState() {
             if (mediaType !== null && !['movie', 'tv'].includes(mediaType)) {
                 throw new Error('分享链接中的影视类型无效，请重新搜索片名');
             }
+            if (seasonText !== null && (!/^[1-9]\d?$/.test(seasonText) || mediaType !== 'tv')) {
+                throw new Error('分享链接中的季数无效，请重新搜索剧集');
+            }
             await loadCandidateDetails({
                 id: Number(idText),
                 mediaType,
                 title,
                 originalTitle: title
-            }, title, searchId, searchOptions, { historyMode: 'none', deferEnrichments: true });
+            }, title, searchId, searchOptions, {
+                historyMode: 'none',
+                deferEnrichments: true,
+                requestedSeason: seasonText === null ? null : Number(seasonText)
+            });
         } catch (error) {
             if (error?.name !== 'AbortError') showSearchError(error, title, searchId);
         }

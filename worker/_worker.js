@@ -118,6 +118,7 @@ export default {
                 return withCors(await handleTmdbDetail(
                     url.searchParams.get("id"),
                     url.searchParams.get("type"),
+                    url.searchParams.get("season"),
                     env,
                     ctx
                 ), request, env);
@@ -136,7 +137,12 @@ export default {
                     url.searchParams.get("q"),
                     env,
                     ctx,
-                    { refresh: url.searchParams.get("refresh") === "1" }
+                    {
+                        refresh: url.searchParams.get("refresh") === "1",
+                        id: url.searchParams.get("id"),
+                        mediaType: url.searchParams.get("type"),
+                        year: url.searchParams.get("year")
+                    }
                 ), request, env);
             }
 
@@ -1853,7 +1859,7 @@ async function handleTmdbSearch(query, env, ctx) {
     }
 }
 
-async function handleTmdbDetail(id, type, env, ctx) {
+async function handleTmdbDetail(id, type, requestedSeason, env, ctx) {
     const hasExplicitType = type !== null && type !== undefined;
     const idCheck = validatePositiveInteger(id);
     if (idCheck.error) return idCheck.error;
@@ -1863,11 +1869,29 @@ async function handleTmdbDetail(id, type, env, ctx) {
     if (typeCheck.error) return typeCheck.error;
     type = typeCheck.value;
 
+    let season = null;
+    if (requestedSeason !== null && requestedSeason !== undefined) {
+        const seasonCheck = validatePositiveInteger(requestedSeason, "season");
+        if (seasonCheck.error || Number(seasonCheck.value) > 99) {
+            return jsonResponse({ error: "Invalid season" }, 400);
+        }
+        if (type !== "tv") return jsonResponse({ error: "A season can only be requested for a TV series" }, 400);
+        season = Number(seasonCheck.value);
+    }
+
     // A movie id and a TV id belong to different namespaces. Only legacy
     // untyped links may probe both; an explicit type must preserve identity.
     const attemptOrder = hasExplicitType ? [type] : ["movie", "tv"];
     try {
-        return jsonResponse(await fetchNormalizedTmdbDetail(id, attemptOrder, env, ctx), 200, TMDB_BROWSER_CACHE_HEADERS);
+        const detail = await fetchNormalizedTmdbDetail(id, attemptOrder, env, ctx);
+        if (season !== null && !detail.seasons.some(entry => entry.seasonNumber === season)) {
+            const availableSeasons = detail.seasons.filter(entry => entry.seasonNumber > 0).length;
+            const message = availableSeasons
+                ? `未找到第 ${season} 季，该剧目前有 ${availableSeasons} 季。`
+                : `未找到第 ${season} 季，该剧目前没有已公布的季度资料。`;
+            return jsonResponse({ error: message }, 404);
+        }
+        return jsonResponse(detail, 200, TMDB_BROWSER_CACHE_HEADERS);
     } catch (error) {
         return errorResponse(error);
     }
@@ -2488,7 +2512,7 @@ async function fetchResourcePageText(resourceUrl, referer = `${BY669_BASE}/`, de
     return { text, sourceUrl: safeResourceUrl };
 }
 
-async function fetchBy669Resources(query, deadline = null) {
+async function fetchBy669Resources(query, deadline = null, releaseYear = "") {
     const res = await fetchAllowedResource(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
         headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
     }, deadline);
@@ -2511,8 +2535,11 @@ async function fetchBy669Resources(query, deadline = null) {
             : "";
         if (!resourceId || resourceId.length > 200) continue;
 
+        const title = item.attributes.title.trim().slice(0, 300);
+        if (releaseYear && !new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u").test(title)) continue;
+
         resources.push({
-            title: item.attributes.title.trim().slice(0, 300),
+            title,
             url: `${BY669_BASE}/d/${encodeURIComponent(resourceId)}`,
             isQuark: isQuarkResourceText(item.attributes.title),
             source: "by669"
@@ -2762,16 +2789,32 @@ function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOUR
     return selected;
 }
 
-async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
+async function handleResourceSearch(query, env, ctx, { refresh = false, id = null, mediaType = null, year = null } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
+
+    const idCheck = id === null ? null : validatePositiveInteger(id);
+    if (idCheck?.error) return idCheck.error;
+    const mediaTypeCheck = mediaType === null ? null : validatePersonMediaType(mediaType);
+    if (mediaTypeCheck?.error) return mediaTypeCheck.error;
+    if (Boolean(idCheck) !== Boolean(mediaTypeCheck)) {
+        return jsonResponse({ error: "TMDB id and media type must be provided together" }, 400);
+    }
+    const yearCheck = validateOptionalYear(year);
+    if (yearCheck.error) return yearCheck.error;
+    const identity = {
+        id: idCheck ? Number(idCheck.value) : null,
+        mediaType: mediaTypeCheck?.value || null,
+        year: yearCheck.value
+    };
+
     const wpzySession = await getWpzySession(env);
 
     const response = await withInFlight(
         ctx,
-        `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}`,
-        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession })
+        `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
+        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession, identity })
     );
     const clientResponse = response.clone();
     // The internal cache is keyed by the server's login state. Browser caches
@@ -2783,20 +2826,31 @@ async function handleResourceSearch(query, env, ctx, { refresh = false } = {}) {
     });
 }
 
-async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession } = {}) {
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession, identity = {} } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v15-cache.local/?q=${encodeURIComponent(query)}&scope=${wpzySession.cacheScope}`);
-    const cached = refresh ? null : await serveCachedJson(cacheKey);
-    if (cached) return cached;
+    const cacheKey = new Request(`https://resource-search-v16-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
+    const cached = await serveCachedJson(cacheKey);
+    if (cached && !refresh) return cached;
+
+    let previousComplete = null;
+    if (refresh && cached) {
+        try {
+            const previousData = await readJsonWithLimit(cached.clone());
+            if (!previousData.partial && !previousData.resourceMeta?.partial) previousComplete = cached;
+        } catch {
+            // Ignore malformed cache entries and let the refreshed scan replace them.
+        }
+    }
 
     try {
         const deadline = createDeadline(RESOURCE_TOTAL_TIMEOUT_MS);
+        const providerQuery = identity.year ? `${query} ${identity.year}` : query;
         const [by669Result, wpzysResult] = await Promise.allSettled([
-            fetchBy669Resources(query, deadline),
-            fetchWpzysResources(query, deadline, wpzySession)
+            fetchBy669Resources(providerQuery, deadline, identity.year),
+            fetchWpzysResources(providerQuery, deadline, wpzySession)
         ]);
 
         if (by669Result.status === "rejected" && wpzysResult.status === "rejected") {
@@ -2817,7 +2871,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
             || wpzysResult.status === "rejected"
             || detailResult.failedPages > 0
             || detailResult.attemptedPages < detailResources.length;
-        return cacheJson(ctx, cacheKey, {
+        const result = {
             resources,
             wpzysResources,
             quarkUrls: detailResult.quarkUrls,
@@ -2839,7 +2893,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
                 pages: [...resources, ...wpzysResources].map(entry => scannedPages.get(entry.url)
                     || { url: entry.url, source: entry.source, status: "unattempted" })
             }
-        }, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+        };
+        if (isPartial && previousComplete) return jsonResponse(result);
+        return cacheJson(ctx, cacheKey, result, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
         return errorResponse(e);
     }
@@ -2889,7 +2945,7 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     year = yearCheck.value;
 
     if (!getTmdbAuth(env)) return jsonResponse({ error: "TMDB is not configured" }, 503);
-    const cacheKey = new Request(`https://poster-v6-cache.local/?title=${encodeURIComponent(title)}&year=${year}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}`);
+    const cacheKey = new Request(`https://poster-v6-cache.local/?title=${encodeURIComponent(title)}&year=${year}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}&imdb=${identity.imdbId || ""}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
     try {
@@ -2906,6 +2962,7 @@ async function tryTmdbForPoster(title, year, env, ctx, deadline = null, { refres
             language: "zh-CN", append_to_response: "external_ids,credits"
         }, env, ctx, { deadline, refreshCache });
         const detail = normalizeTmdbDetail(data, identity.mediaType);
+        if (identity.imdbId && detail.imdbId && identity.imdbId !== detail.imdbId) return null;
         return detail.poster ? {
             poster: detail.poster, tmdbRating: detail.tmdbRating, tmdbVotes: detail.tmdbVotes,
             tmdb: true, tmdbId: detail.id, mediaType: detail.mediaType
@@ -3126,9 +3183,8 @@ async function handleWikiZh(query, ctx, options = {}) {
             const introEvidence = getWikiIntroEvidence(intro, summaryData.title);
             const descriptionEvidence = getWikiIdentityEvidence(summaryData.description);
             const titleKind = getWikiTitleKind(summaryData.title);
-            const summaryKind = getWikiKind(summaryData.description || "")
-                || getWikiKind(introEvidence)
-                || titleKind;
+            const descriptionKind = getWikiKind(summaryData.description || "");
+            const introKind = getWikiKind(introEvidence);
             if (summaryData.type === "disambiguation"
                 || !summaryData.extract.trim()
                 || !wikiTitleMatches(query, summaryData.title)
@@ -3136,7 +3192,8 @@ async function handleWikiZh(query, ctx, options = {}) {
                 || !wikiYearMatches(year, descriptionEvidence)
                 || !wikiYearMatches(year, introEvidence)
                 || (mediaType && titleKind && titleKind !== mediaType)
-                || (mediaType && summaryKind !== mediaType)) {
+                || (mediaType && [descriptionKind, introKind].some(kind => kind && kind !== mediaType))
+                || (mediaType && !descriptionKind && !introKind && titleKind !== mediaType)) {
                 continue;
             }
 
