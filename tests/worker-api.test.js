@@ -2143,6 +2143,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
     };
     globalThis.fetch = async url => {
         const value = String(url);
+        if (new URL(value).hostname === 'zuidouyin.com') return Response.json([]);
         if (value.startsWith('https://by669.org/api/discussions')) {
             return Response.json({ data: [{ id: 'metadata-1', attributes: { title: 'Metadata resource' } }] });
         }
@@ -2168,7 +2169,7 @@ test('resource responses expose provider and detail partial-failure metadata', a
 
     assert.equal(response.status, 200);
     assert.equal(body.partial, true);
-    assert.deepEqual(body.resourceMeta.providers, { by669: 'ok', wpzys: 'failed' });
+    assert.deepEqual(body.resourceMeta.providers, { by669: 'ok', wpzys: 'failed', zuidouyin: 'ok' });
     assert.equal(body.resourceMeta.selectedPages, 1);
     assert.equal(body.resourceMeta.attemptedPages, 1);
     assert.equal(body.resourceMeta.failedPages, 1);
@@ -2253,6 +2254,7 @@ test('resource refresh bypasses a cached partial result', async t => {
         providerCalls += 1;
         const parsed = new globalThis.URL(String(url));
         if (parsed.hostname === 'by669.org') return Response.json({ data: [] });
+        if (parsed.hostname === 'zuidouyin.com') return Response.json([]);
         if (parsed.hostname === 'wpzy.org') {
             wpzysCalls += 1;
             if (wpzysCalls === 1) return new Response('provider unavailable', { status: 503 });

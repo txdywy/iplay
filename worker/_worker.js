@@ -282,6 +282,7 @@ const RESOURCE_MAX_REDIRECTS = 1;
 const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024;
 const RESOURCE_MAX_DETAIL_PAGES = 12;
 const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
+const RESOURCE_MAX_ZUIDOUYIN_POSTS = 4;
 const RESOURCE_DETAIL_CONCURRENCY = 6;
 const RESOURCE_MAX_PROVIDER_RESULTS = 50;
 const RESOURCE_MAX_QUARK_URLS_PER_PAGE = 25;
@@ -297,6 +298,7 @@ const SEARCH_MAX_ATTEMPTS = 6;
 const SEARCH_MAX_RESULTS = 20;
 const SEARCH_MAX_ALIAS_QUERIES = 2;
 const SEARCH_SCORE_CACHE_MAX_PAIRS = 1024;
+const TMDB_ANIMATION_GENRE_ID = 16;
 const PERSON_DEFAULT_PAGE_SIZE = 36;
 const PERSON_MAX_PAGE_SIZE = 60;
 const SEARCH_ACCEPT_SCORE = 0.72;
@@ -1044,6 +1046,7 @@ function extractSearchYear(text) {
 
 const SEARCH_RELEASE_NOISE_PATTERN = /(?:\b(?:2160p|1080p|720p|480p|4k|8k|web[- .]?(?:dl|rip)|blu?ray|brrip|dvdrip|hdtv|x26[45]|hevc|hdr10?|dolby(?:vision|atmos)?|proper|repack)\b|中字|双语|字幕|全集|完结|无删减|高清|高码)/giu;
 const SEARCH_NOISE_PATTERN = new RegExp(`(?:${SEARCH_RELEASE_NOISE_PATTERN.source}|\\b(?:movie|film|tv|series|show)\\b|电影|电视剧|剧集|连续剧)`, "giu");
+const SEARCH_ANIMATION_SUFFIX = /(?:动画片|动画版)$/u;
 
 function hasCjkText(value) {
     return /\p{Script=Han}/u.test(value);
@@ -1069,15 +1072,19 @@ function buildSearchIntent(query) {
         : /(?:\b(?:movie|film)\b|电影)/iu.test(originalQuery)
             ? "movie"
             : null;
-    const cleanedTitle = cleanSearchTitle(originalQuery, season.match, year.match);
     const literalTitle = cleanSearchTitle(originalQuery, season.match, year.match, { keepTypeWords: true });
+    const animationTitle = literalTitle.replace(SEARCH_ANIMATION_SUFFIX, "").trim();
+    const animation = Boolean(animationTitle && animationTitle !== literalTitle);
+    const searchTitle = animation ? animationTitle : literalTitle;
+    const noiseCleanedTitle = cleanSearchTitle(originalQuery, season.match, year.match);
+    const cleanedTitle = animation ? noiseCleanedTitle.replace(SEARCH_ANIMATION_SUFFIX, "").trim() : noiseCleanedTitle;
     const punctuationVariant = normalizeSearchInput(cleanedTitle.replace(/[‐‑‒–—]/gu, " "));
     const aliases = cleanedTitle
         .split(/\s*(?:\/|／|\||｜)\s*/u)
         .map(value => value.trim())
         .filter(value => [...value].length >= 2);
-    const variants = uniqueSearchValues([literalTitle, cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
-    const matchQueries = uniqueSearchValues([literalTitle, cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
+    const variants = uniqueSearchValues([literalTitle, searchTitle, cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
+    const matchQueries = uniqueSearchValues([literalTitle, searchTitle, cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
 
     return {
         originalQuery,
@@ -1088,6 +1095,7 @@ function buildSearchIntent(query) {
         year: year.value,
         season: season.value,
         mediaType,
+        animation,
         hasCjk: hasCjkText(originalQuery)
     };
 }
@@ -1103,18 +1111,24 @@ function getLiteralSearchEvidence(titles, intent) {
     let best = null;
     for (const title of titles) {
         const normalized = compactSearchText(title);
-        if (normalized === original) return { title: intent.originalQuery, length: normalized.length, mediaType: null, wholeQuery: true };
+        if (normalized === original) return { title: intent.originalQuery, length: normalized.length, mediaType: null, animation: false, wholeQuery: true };
         const index = literal.indexOf(normalized);
         if (!normalized || index < 0 || (normalized.length < 3 && normalized !== literal)) continue;
         const rest = literal.slice(0, index) + literal.slice(index + normalized.length);
-        if (rest && !/^(?:tvseries|television|series|show|tv|movies?|films?|电影|电视剧|剧集|连续剧)+$/u.test(rest)) continue;
+        if (rest && !/^(?:tvseries|television|series|show|tv|movies?|films?|电影|电视剧|剧集|连续剧|动画片|动画版)+$/u.test(rest)) continue;
         const television = /tv|television|series|show|电视剧|剧集|连续剧/u.test(rest);
         const movie = /movie|film|电影/u.test(rest);
         if (television && movie) continue;
         // Prefer the longest literal title before interpreting the remaining
         // type words, e.g. "电影少女" over "少女", or "Truman Show" over "Truman".
         if (!best || normalized.length > best.length) {
-            best = { title, length: normalized.length, mediaType: television ? "tv" : movie ? "movie" : null, wholeQuery: false };
+            best = {
+                title,
+                length: normalized.length,
+                mediaType: television ? "tv" : movie ? "movie" : null,
+                animation: /动画片|动画版/u.test(rest),
+                wholeQuery: false
+            };
         }
     }
     return best;
@@ -1188,6 +1202,7 @@ function getSearchConfidence(score) {
 
 function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct", scoreText = scoreSearchText) {
     if (!isValidTmdbSearchItem(item)) return null;
+    if (intent.animation && !(Array.isArray(item.genre_ids) && item.genre_ids.includes(TMDB_ANIMATION_GENRE_ID))) return null;
 
     const title = getTmdbTitle(item);
     const originalTitle = getTmdbOriginalTitle(item);
@@ -1750,6 +1765,7 @@ async function handleTmdbSearch(query, env, ctx) {
                         && literalMatch.length >= (intent.literalEvidenceLength || 0)) {
                         intent.literalEvidenceLength = literalMatch.length;
                         intent.mediaType = literalMatch.mediaType;
+                        intent.animation = literalMatch.animation;
                         if (literalMatch.wholeQuery) intent.season = null;
                         // A year appended to a literal title still constrains
                         // the requested remake. Only an exact whole-title match
@@ -2106,6 +2122,7 @@ const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s
 const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})(?![a-z0-9])/gi;
 const BY669_BASE = "https://by669.org";
 const WPZYS_BASE = "https://wpzy.org";
+const ZUIDOUYIN_BASE = "https://zuidouyin.com";
 const WPZY_ORIGINS = new Set([WPZYS_BASE, "https://www.wpzy.org"]);
 const RESOURCE_ALLOWED_ORIGINS = new Set([BY669_BASE, ...WPZY_ORIGINS]);
 
@@ -2659,6 +2676,49 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null) {
     return parsed.resources;
 }
 
+async function fetchZuidouyinPosts(query, deadline, releaseYear) {
+    const normalizedQuery = compactSearchText(query);
+    if (!normalizedQuery) return [];
+    const yearPattern = releaseYear ? new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u") : null;
+    const matchesWork = title => (!yearPattern || yearPattern.test(title)) && compactSearchText(title).includes(normalizedQuery);
+
+    const url = new URL(ZUIDOUYIN_BASE);
+    url.searchParams.set("rest_route", "/wp/v2/posts");
+    url.searchParams.set("search", releaseYear ? `${query} ${releaseYear}` : query);
+    url.searchParams.set("per_page", RESOURCE_MAX_ZUIDOUYIN_POSTS);
+    url.searchParams.set("_fields", "id,title,content");
+    const response = await fetchUpstream(url.href, {
+        headers: { Accept: "application/json" },
+        redirect: "manual"
+    }, remainingDeadlineMs(deadline, RESOURCE_TIMEOUT_MS));
+    if (!response.ok) {
+        await releaseUpstreamResponse(response);
+        throw new Error(`Zuidouyin rejected with status ${response.status}`);
+    }
+    const posts = JSON.parse(await readTextWithLimit(response));
+    if (!Array.isArray(posts)) throw createHttpError("Zuidouyin returned an invalid response", 502);
+
+    const matches = new Map();
+    for (const post of posts.slice(0, RESOURCE_MAX_ZUIDOUYIN_POSTS)) {
+        if (!Number.isSafeInteger(post?.id) || post.id < 1 || matches.has(post.id)) continue;
+        const rawTitle = post.title?.rendered;
+        const text = post.content?.rendered;
+        if (typeof rawTitle !== "string" || typeof text !== "string" || post.content.protected !== false) continue;
+        const title = stripHtml(rawTitle).slice(0, 300).trim();
+        if (!title || !text.trim()) continue;
+        // WordPress also searches article bodies. Only a post title or a
+        // work heading identifies a match, including alternate-language names.
+        const titleMatches = matchesWork(title)
+            || Array.from(text.matchAll(/<h[2-6]\b[^<>]*>([^<>]*)<\/h[2-6]\s*>/gi), match => match[1])
+                .some(heading => matchesWork(decodeHtmlEntities(heading)));
+        if (!titleMatches || (!isQuarkResourceText(title) && !isQuarkResourceText(text))) continue;
+        matches.set(post.id, {
+            title, url: `${ZUIDOUYIN_BASE}/?p=${post.id}`, isQuark: true, source: "zuidouyin", text
+        });
+    }
+    return [...matches.values()];
+}
+
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
@@ -2676,8 +2736,10 @@ async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySes
             const entry = resources[index];
             attemptedPages++;
             try {
-                const value = await fetchResourcePageText(entry.url,
-                    entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
+                const value = entry.source === "zuidouyin"
+                    ? { text: entry.text, sourceUrl: entry.url }
+                    : await fetchResourcePageText(entry.url,
+                        entry.source === "wpzys" ? `${WPZYS_BASE}/` : `${BY669_BASE}/`, deadline, wpzySession);
                 results[index] = { status: "fulfilled", value };
             } catch (reason) {
                 results[index] = { status: "rejected", reason };
@@ -2771,20 +2833,14 @@ function serializeQuarkEntry({ title, url, password, sourceUrl, sourceTitle, _pa
     };
 }
 
-function selectResourceDetails(by669Resources, wpzysResources, maxPages = RESOURCE_MAX_DETAIL_PAGES) {
+function selectResourceDetails(...groups) {
     const selected = [];
-    for (let index = 0; selected.length < maxPages; index++) {
-        let added = false;
-        if (index < by669Resources.length) {
-            selected.push(by669Resources[index]);
-            added = true;
+    for (let index = 0; groups.some(group => index < group.length); index++) {
+        for (const group of groups) {
+            if (index >= group.length) continue;
+            selected.push(group[index]);
+            if (selected.length === RESOURCE_MAX_DETAIL_PAGES) return selected;
         }
-        if (selected.length >= maxPages) break;
-        if (index < Math.min(wpzysResources.length, RESOURCE_MAX_WPZY_DETAIL_PAGES)) {
-            selected.push(wpzysResources[index]);
-            added = true;
-        }
-        if (!added) break;
     }
     return selected;
 }
@@ -2831,7 +2887,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v16-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v17-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) return cached;
 
@@ -2848,40 +2904,44 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     try {
         const deadline = createDeadline(RESOURCE_TOTAL_TIMEOUT_MS);
         const providerQuery = identity.year ? `${query} ${identity.year}` : query;
-        const [by669Result, wpzysResult] = await Promise.allSettled([
+        const [by669Result, wpzysResult, zuidouyinResult] = await Promise.allSettled([
             fetchBy669Resources(providerQuery, deadline, identity.year),
-            fetchWpzysResources(providerQuery, deadline, wpzySession)
+            fetchWpzysResources(providerQuery, deadline, wpzySession),
+            fetchZuidouyinPosts(query, deadline, identity.year)
         ]);
 
-        if (by669Result.status === "rejected" && wpzysResult.status === "rejected") {
-            logEvent("warn", "resource_providers_failed", {
-                by669: logErrorMessage(by669Result.reason),
-                wpzys: logErrorMessage(wpzysResult.reason)
-            });
+        const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });
+        const failedProviders = providerResults.filter(([, result]) => result.status === "rejected");
+        if (failedProviders.length === providerResults.length) {
+            logEvent("warn", "resource_providers_failed",
+                Object.fromEntries(failedProviders.map(([source, result]) => [source, logErrorMessage(result.reason)])));
             return jsonResponse({ error: "Resource providers unavailable" }, 502);
         }
 
-        const resources = by669Result.status === "fulfilled" ? by669Result.value : [];
-        const wpzysResources = wpzysResult.status === "fulfilled" ? wpzysResult.value : [];
-        const detailResources = selectResourceDetails(resources, wpzysResources);
+        const resources = by669Result.value ?? [];
+        const wpzysResources = wpzysResult.value ?? [];
+        const zuidouyinPosts = zuidouyinResult.value ?? [];
+        const zuidouyinResources = zuidouyinPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
+        const detailResources = selectResourceDetails(resources, wpzysResources.slice(0, RESOURCE_MAX_WPZY_DETAIL_PAGES), zuidouyinPosts);
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
-        const scannedPages = new Map(detailResult.pages.map(page => [page.url, page]));
+        const selectedUrls = new Set(detailResult.pages.map(page => page.url));
+        const unselectedPages = [...resources, ...wpzysResources, ...zuidouyinResources]
+            .filter(entry => !selectedUrls.has(entry.url))
+            .map(({ url, source }) => ({ url, source, status: "unattempted" }));
 
-        const isPartial = by669Result.status === "rejected"
-            || wpzysResult.status === "rejected"
+        const isPartial = failedProviders.length > 0
             || detailResult.failedPages > 0
             || detailResult.attemptedPages < detailResources.length;
         const result = {
             resources,
             wpzysResources,
+            zuidouyinResources,
             quarkUrls: detailResult.quarkUrls,
             partial: isPartial,
             resourceMeta: {
                 partial: isPartial,
-                providers: {
-                    by669: by669Result.status === "fulfilled" ? "ok" : "failed",
-                    wpzys: wpzysResult.status === "fulfilled" ? "ok" : "failed"
-                },
+                providers: Object.fromEntries(providerResults.map(([source, result]) =>
+                    [source, result.status === "fulfilled" ? "ok" : "failed"])),
                 providerIssues: wpzysResult.status === "rejected"
                     ? { wpzys: wpzysResult.reason?.resourceIssue === "login_required" ? "login_required" : "upstream_unavailable" }
                     : {},
@@ -2890,12 +2950,12 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
                 failedPages: detailResult.failedPages,
                 restrictedPages: detailResult.restrictedPages,
                 loginRequiredPages: detailResult.loginRequiredPages,
-                pages: [...resources, ...wpzysResources].map(entry => scannedPages.get(entry.url)
-                    || { url: entry.url, source: entry.source, status: "unattempted" })
+                // The client rebuilds the capped list from this evidence.
+                pages: [...detailResult.pages, ...unselectedPages]
             }
         };
-        if (isPartial && previousComplete) return jsonResponse(result);
-        return cacheJson(ctx, cacheKey, result, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+        const cacheContext = isPartial && previousComplete ? null : ctx;
+        return cacheJson(cacheContext, cacheKey, result, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
         return errorResponse(e);
     }

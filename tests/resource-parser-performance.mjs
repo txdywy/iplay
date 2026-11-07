@@ -26,6 +26,7 @@ try {
         globalThis.caches = { default: { match: async () => null, put: async () => {} } };
         globalThis.fetch = async input => {
             const url = new URL(input);
+            if (url.hostname === 'zuidouyin.com') return Response.json([]);
             if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
             if (url.pathname === '/api/discussions') return Response.json({ data: [
                 { id: '1', attributes: { title: 'Parser Performance 夸克' } }

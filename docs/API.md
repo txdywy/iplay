@@ -128,6 +128,8 @@ curl "https://iplayw.hackx64.eu.org/api/tmdb/search?q=流浪地球"
 
 已确认的完整片名优先于其中的类型词：`The Truman Show 1998`、`The TV Set 2006`、`电影少女2018` 不会因片名中的 Show、TV 或“电影”被错误限定媒体类型。片名之外的年份和类型指令仍生效，例如 `The Truman Show 1998 movie` 只搜索对应电影；错误年份降低匹配置信度。多个可解释片名同时出现时优先最长名称，去掉类型词得到的短名称不自动视为另一作品的精确别名。
 
+片名后的「动画片」和「动画版」会按 TMDB 动画类型筛选电影及剧集。完整片名的精确匹配仍优先于后缀解析。
+
 `matchScore` 范围为 `0-1`，综合标题精确/包含/编辑距离、年份和媒体类型；`matchConfidence` 为 `high`、`medium` 或 `low`。`searchMeta.strategy` 可为 `direct`、`normalized`、`typed`、`external-id` 或 `douban-alias`，便于诊断本次命中的路径。
 
 多类型搜索结果中若有演员（`known_for_department: Acting`）的中文名或原名与整个查询完全相同（忽略标点和空白），`searchMeta` 会附带 `exactPerson: { id, name }`。含中文的查询在首轮没有精确片名时随即停止标题回退，例如“张译”只请求一次 TMDB，不再请求 en-US 或豆瓣别名；拉丁字母姓名仍执行 en-US 回查，因为它可能找到外语作品的精确英文片名（如 `Ran`）。导演等非演员人物不产生该提示。
@@ -373,7 +375,7 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `q` | string | 是 | 搜索关键词 |
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
-| `year` | number | 否 | 已选作品年份；提供时会附加到上游搜索词并校验 By669 标题年份 |
+| `year` | number | 否 | 已选作品年份。提供时会附加到上游搜索词，并校验 By669 标题及醉都音标题或正文小标题的年份。 |
 | `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
@@ -401,6 +403,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
       "source": "wpzys"
     }
   ],
+  "zuidouyinResources": [],
   "quarkUrls": [
     {
       "title": "流浪地球 4K HDR 夸克网盘",
@@ -413,7 +416,11 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 }
 ```
 
-**实现说明：** `resources` 与 `wpzysResources` 分别保存 By669 和 WPZY 搜索结果；Worker 再以轮询方式从两个提供方选择最多 12 个详情页，避免单一来源占满详情抓取配额，汇总去重后的 `quarkUrls`。`password` 为可选字段，来源页没有可识别的提取码时不会返回。详情页最多并发 6 个请求，连接空闲后立即调度下一页，不等待整批最慢页面；结果仍按来源顺序对账，避免网络时序改变排序和密码归属。每页最多采样 25 个新分享，整次请求最多返回 100 个链接；Worker 会扫描完整个最多 12 页的已选集合后再裁剪响应。超出单页采样位的链接若已在其他选中页进入全局结果，其后续密码证据仍会参与跨页冲突核对并保存在来源页快照中。超出约 15 秒总预算时停止启动新请求，并保留已开始页面的证据。一个提供方或任一选中详情页失败时仍返回可用结果并短暂缓存，同时返回 `partial: true` 和 `resourceMeta`；超过固定详情页上限的其他帖子保留为 `unattempted`，不重复扫描同一批，但前端会展示已扫描/总来源数并保留这些原帖入口。两提供方都失败时返回 `502` 且不缓存。
+`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。Worker 并行查询三个来源，再轮流从各来源选择最多 12 个详情页，将去重后的分享汇总到 `quarkUrls`。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，筛选标题或正文小标题与查询匹配的夸克资源，并在 `resourceMeta.providers.zuidouyin` 中报告来源状态。
+
+详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
+
+任一来源或选中详情页失败时，响应通过 `partial: true` 和 `resourceMeta` 报告进度，并短暂缓存可用结果。超过详情页上限的帖子标记为 `unattempted`，前端保留原帖入口。所有来源都失败时返回 `502`。
 
 分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
 
@@ -502,7 +509,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v16-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v17-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
@@ -594,13 +601,13 @@ const summary = await WikiAPI.getSummary('流浪地球');
 ```javascript
 import { ResourceAPI } from './api.js';
 
-const { resources, wpzysResources, quarkUrls } = await ResourceAPI.search('流浪地球');
+const { resources, wpzysResources, zuidouyinResources, quarkUrls } = await ResourceAPI.search('流浪地球');
 // HTTP 或网络失败时会抛出异常
 ```
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `search` | `(query, options = {}, { refresh = false } = {})` | `{ resources[], wpzysResources[], quarkUrls[], resourceMeta, partial }` |
+| `search` | `(query, options = {}, { refresh = false } = {})` | `{ resources[], wpzysResources[], zuidouyinResources[], quarkUrls[], resourceMeta, partial }` |
 
 ### `PosterAPI`
 

@@ -24,7 +24,7 @@ The browser calls `/api/*` on the Cloudflare Worker. The Worker validates reques
 | TMDB | Search, cast, details, ratings and posters |
 | Douban | Chinese ratings and work identity checks |
 | Wikipedia | Chinese summaries |
-| By669 / WPZY | Resource links |
+| By669 / WPZY / 醉都音 | Resource links |
 
 ---
 
@@ -106,7 +106,7 @@ Successful responses use `poster-v6-cache.local` with a 24-hour TTL. Explicit re
 | **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
 | **Poster Handler** | `_worker.js` | TMDB-only poster lookup by selected ID/type or legacy title/year; explicit refresh and 24-hour success caching. |
 | **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
-| **Resource Handler** | `_worker.js` | Quark resource search (`/api/resource`) aggregating By669 and WPZY. Keeps provider lists separate, fairly selects up to 12 detail pages across both providers, extracts and deduplicates at most 100 share URLs with bounded page/total work, and caches complete results for 12h. |
+| **Resource Handler** | `_worker.js` | Searches By669, WPZY and 醉都音 in parallel, selects up to 12 pages across sources and deduplicates up to 100 Quark links. 醉都音 returns public post content with its search results. Complete results are cached for 12h. |
 
 ---
 
@@ -123,7 +123,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 | `GET` | `/api/tmdb/detail` | `id` (number), `type` (movie/tv), optional `season` (1–99, TV only) | Fetch TMDB detail with credits, external IDs, and normalized per-season episode counts for TV; confirms a requested season exists; retries the alternate valid type only after a `404` for untyped requests. |
 | `GET` | `/api/douban/search` | `q` (string) | Search Douban via `subject_suggest` API. |
 | `GET` | `/api/douban/detail` | `id` (string) | Scrape Douban detail page for rating, votes, genres, summary, IMDb ID. |
-| `GET` | `/api/resource` | `q` (string), optional paired `id` / `type`, optional `year` | Search By669 and WPZY, then extract and deduplicate Quark netdisk URLs; scope results and cache by selected work identity. |
+| `GET` | `/api/resource` | `q` (string), optional paired `id` / `type`, optional `year` | Search By669, WPZY and 醉都音 for Quark share links. The cache is scoped to the selected work. |
 | `GET` | `/api/poster` | `title`, optional `year`, paired `id` / `type`, `refresh=1` | TMDB poster lookup. |
 | `GET` | `/api/wiki/zh` | `q` (string), optional `type` / `year` | Related Chinese Wikipedia summary with media/year validation. |
 
@@ -184,6 +184,9 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
   ],
   "wpzysResources": [
     { "title": "...", "url": "https://wpzy.org/thread-...htm", "isQuark": true }
+  ],
+  "zuidouyinResources": [
+    { "title": "...", "url": "https://zuidouyin.com/?p=42", "isQuark": true, "source": "zuidouyin" }
   ],
   "quarkUrls": [
     { "title": "...", "url": "https://pan.quark.cn/...", "sourceUrl": "...", "sourceTitle": "..." }
@@ -279,8 +282,8 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 ### Upstream API Risks
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
-- **Resource site dependency:** The `/api/resource` endpoint depends on By669 and WPZY availability and markup. One provider may fail without hiding the other's results; if both fail the endpoint returns `502`.
-- **WPZY account boundary:** Optional `WPZY_COOKIE` is a runtime Secret, limited to exact-host HTTPS read-only search/thread requests. Only `bbs_token` and `bbs_sid` are forwarded. The response keeps the historical `wpzysResources` contract, canonicalizes forum URLs, and does not read gated reply/VIP links. The v12 cache and request-coalescing keys include an internal SHA-256 login-state fingerprint; secret replacement/revocation cannot reuse previous-account resource entries. At most six WPZY detail pages are selected per search. Login failures and restricted posts have explicit metadata and recoverable frontend notices. HTTP 200 maintenance detail pages are incomplete scans, not healthy empty results.
+- `/api/resource` returns available results during individual source outages and returns `502` when every source fails.
+- The optional `WPZY_COOKIE` secret supplies `bbs_token` and `bbs_sid` only to read-only HTTPS search and thread requests on the exact WPZY host. An internal SHA-256 login-state fingerprint scopes the v17 resource cache and in-flight requests. Each search selects up to six WPZY threads. Responses identify login failures, gated posts and maintenance pages so the frontend can retain available results and offer a retry.
 
 ---
 

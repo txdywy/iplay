@@ -84,6 +84,15 @@ async function upstream(request) {
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/person/31') {
         return Response.json({ id: 31, name: 'Runtime Actor', ...(personCreditsAvailable ? { combined_credits: { cast: [] } } : {}) });
     }
+    if (url.hostname === 'zuidouyin.com') {
+        assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
+        assert.equal(url.searchParams.get('rest_route'), '/wp/v2/posts');
+        if (url.searchParams.get('search') === 'Runtime Index 2006') return Response.json([
+            { id: 42, title: { rendered: 'Runtime Index (2006)' },
+                content: { protected: false, rendered: '<p>https://pan.quark.cn/s/runtime-index?pwd=A1b2</p>' } }
+        ]);
+        return Response.json([]);
+    }
     if (url.hostname === 'by669.org') {
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to another provider');
         if (wpzyMode === 'scheduling') {
@@ -407,6 +416,14 @@ try {
     assert.equal(poolData.resourceMeta.attemptedPages, 12);
     assert.deepEqual(poolData.quarkUrls.map(item => item.url), Array.from({ length: 12 }, (_, i) => `https://pan.quark.cn/s/runtime-pool-${i + 1}`));
     checks.push('refilling-resource-pool-and-deterministic-order');
+
+    const indexResponse = await request('/api/resource?q=Runtime%20Index&id=42&type=tv&year=2006', 'runtime-public-index');
+    assert.equal(indexResponse.status, 200);
+    const indexData = await indexResponse.json();
+    assert.equal(indexData.resourceMeta.providers.zuidouyin, 'ok');
+    assert.equal(indexData.quarkUrls[0]?.sourceUrl, 'https://zuidouyin.com/?p=42');
+    assert.equal(indexData.quarkUrls[0]?.password, 'A1b2');
+    checks.push('public-index-resource-and-release-year');
 
     const failedDetail = await request('/api/tmdb/detail?id=604&type=movie', 'runtime-safe-errors');
     assert.equal(failedDetail.status, 503);

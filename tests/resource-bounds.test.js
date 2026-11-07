@@ -16,6 +16,7 @@ function setup(t, { pages, discussions, cookie = '' }) {
     globalThis.fetch = async input => {
         const url = new URL(input);
         calls.push(url);
+        if (url.hostname === 'zuidouyin.com') return Response.json([]);
         if (url.hostname === 'wpzy.org') return new Response(WPZY_EMPTY_SEARCH_HTML);
         if (url.pathname === '/api/discussions') return Response.json({ data: discussions || pages.map((_, i) => ({
             id: String(i + 1), attributes: { title: 'Bounded resource 夸克' }

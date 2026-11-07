@@ -25,6 +25,25 @@ test('partial retries preserve failed providers and replace successfully fetched
     assert.deepEqual(recovered.result.quarkUrls.map(item => item.password), ['new2']);
 });
 
+test('public index cards and shares survive a failed retry and clear on a healthy empty search', () => {
+    const source = { title: 'Public index result', url: 'https://zuidouyin.com/?p=42', source: 'zuidouyin' };
+    const initial = mergeResourceState(null, {
+        zuidouyinResources: [source],
+        resourceMeta: { providers: { zuidouyin: 'ok' }, pages: [page(source, [share('index', 'good')])] }
+    });
+    const partial = mergeResourceState(initial, {
+        zuidouyinResources: [], partial: true, resourceMeta: { providers: { zuidouyin: 'failed' }, pages: [] }
+    });
+    assert.deepEqual(partial.result.zuidouyinResources, [source]);
+    assert.equal(partial.result.quarkUrls[0]?.sourceUrl, source.url);
+    assert.equal(partial.result.quarkUrls[0]?.password, 'good');
+    const recovered = mergeResourceState(partial, {
+        zuidouyinResources: [], resourceMeta: { providers: { zuidouyin: 'ok' }, pages: [] }
+    });
+    assert.deepEqual(recovered.result.zuidouyinResources, []);
+    assert.deepEqual(recovered.result.quarkUrls, []);
+});
+
 test('successful searches invalidate deleted pages while failed and unattempted detail pages retain evidence', () => {
     const initial = mergeResourceState(null, scan({ pages: [page(sourceA, [share('a', 'aaaa')]), page(sourceB, [share('b', 'bbbb')])] }));
     for (const status of ['failed', 'unattempted']) {

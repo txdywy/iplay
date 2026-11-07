@@ -22,6 +22,7 @@ function setup(t, upstream) {
         const headers = new globalThis.Headers(options.headers);
         requests.push({ url: url.href, cookie: headers.get('Cookie'), method: options.method || 'GET' });
         if (url.origin === 'https://by669.org' && url.pathname === '/api/discussions') return Response.json({ data: [] });
+        if (url.origin === 'https://zuidouyin.com') return Response.json([]);
         return upstream(url, headers);
     };
     t.after(() => { globalThis.fetch = originalFetch; globalThis.caches = originalCaches; });
@@ -59,13 +60,13 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     const { response, body } = await search();
     assert.equal(response.status, 200);
     assert.equal(body.partial, false);
-    assert.deepEqual(body.resourceMeta.providers, {by669:'ok',wpzys:'ok'});
+    assert.deepEqual(body.resourceMeta.providers, {by669:'ok',wpzys:'ok',zuidouyin:'ok'});
     assert.equal(body.wpzysResources[0]?.url, 'https://wpzy.org/thread-201.htm');
     assert.equal(body.quarkUrls[0]?.password, 'abcd');
     assert.equal(body.quarkUrls[0]?.sourceUrl, 'https://wpzy.org/thread-201.htm');
     assert.ok(requests.filter(request => request.url.startsWith('https://by669.org/')).every(request => request.cookie === null));
     assert.ok(requests.every(request => request.method === 'GET'));
-    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v16-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
+    assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v17-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
 });
