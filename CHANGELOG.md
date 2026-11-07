@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.32] - 2026-11-07
+
+### Fixed
+
+- Keep only resource posts whose title names the selected work at a title boundary. Searching "狂飙" no longer returns 《公路狂飙》, 《F1：狂飙飞车》, 《GT赛车：极速狂飙》 or WPZY posts that merely mention the word; sequels such as "流浪地球2" are excluded as well.
+- Search By669, WPZY and 醉都音 by title only and verify the year locally. A year-qualified By669 search took 7–11 seconds and exceeded the 5 second provider timeout, so By669 was reported as failed for most selected works; WPZY rejected nearly every title because the query included the year.
+- Accept year ranges such as "（2019-2023年）" for movies, and later season years or no year for series whose threads list the latest season.
+- Match WPZY titles without the spaces its keyword highlighting inserts, and 醉都音 headings split by inline markup.
+
 ## [1.0.31] - 2026-11-07
 
 ### Fixed

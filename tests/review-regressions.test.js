@@ -456,17 +456,17 @@ test('resource searches scope release-year results and cached data to the select
         const url = new URL(input);
         if (url.hostname === 'by669.org' && url.pathname === '/api/discussions') {
             const query = url.searchParams.get('filter[q]');
-            assert.equal(query, 'Shared Work 2024');
+            assert.equal(query, 'Shared Work', 'the slow year-qualified search is filtered locally');
             return Response.json({ data: [1998, 2024].map(year => ({
                 id: String(year), attributes: { title: `Shared Work ${year} 夸克` }
             })) });
         }
         if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') {
-            assert.equal(url.searchParams.get('keyword'), 'Shared Work 2024');
+            assert.equal(url.searchParams.get('keyword'), 'Shared Work');
             return new Response([1998, 2024].map(year => `<li data-href="./thread-${year}.htm"><a href="./thread-${year}.htm">Shared Work ${year} 夸克</a></li>`).join(''));
         }
         if (url.hostname === 'zuidouyin.com') {
-            assert.equal(url.searchParams.get('search'), 'Shared Work 2024');
+            assert.equal(url.searchParams.get('search'), 'Shared Work');
             return Response.json([1998, 2024].map(year => ({
                 id: year, title: { rendered: '公用片名 夸克' },
                 content: { protected: false, rendered: `<h4>Shared Work (${year})</h4><p>https://pan.quark.cn/s/index-${year}</p>` }
@@ -933,8 +933,8 @@ test('the public index returns attributed Quark evidence when neither forum has 
         assert.equal(url.origin, 'https://zuidouyin.com');
         assert.equal(url.pathname, '/');
         assert.equal(url.searchParams.get('rest_route'), '/wp/v2/posts');
-        assert.equal(url.searchParams.get('search'), `${query} 2006`);
-        assert.equal(url.searchParams.get('per_page'), '4');
+        assert.equal(url.searchParams.get('search'), query);
+        assert.equal(url.searchParams.get('per_page'), '10');
         assert.equal(options.redirect, 'manual');
         assert.equal(new globalThis.Headers(options.headers).get('Cookie'), null);
         indexRequests++;
@@ -1077,7 +1077,7 @@ test('public index work headings accept a year from the post title or their own 
         indexPost(2, '动画合集', '<h2>斗破苍穹</h2><p>2018年首播 夸克 https://pan.quark.cn/s/section-year</p><h2>其他</h2><p>2018</p>'),
         indexPost(3, '动画合集三', '<h2>斗破苍穹</h2><p>2017年首播 夸克 https://pan.quark.cn/s/wrong-year</p><h2>其他 2018</h2>'),
         indexPost(4, '动画合集四', '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/x2018y</p>')
-    ], `/api/resource?q=${encodeURIComponent('斗破苍穹')}&id=1&type=tv&year=2018`);
+    ], `/api/resource?q=${encodeURIComponent('斗破苍穹')}&id=1&type=movie&year=2018`);
     assert.deepEqual(data.quarkUrls.map(item => item.url), [
         'https://pan.quark.cn/s/title-year',
         'https://pan.quark.cn/s/section-year'
@@ -1101,4 +1101,90 @@ test('prefetched public index posts do not consume forum detail-page slots', asy
     for (let index = 0; index < 4; index++) {
         assert.ok(data.quarkUrls.some(item => item.url === `https://pan.quark.cn/s/index-${index}`));
     }
+});
+
+const KUANGBIAO_BY669_TITLES = [
+    '《狂飙》2023 全39集 4K 张译、张颂文、李一桐主演狂飙电视剧',
+    '狂飙2023 张颂文/李一桐主演电视剧 狂飙夸克,百度,迅雷网盘观看下载,',
+    '【国剧/犯罪/悬疑】狂飙（2023）4K 高码率 国语中字 全39集 已完结 79G',
+    '电视剧【狂飙】4K 已完结 (2023) 国语 [单集2.2G]',
+    '《公路狂飙》1999 日本喜剧电影，安藤政信、石田光主演，豆瓣7.6分',
+    '《F1：狂飙飞车》2025 布拉德·皮特主演运动剧情电影，豆瓣高分',
+    '【美影 动作 冒险】GT赛车：极速狂飙（2023）4k 中文字幕',
+    '狂飙之路 2023 夸克'
+];
+
+async function searchResourceProviders(t, path, { by669 = [], wpzy = [], index = [] } = {}) {
+    const searches = {};
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.pathname === '/api/discussions') {
+            searches.by669 = url.searchParams.get('filter[q]');
+            return Response.json({ data: by669.map((title, id) => ({ id: `t${id}`, attributes: { title } })) });
+        }
+        if (url.pathname === '/search.htm') {
+            searches.wpzy = url.searchParams.get('keyword');
+            return new Response(wpzy.map((title, id) => `<li data-href="thread-${id + 1}.htm"><a href="thread-${id + 1}.htm">${title}</a> 夸克</li>`).join('') || WPZY_EMPTY_SEARCH_HTML);
+        }
+        if (url.hostname === 'zuidouyin.com') {
+            searches.index = url.searchParams.get('search');
+            return Response.json(index);
+        }
+        return new Response(`夸克 https://pan.quark.cn/s/${url.pathname.replace(/\W/g, '')}`);
+    });
+    const response = await worker.fetch(request(path), {}, ctx);
+    assert.equal(response.status, 200);
+    return { data: await response.json(), searches };
+}
+
+test('resource providers keep only titles that name the selected work at a title boundary', async t => {
+    const { data, searches } = await searchResourceProviders(t, `/api/resource?q=${encodeURIComponent('狂飙')}&id=215803&type=tv&year=2023`, {
+        by669: KUANGBIAO_BY669_TITLES,
+        wpzy: [
+            '[4K][极速：伪装者 2026][女赛车技师假订婚上位！赛道<span class="keyword"> 狂飙 </span>荷尔蒙]',
+            '首发《猫鼬/<span class="keyword"> 狂飙 </span>营救》[美国 动作 惊悚][2026]',
+            '【国产剧】<span class="keyword">狂飙</span>（2023）全39集 4K'
+        ],
+        index: [
+            indexPost(1, '[美国电影]《GT赛车：极速狂飙》（2023年）[夸克网盘]', 'https://pan.quark.cn/s/gt'),
+            indexPost(2, '[国产剧]《狂飙》（2023年）[夸克网盘]', 'https://pan.quark.cn/s/kb'),
+            indexPost(3, '[越南电影]《二凤》+《怒斩狂飙》（2019-2023年）[夸克网盘]', 'https://pan.quark.cn/s/vn')
+        ]
+    });
+    assert.deepEqual(searches, { by669: '狂飙', wpzy: '狂飙', index: '狂飙' }, 'providers search by title, not title plus year');
+    assert.deepEqual(data.resources.map(item => item.title), KUANGBIAO_BY669_TITLES.slice(0, 4));
+    assert.deepEqual(data.wpzysResources.map(item => item.title), ['【国产剧】狂飙（2023）全39集 4K']);
+    assert.deepEqual(data.zuidouyinResources.map(item => item.url), ['https://zuidouyin.com/?p=2']);
+    assert.ok(!data.quarkUrls.some(item => /gt|vn/.test(item.url)));
+});
+
+test('resource years accept covered ranges for movies and later seasons for series', async t => {
+    const movie = await searchResourceProviders(t, `/api/resource?q=${encodeURIComponent('流浪地球')}&id=535167&type=movie&year=2019`, {
+        by669: [
+            '《流浪地球》系列1-2两部 4K HDR 国语中字（2019-2023）',
+            '流浪地球 (2019) 1080P 国语中字',
+            '流浪地球2 (2023) 4K',
+            '流浪地球 4K 典藏版',
+            '流浪地球 (2023) 4K'
+        ]
+    });
+    assert.deepEqual(movie.data.resources.map(item => item.title), [
+        '《流浪地球》系列1-2两部 4K HDR 国语中字（2019-2023）',
+        '流浪地球 (2019) 1080P 国语中字'
+    ]);
+    const series = await searchResourceProviders(t, `/api/resource?q=${encodeURIComponent('斗破苍穹')}&id=69567&type=tv&year=2017`, {
+        by669: [
+            '斗破苍穹 年番4 (2025)【附系列】又名: 斗破苍穹 第八季',
+            '【国漫】斗破苍穹年番3 附1-4季+特别篇',
+            '国漫 斗破苍穹 年番更至146 4k画质',
+            '斗破苍穹 (2012) 旧版',
+            '斗破苍穹4：逃亡（2025）4K 高码 夸克网盘资源',
+            '斗破苍穹之少年归来 (2023) 1080P'
+        ]
+    });
+    assert.deepEqual(series.data.resources.map(item => item.title), [
+        '斗破苍穹 年番4 (2025)【附系列】又名: 斗破苍穹 第八季',
+        '【国漫】斗破苍穹年番3 附1-4季+特别篇',
+        '国漫 斗破苍穹 年番更至146 4k画质'
+    ]);
 });

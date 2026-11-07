@@ -375,7 +375,7 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `q` | string | 是 | 搜索关键词 |
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
-| `year` | number | 否 | 已选作品年份。提供时会附加到上游搜索词，并校验 By669 标题年份；醉都音合集的小标题未写年份时，可由帖子标题或该作品小节中的正文年份证明，分享链接中的数字不计为年份。 |
+| `year` | number | 否 | 已选作品年份。上游只按片名搜索，年份在本地校验：电影要求标题含该年份或覆盖该年份的区间（如「2019-2023」）；剧集接受不早于首播年的年份或未写年份的标题（帖子常写最新一季年份）。醉都音合集的小标题未写年份时，可由帖子标题或该作品小节的正文证明；分享链接中的数字不计为年份。 |
 | `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
@@ -416,7 +416,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 }
 ```
 
-`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
+`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。三个来源的帖子标题都必须在片名边界处包含所选作品名：片名前后须是标点、空白、年份或常见发布词（如「电视剧」「全39集」「国语」「年番」），因此搜索「狂飙」不会返回《公路狂飙》《F1：狂飙飞车》，「流浪地球2」也不会作为「流浪地球」的结果。WPZY 关键词高亮插入的空格在匹配时忽略。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
 
 详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
 
@@ -509,7 +509,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v17-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v18-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
 
