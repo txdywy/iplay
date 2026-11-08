@@ -1217,7 +1217,7 @@ test('Wiki resolves standard article names across script variants when search ra
     assert.equal((await response.json()).title, '狂飆 (電視劇)');
     assert.equal(lookup.get('converttitles'), '1');
     assert.equal(lookup.get('redirects'), '1');
-    assert.deepEqual(lookup.get('titles').split('|'), ['狂飙 (2023年电视剧)', '狂飙 (电视剧)', '狂飙 (动画)']);
+    assert.deepEqual(lookup.get('titles').split('|'), ['狂飙 (2023年电视剧)', '狂飙 (电视剧)', '狂飙 (动画)', '狂飙']);
     assert.deepEqual(summaries, ['狂飆 (電視劇)'], 'only existing pages are summarized');
 });
 
@@ -1306,4 +1306,29 @@ test('forum reposts with identical titles only use detail slots after distinct t
     assert.equal(detailUrls.length, 12);
     const scanned = new Set(data.resourceMeta.pages.filter(page => page.status === 'ok').map(page => page.url));
     for (let index = 8; index < 14; index++) assert.ok(scanned.has(`https://by669.org/d/r${index}`), `distinct title ${index} is scanned`);
+});
+
+test('Wiki resolves the bare name stored in another script and still verifies it', async t => {
+    const summaries = [];
+    let description = '2023年中国大陆电视剧';
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.searchParams.get('list') === 'search') return Response.json({ query: { search: [{ title: '狂飆' }] } });
+        if (url.searchParams.has('titles')) return Response.json({ query: {
+            converted: [{ from: '狂飙', to: '狂飆' }],
+            pages: [{ title: '狂飙 (2023年电视剧)', missing: true }, { title: '狂飙 (电视剧)', missing: true },
+                { title: '狂飙 (动画)', missing: true }, { title: '狂飆', pageid: 7 }]
+        } });
+        const title = decodeURIComponent(url.pathname.split('/summary/')[1]);
+        summaries.push(title);
+        return Response.json({ title, description, extract: '《狂飆》是一部2023年播出的中国大陆电视剧。' });
+    });
+    const path = `/api/wiki/zh?q=${encodeURIComponent('狂飙')}&type=tv&year=2023`;
+    const response = await worker.fetch(request(path), {}, ctx);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).title, '狂飆');
+    assert.deepEqual(summaries, ['狂飆']);
+    description = '1993年香港电视剧';
+    const wrongYear = await worker.fetch(request(path), {}, ctx);
+    assert.equal(wrongYear.status, 404, 'a converted name must still match the requested year');
 });

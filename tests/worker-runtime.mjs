@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { RELEASE_VERSION } from '../js/release.js';
@@ -15,7 +16,13 @@ const { Response } = globalThis;
 // All upstream requests are intercepted, so CI uses no credentials or network.
 const root = fileURLToPath(new URL('..', import.meta.url));
 const productionConfig = loadProductionRuntimeConfig(fileURLToPath(new URL('../wrangler.toml', import.meta.url)));
-const modules = await Promise.all([productionConfig.main, fileURLToPath(new URL('../js/release.js', import.meta.url))].map(async path => ({
+// The entry module imports its sibling Worker modules and the release tag.
+const workerDirectory = fileURLToPath(new URL('../worker/', import.meta.url));
+const siblingModules = (await readdir(workerDirectory)).filter(name => name.endsWith('.js'))
+    .map(name => join(workerDirectory, name)).filter(path => path !== resolve(productionConfig.main));
+const modules = await Promise.all([
+    productionConfig.main, ...siblingModules, fileURLToPath(new URL('../js/release.js', import.meta.url))
+].map(async path => ({
     type: 'ESModule', path,
     contents: await readFile(path, 'utf8')
 })));

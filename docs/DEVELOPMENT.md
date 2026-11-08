@@ -43,7 +43,9 @@ Tailwind 仅扫描 `index.html` 和 `js/` 中的生产类名，避免测试和�
 | `js/scorer.js` | 推荐评分逻辑 |
 | `css/input.css` | Tailwind CSS 输入文件 |
 | `css/output.css` | 构建后的样式文件 |
-| `worker/_worker.js` | Cloudflare Worker 代理与聚合层 |
+| `worker/_worker.js` | Cloudflare Worker 入口：路由、CORS、定时任务 |
+| `worker/core.js` | 共享响应、校验、上游读取、缓存与限流 |
+| `worker/tmdb.js` · `douban.js` · `resources.js` · `poster.js` · `wiki.js` | 各数据源的处理逻辑 |
 | `tests/` | Node.js 内置测试运行器测试 |
 | `wrangler.toml` | Worker 配置 |
 
@@ -89,7 +91,7 @@ npm run wrangler -- dev
 
 ### Worker 代码位置
 
-`worker/_worker.js` 是整个后端代理层的入口，路由和数据聚合逻辑都集中在这里。常见改动包括：
+`worker/_worker.js` 是后端代理层的入口，只负责路由；各数据源的逻辑在 `worker/` 下的独立模块中，共享 `worker/core.js`。常见改动包括：
 
 - TMDB 搜索与详情代理
 - 豆瓣搜索与详情抓取
@@ -178,7 +180,7 @@ Node.js 覆盖率不会计入未加载的 `js/main.js`，不能将其总覆盖�
 
 ### 新增 Worker 接口
 
-- 在 `worker/_worker.js` 增加路由处理
+- 在对应数据源模块实现处理函数，并在 `worker/_worker.js` 增加路由
 - 保持返回 JSON 结构一致
 - 记得处理 CORS 头
 

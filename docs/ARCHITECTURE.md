@@ -102,11 +102,12 @@ Successful responses use `poster-v6-cache.local` with a 24-hour TTL. Explicit re
 | Component | File | Description |
 |-----------|------|-------------|
 | **Worker Entry** | `worker/_worker.js` | Cloudflare Worker fetch handler. Routes requests, validates methods and parameters, applies per-IP rate limiting, and manages origin-aware CORS responses. |
-| **TMDB Handler** | `_worker.js` | Title search (`/api/tmdb/search`), actor filmography search (`/api/tmdb/person`), and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Searches normalize query intent, score matches, and use bounded fallbacks; raw upstream responses are cached for 24h. |
-| **Douban Handler** | `_worker.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
-| **Poster Handler** | `_worker.js` | TMDB-only poster lookup by selected ID/type or legacy title/year; explicit refresh and 24-hour success caching. |
-| **Wiki Handler** | `_worker.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
-| **Resource Handler** | `_worker.js` | Searches By669, WPZY and 醉都音 in parallel, fetches up to 12 forum detail pages across sources and deduplicates up to 100 Quark links. 醉都音 returns public post content with its search results, so its posts take no detail-page slot; a heading-only match contributes just that work's section of a collection post. Complete results are cached for 12h. |
+| **Shared Core** | `worker/core.js` | JSON responses, input validation, public errors, bounded upstream reads, caching helpers, rate limiting, deadlines and text/HTML helpers shared by every handler. |
+| **TMDB Handler** | `worker/tmdb.js` | Title search (`/api/tmdb/search`), actor filmography search (`/api/tmdb/person`), and detail (`/api/tmdb/detail`) endpoints. Supports v4 bearer token or v3 API key auth. Searches normalize query intent, score matches, and use bounded fallbacks; raw upstream responses are cached for 24h. |
+| **Douban Handler** | `worker/douban.js` | Search (`/api/douban/search`) via `movie.douban.com/j/subject_suggest`, and detail (`/api/douban/detail`) via HTML scraping with `HTMLRewriter`. Caches for 24h. |
+| **Poster Handler** | `worker/poster.js` | TMDB-only poster lookup by selected ID/type or legacy title/year; explicit refresh and 24-hour success caching. |
+| **Wiki Handler** | `worker/wiki.js` | Chinese Wikipedia summary fetch (`/api/wiki/zh`) via REST API. Caches for 24h. |
+| **Resource Handler** | `worker/resources.js` | Searches By669, WPZY and 醉都音 in parallel, fetches up to 12 forum detail pages across sources and deduplicates up to 100 Quark links. 醉都音 returns public post content with its search results, so its posts take no detail-page slot; a heading-only match contributes just that work's section of a collection post. Complete results are cached for 12h. |
 
 ---
 
@@ -305,7 +306,13 @@ iplay/
 │   ├── quark.js            # Quark copy formatter
 │   └── scorer.js           # Recommendation algorithm
 ├── worker/
-│   └── _worker.js          # Cloudflare Worker
+│   ├── _worker.js          # Worker entry: routing, CORS, scheduled refresh
+│   ├── core.js             # Shared responses, validation, upstream I/O, cache, rate limits
+│   ├── tmdb.js             # TMDB search, detail and person lookups
+│   ├── douban.js           # Douban enrichment and block circuit
+│   ├── resources.js        # Quark resource search (By669, WPZY, 醉都音)
+│   ├── poster.js           # Poster lookup
+│   └── wiki.js             # Chinese Wikipedia summaries
 ├── tests/                  # Node.js unit and Worker route tests
 └── docs/
     └── ARCHITECTURE.md     # This document
@@ -314,6 +321,6 @@ iplay/
 ### Rationale
 
 - **Flat frontend structure:** Vanilla JS with ES Modules and no browser runtime dependencies. esbuild bundles and minifies the source into the single production entry `assets/app.min.js`.
-- **Worker entry point:** Backend logic lives in `_worker.js`, which imports the shared `js/release.js`. Wrangler packages the complete module project for deployment.
+- **Worker entry point:** `worker/_worker.js` routes requests to one module per data source under `worker/`, which share `worker/core.js` and import `js/release.js`. Wrangler packages the complete module project for deployment.
 - **Separation of concerns:** `api.js` isolates all network calls; `scorer.js` isolates the recommendation algorithm; `main.js` handles all DOM manipulation.
 - **Small build pipeline:** `npm run build` uses Tailwind CLI for CSS and esbuild for JavaScript; generated assets are committed and checked by CI.

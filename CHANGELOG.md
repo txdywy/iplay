@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.36] - 2026-11-08
+
+### Fixed
+
+- Find Chinese Wikipedia articles stored under the bare name in another script, such as 《狂飙》 as `狂飆`; the summary still needs media type and year evidence.
+
+### Changed
+
+- Split the Worker into one module per data source (`tmdb.js`, `douban.js`, `resources.js`, `poster.js`, `wiki.js`) with shared infrastructure in `core.js`; `_worker.js` only routes requests. The deployed bundle is unchanged in behavior.
+
 ## [1.0.35] - 2026-11-08
 
 ### Fixed
