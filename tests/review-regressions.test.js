@@ -639,7 +639,10 @@ test('Wiki search never fetches an unrelated first result', async t => {
     });
     const response = await worker.fetch(request('/api/wiki/zh?q=不存在的片名'), {}, ctx);
     assert.equal(response.status, 404);
-    assert.equal(urls.length, 1);
+    const summaries = urls.filter(url => new URL(url).pathname.includes('/summary/'))
+        .map(url => decodeURIComponent(new URL(url).pathname.split('/summary/')[1]));
+    assert.deepEqual(summaries, ['不存在的片名 (电视剧)', '不存在的片名 (电影)'],
+        'only standard article names for the query itself are tried');
     assert.equal(ctx.writes.length, 0);
 });
 
@@ -797,7 +800,8 @@ test('Wiki classifies adaptations by their own medium and keeps explicit novel s
     extract = 'Shared Work is a novel adapted into a television series.';
     const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=tv'), {}, ctx);
     assert.equal(response.status, 404);
-    assert.equal(summaries.length, 4, 'explicit novel disambiguator must be rejected before summary fetch');
+    assert.deepEqual(summaries.slice(4), ['Shared Work (电视剧)', 'Shared Work (动画)'],
+        'explicit novel disambiguator must be rejected before summary fetch; only standard names follow');
     title = 'Shared Work';
     description = '根据电视剧改编的小说';
     extract = '《Shared Work》是一部小说。';
@@ -1075,7 +1079,7 @@ test('public index work headings accept a year from the post title or their own 
     const { data } = await searchPublicIndex(t, [
         indexPost(1, '2018 动画合集', '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/title-year</p>'),
         indexPost(2, '动画合集', '<h2>斗破苍穹</h2><p>2018年首播 夸克 https://pan.quark.cn/s/section-year</p><h2>其他</h2><p>2018</p>'),
-        indexPost(3, '动画合集三', '<h2>斗破苍穹</h2><p>2017年首播 夸克 https://pan.quark.cn/s/wrong-year</p><h2>其他 2018</h2>'),
+        indexPost(3, '动画合集三', '<h2>斗破苍穹</h2><p>2016年首播 夸克 https://pan.quark.cn/s/wrong-year</p><h2>其他 2018</h2>'),
         indexPost(4, '动画合集四', '<h2>斗破苍穹</h2><p>夸克 https://pan.quark.cn/s/x2018y</p>')
     ], `/api/resource?q=${encodeURIComponent('斗破苍穹')}&id=1&type=movie&year=2018`);
     assert.deepEqual(data.quarkUrls.map(item => item.url), [
@@ -1187,4 +1191,81 @@ test('resource years accept covered ranges for movies and later seasons for seri
         '【国漫】斗破苍穹年番3 附1-4季+特别篇',
         '国漫 斗破苍穹 年番更至146 4k画质'
     ]);
+});
+
+test('Wiki tries the standard article name when search ranking omits it', async t => {
+    const summaries = [];
+    const ctx = mockUpstreams(t, async (input, options) => {
+        const url = new URL(input);
+        assert.match(new globalThis.Headers(options?.headers).get('User-Agent'), /^iPlay\/\S+ \(https:\/\/iplay\.hackx64\.eu\.org/);
+        assert.equal(new globalThis.Headers(options?.headers).get('Accept-Language'), 'zh-CN');
+        if (!url.pathname.includes('/summary/')) {
+            return Response.json({ query: { search: [{ title: '狂飆' }, { title: '狂飙突进运动' }] } });
+        }
+        const title = decodeURIComponent(url.pathname.split('/summary/')[1]);
+        summaries.push(title);
+        if (title === '狂飙 (电视剧)') {
+            return Response.json({ title, description: '2023年中国大陆电视剧', extract: '《狂飙》是一部2023年播出的中国大陆电视剧。' });
+        }
+        if (title === '狂飆') return Response.json({ title, type: 'disambiguation', extract: '狂飆可以指：' });
+        return Response.json({ title, extract: '' }, { status: 404 });
+    });
+    const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('狂飙')}&type=tv&year=2023`), {}, ctx);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).title, '狂飙 (电视剧)');
+    assert.deepEqual(summaries, ['狂飙 (2023年电视剧)', '狂飙 (电视剧)']);
+});
+
+test('Wiki accepts an adjacent premiere year for series but not for films', async t => {
+    let description = '2024年中国大陆电视剧';
+    let title = '繁花 (电视剧)';
+    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
+        ? Response.json({ title, description, extract: '《繁花》是一部中国大陆电视剧，由王家卫执导。' })
+        : Response.json({ query: { search: [{ title }] } }));
+    const series = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('繁花')}&type=tv&year=2023`), {}, ctx);
+    assert.equal(series.status, 200);
+    description = '2024年中国大陆电影';
+    title = '繁花 (电影)';
+    const film = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('繁花')}&type=movie&year=2023`), {}, ctx);
+    assert.equal(film.status, 404);
+});
+
+test('resource titles match TMDB aliases, separator variants and adjacent movie years', async t => {
+    const tmdbPaths = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.hostname === 'api.themoviedb.org') {
+            tmdbPaths.push(url.pathname);
+            if (url.pathname === '/3/movie/1022789/alternative_titles') return Response.json({ id: 1022789, titles: [
+                { iso_3166_1: 'CN', title: '哪吒2' },
+                { iso_3166_1: 'TW', title: '哪吒之魔童鬧海' },
+                { iso_3166_1: 'US', title: 'Ne Zha 2' },
+                { iso_3166_1: 'RU', title: 'Нэчжа 2' },
+                { iso_3166_1: 'US', title: 'NZ' }
+            ] });
+            return Response.json({ id: 1022789, title: '哪吒之魔童闹海', original_title: '哪吒之魔童闹海', external_ids: {}, credits: { cast: [], crew: [] } });
+        }
+        if (url.pathname === '/api/discussions') return Response.json({ data: [
+            '哪吒2 (2025) 4K 国语中字',
+            '哪吒之魔童鬧海 (2025) 繁中',
+            'Ne.Zha.2.2025.2160p 夸克',
+            '哪吒之魔童闹海 2026 流媒体版',
+            '哪吒之魔童降世 (2019)',
+            'NZ 2025 夸克'
+        ].map((title, id) => ({ id: `n${id}`, attributes: { title } })) });
+        if (url.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        if (url.hostname === 'zuidouyin.com') return Response.json([]);
+        return new Response('夸克');
+    });
+    const path = `/api/resource?q=${encodeURIComponent('哪吒之魔童闹海')}&id=1022789&type=movie&year=2025`;
+    const response = await worker.fetch(request(path), { TMDB_API_KEY: 'test-key' }, ctx);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.deepEqual(data.resources.map(item => item.title), [
+        '哪吒2 (2025) 4K 国语中字',
+        '哪吒之魔童鬧海 (2025) 繁中',
+        'Ne.Zha.2.2025.2160p 夸克',
+        '哪吒之魔童闹海 2026 流媒体版'
+    ]);
+    assert.ok(tmdbPaths.includes('/3/movie/1022789/alternative_titles'));
 });

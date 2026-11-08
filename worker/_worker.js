@@ -2039,6 +2039,24 @@ function extractDoubanAliasQueries(data, originalQuery, year) {
     return uniqueSearchValues(aliases, MAX_QUERY_LENGTH, SEARCH_MAX_ALIAS_QUERIES);
 }
 
+// Douban rejects Worker requests for subject pages with 403 or a challenge.
+// Respect the block: remember it briefly so later views fail fast instead of
+// spending another upstream request on every detail page.
+const DOUBAN_BLOCK_TTL_SECONDS = 1800;
+const doubanBlockKey = () => new Request("https://douban-detail-cache.local/blocked");
+
+function doubanUnavailableResponse() {
+    return jsonResponse({ error: "Douban detail temporarily unavailable" }, 503, {
+        "Retry-After": String(DOUBAN_BLOCK_TTL_SECONDS)
+    });
+}
+
+function markDoubanBlocked(ctx, reason) {
+    logEvent("warn", "douban_detail_blocked", { reason });
+    cacheJson(ctx, doubanBlockKey(), { blocked: true }, DOUBAN_BLOCK_TTL_SECONDS);
+    return doubanUnavailableResponse();
+}
+
 async function handleDoubanDetail(id, ctx) {
     const idCheck = validatePositiveInteger(id);
     if (idCheck.error) return idCheck.error;
@@ -2047,6 +2065,7 @@ async function handleDoubanDetail(id, ctx) {
     const cacheKey = new Request(`https://douban-detail-cache.local/?id=${id}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
+    if (await serveCachedJson(doubanBlockKey())) return doubanUnavailableResponse();
 
     try {
         const fetchUrl = `https://movie.douban.com/subject/${id}/`;
@@ -2058,6 +2077,7 @@ async function handleDoubanDetail(id, ctx) {
         if (!res.ok) {
             logEvent("warn", "douban_detail_rejected", { id, status: res.status });
             await releaseUpstreamResponse(res);
+            if (res.status === 403 || res.status === 429) return markDoubanBlocked(ctx, `status_${res.status}`);
             return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
         }
 
@@ -2097,8 +2117,8 @@ async function handleDoubanDetail(id, ctx) {
             });
 
         const html = await readTextWithLimit(res);
-        if (isChallengePage(html)) {
-            throw createHttpError("Douban returned a challenge page", 502);
+        if (isChallengePage(html) || /<title>\s*(?:禁止访问|登录跳转)[^<]*<\/title>/iu.test(html.slice(0, 4096))) {
+            return markDoubanBlocked(ctx, "challenge");
         }
         await rewriter.transform(new Response(html)).text();
         result.rating = parseFloat(ratingText.trim()) || 0;
@@ -2490,27 +2510,22 @@ function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function createResourceTitleMatcher(query) {
-    const normalized = String(query || "").normalize("NFKC").toLowerCase().trim();
-    const chars = Array.from(normalized);
-    if (!chars.some(char => !RESOURCE_SEPARATOR_PATTERN.test(char))) return () => false;
-    // Punctuation and spacing inside the name may differ between sites.
-    let source = "";
-    let pendingSeparator = false;
-    for (const char of chars) {
-        if (RESOURCE_SEPARATOR_PATTERN.test(char)) {
-            pendingSeparator = true;
-            continue;
-        }
-        if (source && pendingSeparator) source += "[\\p{P}\\p{S}\\s]*";
-        pendingSeparator = false;
-        source += escapeRegExp(char);
-    }
-    const pattern = new RegExp(source, "gu");
+function createResourceTitlePattern(name) {
+    const chars = Array.from(String(name || "").normalize("NFKC").toLowerCase().trim())
+        .filter(char => !RESOURCE_SEPARATOR_PATTERN.test(char));
+    if (chars.length === 0) return null;
+    // Sites differ in punctuation and spacing inside a name: "哈利·波特",
+    // "哈利波特" and "Spider-Man" / "Spider Man" name the same work.
+    return new RegExp(chars.map(escapeRegExp).join("[\\p{P}\\p{S}\\s]{0,3}"), "gu");
+}
+
+function createResourceTitleMatcher(names) {
+    const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
+    if (patterns.length === 0) return () => false;
     const isWord = char => /[\p{L}\p{N}]/u.test(char || "");
     return title => {
         const text = String(title || "").normalize("NFKC").toLowerCase();
-        for (const match of text.matchAll(pattern)) {
+        for (const match of patterns.flatMap(pattern => Array.from(text.matchAll(pattern)))) {
             const before = text.slice(0, match.index);
             const after = text.slice(match.index + match[0].length);
             const previous = Array.from(before).at(-1);
@@ -2530,20 +2545,20 @@ function createResourceTitleMatcher(query) {
     };
 }
 
-// Movies need the release year or a covered range such as "（2019-2023年）".
-// Series threads usually state the latest season's year, so any year from the
-// first air year onwards, or no year at all, is consistent with the series.
+// Movies need the release year, an adjacent year (posts often state the
+// local release, e.g. a December premiere shown the next year) or a covered
+// range such as "（2019-2023年）". Series threads usually state the latest
+// season's year, so any later year, or no year at all, is consistent.
 function resourceTitleHasYear(text, releaseYear, mediaType = null) {
     if (!releaseYear) return true;
     const value = String(text || "").replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " ");
-    if (new RegExp(`(?:^|\\D)${releaseYear}(?:\\D|$)`, "u").test(value)) return true;
     const year = Number(releaseYear);
     for (const range of value.matchAll(/(?:^|\D)((?:19|20)\d{2})\s*(?:-|–|—|~|～|至|到)\s*((?:19|20)\d{2})(?!\d)/gu)) {
-        if (Number(range[1]) <= year && year <= Number(range[2])) return true;
+        if (Number(range[1]) - 1 <= year && year <= Number(range[2]) + 1) return true;
     }
-    if (mediaType !== "tv") return false;
     const years = Array.from(value.matchAll(/(?:^|\D)((?:19|20)\d{2})(?!\d)/gu), match => Number(match[1]));
-    return years.length === 0 || years.some(value => value >= year);
+    if (years.some(value => Math.abs(value - year) <= 1)) return true;
+    return mediaType === "tv" && (years.length === 0 || years.some(value => value >= year));
 }
 
 function isQuarkResourceText(text) {
@@ -2604,10 +2619,9 @@ async function fetchResourcePageText(resourceUrl, referer = `${BY669_BASE}/`, de
     return { text, sourceUrl: safeResourceUrl };
 }
 
-async function fetchBy669Resources(query, deadline = null, releaseYear = "", mediaType = null) {
+async function fetchBy669Resources(query, deadline = null, releaseYear = "", mediaType = null, titleMatcher = null) {
     // By669 full-text search with an appended year takes several seconds
     // longer and returns the same threads, so filter the year locally.
-    const matchesTitle = createResourceTitleMatcher(query);
     const res = await fetchAllowedResource(`${BY669_BASE}/api/discussions?filter[q]=${encodeURIComponent(query)}`, {
         headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] }
     }, deadline);
@@ -2621,6 +2635,7 @@ async function fetchBy669Resources(query, deadline = null, releaseYear = "", med
     if (!data || typeof data !== "object" || !Array.isArray(data.data)) {
         throw createHttpError("By669 returned an invalid response", 502);
     }
+    const matchesTitle = await (titleMatcher || createResourceTitleMatcher(query));
     const resources = [];
 
     for (const item of data.data.slice(0, RESOURCE_MAX_PROVIDER_RESULTS)) {
@@ -2650,11 +2665,10 @@ function collapseHanSpaces(text) {
     return text.replace(/(\p{Script=Han})\s+(?=\p{Script=Han})/gu, "$1");
 }
 
-function parseWpzysResources(html, query, releaseYear = "", mediaType = null) {
+function parseWpzysResources(html, query, releaseYear = "", mediaType = null, matchesTitle = createResourceTitleMatcher(query)) {
     const resources = [];
     let hasResultItems = false;
     const seenUrls = new Set();
-    const matchesTitle = createResourceTitleMatcher(query);
     const itemPattern = /<li\b[^<>]*\bdata-href=["']([^"'<>]*thread-\d+\.htm[^"'<>]*)["'][^<>]*>/gi;
     const itemEndPattern = /<\/li\s*>/gi;
     let match;
@@ -2728,7 +2742,7 @@ function isWpzyEmptySearchPage(html) {
         && /找到约\s*0\s*条结果/.test(stripHtml(html));
 }
 
-async function fetchWpzysResources(query, deadline = null, wpzySession = null, releaseYear = "", mediaType = null) {
+async function fetchWpzysResources(query, deadline = null, wpzySession = null, releaseYear = "", mediaType = null, titleMatcher = null) {
     const res = await fetchAllowedResource(`${WPZYS_BASE}/search.htm?keyword=${encodeURIComponent(query)}`, {
         headers: {
             "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"],
@@ -2752,7 +2766,8 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null, r
         throw createHttpError("WPZY returned a challenge page", 502);
     }
     if (isWpzyLoginPage(html)) throw createResourceAccessError("login_required");
-    const parsed = parseWpzysResources(html, query, releaseYear, mediaType);
+    const parsed = parseWpzysResources(html, query, releaseYear, mediaType,
+        await (titleMatcher || createResourceTitleMatcher(query)));
     if (!parsed.hasResultItems && !isWpzyEmptySearchPage(html)) {
         throw createHttpError("WPZY returned an unrecognized search page", 502);
     }
@@ -2785,12 +2800,11 @@ function extractZuidouyinSections(html) {
     });
 }
 
-async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = null) {
+async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = null, titleMatcher = null) {
     const normalizedQuery = compactSearchText(query);
     if (!normalizedQuery) return [];
     // Share tokens may contain digits that look like a year; only prose counts.
     const hasYear = value => resourceTitleHasYear(value, releaseYear, mediaType);
-    const namesWork = createResourceTitleMatcher(query);
 
     const url = new URL(ZUIDOUYIN_BASE);
     url.searchParams.set("rest_route", "/wp/v2/posts");
@@ -2813,6 +2827,7 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = nul
     }
     const posts = JSON.parse(await readTextWithLimit(response));
     if (!Array.isArray(posts)) throw createHttpError("Zuidouyin returned an invalid response", 502);
+    const namesWork = await (titleMatcher || createResourceTitleMatcher(query));
 
     const matches = new Map();
     for (const post of posts.slice(0, ZUIDOUYIN_SEARCH_PAGE_SIZE)) {
@@ -3014,7 +3029,7 @@ async function handleResourceSearch(query, env, ctx, { refresh = false, id = nul
     const response = await withInFlight(
         ctx,
         `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
-        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession, identity })
+        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession, identity, env })
     );
     const clientResponse = response.clone();
     // The internal cache is keyed by the server's login state. Browser caches
@@ -3026,12 +3041,52 @@ async function handleResourceSearch(query, env, ctx, { refresh = false, id = nul
     });
 }
 
-async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession, identity = {} } = {}) {
+const RESOURCE_ALIAS_TIMEOUT_MS = 3000;
+const RESOURCE_MAX_ALIASES = 8;
+const RESOURCE_ALIAS_REGIONS = new Set(["CN", "TW", "HK", "MO", "SG", "US", "GB"]);
+
+// Forum posts may name a work by its original or regional title ("哪吒2",
+// "駭客任務", "The Matrix"). Names come from TMDB for the selected identity;
+// the lookup is cached and bounded so it never delays the provider searches.
+async function getResourceTitleAliases(query, identity, env, ctx) {
+    if (!identity.id || !identity.mediaType || !getTmdbAuth(env)) return [];
+    const deadline = createDeadline(RESOURCE_ALIAS_TIMEOUT_MS);
+    const path = `/${identity.mediaType}/${identity.id}`;
+    const [detail, alternatives] = await Promise.allSettled([
+        // Same request as the detail page, so it is normally a cache hit.
+        fetchTmdbJson(path, { language: "zh-CN", append_to_response: "external_ids,credits" }, env, ctx, { deadline }),
+        fetchTmdbJson(`${path}/alternative_titles`, {}, env, ctx, { deadline })
+    ]);
+    const names = [];
+    if (detail.status === "fulfilled") {
+        names.push(detail.value.title, detail.value.name, detail.value.original_title, detail.value.original_name);
+    }
+    if (alternatives.status === "fulfilled") {
+        const list = alternatives.value?.titles || alternatives.value?.results;
+        for (const item of Array.isArray(list) ? list : []) {
+            if (RESOURCE_ALIAS_REGIONS.has(item?.iso_3166_1)) names.push(item.title);
+        }
+    }
+    const seen = new Set([compactSearchText(query)]);
+    const aliases = [];
+    for (const name of names) {
+        if (typeof name !== "string" || name.length > MAX_QUERY_LENGTH) continue;
+        const compact = compactSearchText(name);
+        // Short Latin names ("F1", "Up") match too many unrelated posts.
+        if (!compact || seen.has(compact) || (/^[\p{Script=Latin}\d]+$/u.test(compact) ? compact.length < 4 : compact.length < 2)) continue;
+        seen.add(compact);
+        aliases.push(name.trim());
+        if (aliases.length >= RESOURCE_MAX_ALIASES) break;
+    }
+    return aliases;
+}
+
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession, identity = {}, env = {} } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v18-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
+    const cacheKey = new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) return cached;
 
@@ -3047,11 +3102,15 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
 
     try {
         const deadline = createDeadline(RESOURCE_TOTAL_TIMEOUT_MS);
-        // Search by title only; each provider verifies the year in its titles.
+        // Search by title only; each provider verifies the year in its titles
+        // and accepts the work's aliases once it has its own response.
+        const titleMatcher = getResourceTitleAliases(query, identity, env, ctx)
+            .catch(() => [])
+            .then(aliases => createResourceTitleMatcher([query, ...aliases]));
         const [by669Result, wpzysResult, zuidouyinResult] = await Promise.allSettled([
-            fetchBy669Resources(query, deadline, identity.year, identity.mediaType),
-            fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType),
-            fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType)
+            fetchBy669Resources(query, deadline, identity.year, identity.mediaType, titleMatcher),
+            fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType, titleMatcher),
+            fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType, titleMatcher)
         ]);
 
         const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });
@@ -3275,7 +3334,10 @@ function wikiTitleMatches(query, title) {
     return scoreSearchText(query, baseTitle) >= 0.86;
 }
 
-function wikiYearMatches(year, text) {
+// Series often premiere across a year boundary or on different dates per
+// region ("繁花" premiered on 2023-12-27, Wikipedia says 2024), so a series
+// accepts an adjacent year. Films keep the exact year to separate remakes.
+function wikiYearMatches(year, text, mediaType = null) {
     if (!year) return true;
     const evidence = String(text || "");
     const matches = [...evidence.matchAll(/(?:19|20)\d{2}/g)];
@@ -3304,14 +3366,30 @@ function wikiYearMatches(year, text) {
     // Prefer explicit definitions/release dates. Keep multiple genuine regional
     // release years; do not guess a single year merely from their order.
     const years = workYears.length ? workYears : possibleYears;
-    return matches.length === 0 || years.includes(year);
+    if (matches.length === 0 || years.includes(year)) return true;
+    return mediaType === "tv" && years.some(value => Math.abs(Number(value) - Number(year)) <= 1);
+}
+
+// Wikimedia asks API clients to identify themselves with a contact URL
+// instead of a browser User-Agent. zh-CN selects simplified Chinese text.
+const WIKI_HEADERS = Object.freeze({
+    "User-Agent": `iPlay/${RELEASE_VERSION} (https://iplay.hackx64.eu.org; https://github.com/txdywy/iplay)`,
+    "Accept-Language": "zh-CN"
+});
+const WIKI_MAX_SUMMARY_CANDIDATES = 10;
+
+// Search ranking can omit the article itself (狂飙 returns 狂飆, 狂飙突进运动,
+// …). Standard disambiguated article names are cheap, exact candidates.
+function getWikiDirectTitles(query, { mediaType = null, year = "" } = {}) {
+    const kinds = mediaType === "movie" ? ["电影"] : mediaType === "tv" ? ["电视剧", "动画"] : ["电视剧", "电影"];
+    return kinds.flatMap(kind => [...(year && kind !== "动画" ? [`${query} (${year}年${kind})`] : []), `${query} (${kind})`]);
 }
 
 async function searchZhWikiTitles(query, deadline = null, { mediaType = null, year = "" } = {}) {
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
     const searchRes = await fetchUpstream(
         `https://zh.wikipedia.org/w/api.php?action=query&list=search&srlimit=10&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
-        { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } },
+        { headers: WIKI_HEADERS },
         remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
     );
     if (!searchRes.ok) {
@@ -3323,12 +3401,12 @@ async function searchZhWikiTitles(query, deadline = null, { mediaType = null, ye
     if (!Array.isArray(searchData?.query?.search)) throw createHttpError("Wiki returned an invalid search response", 502);
     const candidates = searchData.query.search
         .filter(item => isObject(item) && wikiTitleMatches(query, item.title)
-            && wikiYearMatches(year, getWikiTitleDisambiguator(item.title)))
+            && wikiYearMatches(year, getWikiTitleDisambiguator(item.title), mediaType))
         .filter(item => !mediaType || !getWikiTitleKind(item.title) || getWikiTitleKind(item.title) === mediaType);
     if (mediaType || year) candidates.sort((a, b) => (
-        Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(b.title))
+        Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(b.title), mediaType)
             && /(?:19|20)\d{2}/u.test(getWikiTitleDisambiguator(b.title)))
-            - Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(a.title))
+            - Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(a.title), mediaType)
                 && /(?:19|20)\d{2}/u.test(getWikiTitleDisambiguator(a.title)))
         || Number(Boolean(mediaType) && getWikiTitleKind(b.title) === mediaType)
             - Number(Boolean(mediaType) && getWikiTitleKind(a.title) === mediaType)
@@ -3348,20 +3426,22 @@ async function handleWikiZh(query, ctx, options = {}) {
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
 
-    const cacheKey = new Request(`https://wiki-zh-v6-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
+    const cacheKey = new Request(`https://wiki-zh-v7-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const titles = await searchZhWikiTitles(query, deadline, { mediaType, year });
-        if (titles.length === 0) return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
+        const searchTitles = await searchZhWikiTitles(query, deadline, { mediaType, year });
+        const seen = new Set(searchTitles.map(title => title.normalize("NFKC")));
+        const titles = [...searchTitles, ...getWikiDirectTitles(query, { mediaType, year })
+            .filter(title => !seen.has(title))].slice(0, WIKI_MAX_SUMMARY_CANDIDATES + 3);
 
         for (const title of titles) {
             if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
             const summaryRes = await fetchUpstream(
                 `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-                { headers: { "User-Agent": DOUBAN_SEARCH_HEADERS["User-Agent"] } },
+                { headers: WIKI_HEADERS },
                 remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
             );
 
@@ -3392,9 +3472,9 @@ async function handleWikiZh(query, ctx, options = {}) {
             if (summaryData.type === "disambiguation"
                 || !summaryData.extract.trim()
                 || !wikiTitleMatches(query, summaryData.title)
-                || !wikiYearMatches(year, getWikiTitleDisambiguator(summaryData.title))
-                || !wikiYearMatches(year, descriptionEvidence)
-                || !wikiYearMatches(year, introEvidence)
+                || !wikiYearMatches(year, getWikiTitleDisambiguator(summaryData.title), mediaType)
+                || !wikiYearMatches(year, descriptionEvidence, mediaType)
+                || !wikiYearMatches(year, introEvidence, mediaType)
                 || (mediaType && titleKind && titleKind !== mediaType)
                 || (mediaType && [descriptionKind, introKind].some(kind => kind && kind !== mediaType))
                 || (mediaType && !descriptionKind && !introKind && titleKind !== mediaType)) {

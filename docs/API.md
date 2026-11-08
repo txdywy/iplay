@@ -357,6 +357,8 @@ curl "https://iplayw.hackx64.eu.org/api/douban/detail?id=26266893"
 ```
 
 > 使用 Cloudflare HTMLRewriter 实时解析豆瓣详情页，提取评分、类型、简介和 IMDb ID。
+>
+> 豆瓣会以 `403`、`429` 或验证页拒绝 Worker 访问详情页。Worker 不绕过该限制：收到拒绝后返回 `503` 与 `Retry-After: 1800`，并在 30 分钟内对所有条目直接返回 `503`，不再请求上游。前端收到 `503` 后在同一会话中 30 分钟内跳过豆瓣搜索与详情请求，评分改由 TMDB 提供。
 
 ---
 
@@ -375,7 +377,7 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `q` | string | 是 | 搜索关键词 |
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
-| `year` | number | 否 | 已选作品年份。上游只按片名搜索，年份在本地校验：电影要求标题含该年份或覆盖该年份的区间（如「2019-2023」）；剧集接受不早于首播年的年份或未写年份的标题（帖子常写最新一季年份）。醉都音合集的小标题未写年份时，可由帖子标题或该作品小节的正文证明；分享链接中的数字不计为年份。 |
+| `year` | number | 否 | 已选作品年份。上游只按片名搜索，年份在本地校验：电影要求标题含该年份、相邻年份（帖子常写本地上映年份）或覆盖该年份的区间（如「2019-2023」）；剧集还接受更晚的年份或未写年份的标题（帖子常写最新一季年份）。醉都音合集的小标题未写年份时，可由帖子标题或该作品小节的正文证明；分享链接中的数字不计为年份。 |
 | `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
 
 **Example Request：**
@@ -416,7 +418,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 }
 ```
 
-`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。三个来源的帖子标题都必须在片名边界处包含所选作品名：片名前后须是标点、空白、年份或常见发布词（如「电视剧」「全39集」「国语」「年番」），因此搜索「狂飙」不会返回《公路狂飙》《F1：狂飙飞车》，「流浪地球2」也不会作为「流浪地球」的结果。WPZY 关键词高亮插入的空格在匹配时忽略。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
+`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。三个来源的帖子标题都必须在片名边界处包含所选作品名：片名前后须是标点、空白、年份或常见发布词（如「电视剧」「全39集」「国语」「年番」），因此搜索「狂飙」不会返回《公路狂飙》《F1：狂飙飞车》，「流浪地球2」也不会作为「流浪地球」的结果。WPZY 关键词高亮插入的空格在匹配时忽略。提供 `id` 与 `type` 时，Worker 并行读取该作品的 TMDB 原名及中国大陆、港台、新加坡、美英地区别名（最多 8 个，3 秒上限，结果缓存），标题含任一名称即视为匹配，例如「哪吒之魔童闹海」也接受「哪吒2」「哪吒之魔童鬧海」「Ne Zha 2」；少于 4 个字母的拉丁别名不参与匹配。名称内部的标点与空格差异（「哈利·波特」/「哈利波特」）不影响匹配。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
 
 详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
 
@@ -474,6 +476,8 @@ GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 
 类型与年份校验使用消歧义后缀、摘要描述和中文简介首句中的作品身份信息，不把片名中的“小说/漫画/电视”或数字当作类型/发行年份，也不把改编原著的类型和年份当作电影自身信息。可靠年份证据与所选年份冲突时返回 `404` 并保留 TMDB 简介；同名小说和消歧义页仍被拒绝。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
 
+Worker 先使用搜索结果，再尝试标准条目名（如 `狂飙 (2023年电视剧)`、`狂飙 (电视剧)`、`片名 (电影)`），因为搜索排名可能遗漏条目本身。剧集首播常跨年或各地区日期不同（《繁花》2023-12-27 首播，维基记为 2024 年），因此剧集接受相邻年份；电影仍要求年份一致以区分翻拍。请求按 Wikimedia 规范使用 `iPlay/{version} (站点 URL)` 作为 User-Agent，并以 `Accept-Language: zh-CN` 获取简体文本。
+
 多年份简介优先使用明确作品定义、首映或发行年份；修复、重新上映和导演获奖年份不能覆盖原作年份。两个真正的地区发行年份仍可分别匹配。标题消歧义年份、描述和引言分别校验，后两者出现所选年份不能抵消标题中的明确冲突。
 
 **Example Request：**
@@ -509,9 +513,9 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v18-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v19-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v6-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v7-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 
@@ -581,6 +585,7 @@ const detail = await DoubanAPI.getDetail('26266893');
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `search` | `(query, options = {})` | 豆瓣原始搜索结果数组 |
+| `isAvailable` | `()` | 豆瓣详情返回 `503` 后 30 分钟内为 `false`，期间 `search` 返回 `[]`、`getDetail` 直接抛出 `status: 503` 的错误 |
 | `getDetail` | `(id, options = {})` | `{ rating, votes, genres[], summary, imdbId }` |
 
 ### `WikiAPI`

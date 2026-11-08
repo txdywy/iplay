@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.33] - 2026-11-08
+
+### Fixed
+
+- Stop waiting on Douban detail pages that Douban blocks for Worker requests. A 403, 429 or challenge page now returns `503` with `Retry-After` and opens a 30 minute circuit for every subject; the page skips Douban for the same period and keeps the TMDB rating.
+- Find Chinese Wikipedia summaries the search ranking omits by trying standard article names such as `狂飙 (电视剧)`, and accept an adjacent premiere year for series (《繁花》 premiered on 2023-12-27; Wikipedia lists 2024).
+- Identify Wikipedia requests with an `iPlay/{version}` User-Agent and contact URL as Wikimedia requires, and request simplified Chinese text.
+- Match resource posts that use the work's TMDB original or regional titles (「哪吒2」, 「哪吒之魔童鬧海」, 「Ne Zha 2」), ignore punctuation and spacing inside names, and accept an adjacent year for movies.
+
 ## [1.0.32] - 2026-11-07
 
 ### Fixed

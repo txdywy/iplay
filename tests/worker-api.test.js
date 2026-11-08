@@ -1412,10 +1412,44 @@ test('Douban detail rejects challenge and empty successful pages without caching
             { waitUntil() {} }
         );
 
-        assert.equal(response.status, 502);
-        assert.match((await response.json()).error, /Douban returned/);
+        if (name === 'challenge') {
+            assert.equal(response.status, 503);
+            assert.equal(response.headers.get('retry-after'), '1800');
+        } else {
+            assert.equal(response.status, 502);
+            assert.match((await response.json()).error, /Douban returned/);
+        }
     }
-    assert.equal(cachePuts.length, 0);
+    // A challenge only records the short-lived block, never a detail result.
+    assert.deepEqual(cachePuts.map(([request]) => request.url), ['https://douban-detail-cache.local/blocked']);
+});
+
+test('a Douban 403 opens a short circuit that skips later upstream detail requests', async t => {
+    const previous = { caches: globalThis.caches, fetch: globalThis.fetch };
+    const cache = new Map();
+    let upstreamCalls = 0;
+    globalThis.caches = { default: {
+        match: async request => cache.get(request.url)?.clone() || null,
+        put: async (request, response) => { cache.set(request.url, response.clone()); }
+    } };
+    globalThis.fetch = async () => {
+        upstreamCalls += 1;
+        return new Response('forbidden', { status: 403 });
+    };
+    t.after(() => Object.assign(globalThis, previous));
+    const writes = [];
+    const ctx = { waitUntil(promise) { writes.push(promise); } };
+    const call = id => worker.fetch(new Request(`https://worker.test/api/douban/detail?id=${id}`, {
+        headers: { 'cf-connecting-ip': `test-douban-circuit-${id}` }
+    }), {}, ctx);
+
+    const first = await call(1001);
+    await Promise.all(writes);
+    assert.equal(first.status, 503);
+    const second = await call(1002);
+    assert.equal(second.status, 503);
+    assert.equal(upstreamCalls, 1, 'the block applies to every subject until it expires');
+    assert.equal(cache.get('https://douban-detail-cache.local/blocked').headers.get('cache-control'), 'public, max-age=1800');
 });
 
 test('selected person lookup rejects an invalid TMDB person payload before caching', async t => {
