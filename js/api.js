@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.32';
+import { RELEASE_VERSION } from './release.js?v=1.0.33';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -178,12 +178,33 @@ export const TmdbAPI = {
     }
 };
 
+// The Worker answers 503 while Douban blocks its subject pages. Skip both
+// Douban requests for a while instead of waiting on them for every title.
+const DOUBAN_UNAVAILABLE_MS = 30 * 60 * 1000;
+let doubanUnavailableUntil = 0;
+
+function doubanUnavailableError() {
+    const error = new Error('Douban detail temporarily unavailable');
+    error.status = 503;
+    return error;
+}
+
 export const DoubanAPI = {
+    isAvailable() {
+        return Date.now() >= doubanUnavailableUntil;
+    },
     async search(query, options = {}) {
+        if (!DoubanAPI.isAvailable()) return [];
         return fetchWithTimeout(`${API_BASE}/api/douban/search?q=${encodeURIComponent(query)}`, options);
     },
     async getDetail(id, options = {}) {
-        return fetchWithTimeout(`${API_BASE}/api/douban/detail?id=${encodeURIComponent(id)}`, options);
+        if (!DoubanAPI.isAvailable()) throw doubanUnavailableError();
+        try {
+            return await fetchWithTimeout(`${API_BASE}/api/douban/detail?id=${encodeURIComponent(id)}`, options);
+        } catch (error) {
+            if (error?.status === 503) doubanUnavailableUntil = Date.now() + DOUBAN_UNAVAILABLE_MS;
+            throw error;
+        }
     }
 };
 
