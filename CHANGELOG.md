@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.37] - 2026-11-08
+
+### Fixed
+
+- Show toast messages such as "提取码已复制" again. Tailwind 4 positions the toast with the `translate` property, and the script moved `transform`, so the toast stayed below the viewport.
+- Pressing Enter during a slow search starts the new query; the disabled search button blocked form submission. Repeating Enter for the query already running does not restart it.
+- Replace the preference genres no data source returns (轻松, 职业, 血腥, 暴力, 悲剧) with 家庭, 动画 and 战争; split TMDB's `War & Politics`, `Sci-Fi & Fantasy` and `动作冒险`; and add Douban genres to the score once the Douban match is confirmed, so 灾难 and 战争 can apply.
+- An emptied preference field keeps the default instead of saving 0, and a failed reset no longer reports success.
+- Show "未找到第 N 季" only for a `404`; a timeout or outage on a season search says the details are temporarily unavailable.
+- Before the detail request finishes, the resource lists say they are waiting rather than "nothing found".
+- Move focus to the retry button when a failure hides the control that started the load, restore the actor list meta line after a failed page, count only the actor candidates shown, and replace raw JSON parse errors with a readable message.
+- Scan Quark passwords in linear time. A "密码" label followed by a long whitespace run in a forum post backtracked quadratically: 200,000 spaces took 95 seconds of CPU.
+- Decode HTML entities once, so `&amp;lt;` stays the text `&lt;`; decode entities in Douban genres and summaries.
+- Key the Wikipedia cache on the request instead of the TMDB adjacent-year lookup, so a cache hit no longer waits up to 3 seconds on TMDB or misses when TMDB is slow.
+- Report upstream `401`/`403` as `502` rather than the visitor's own authorization failure, and send `Retry-After` with `429` and `503`. Douban search blocks, throttling and challenge pages return `503`, which opens the page's Douban back-off.
+- A forced resource refresh returns the cached result, marked `X-iPlay-Stale: 1`, when every provider fails.
+
+### Changed
+
+- Cache empty Douban suggestions for 1 hour instead of 24.
+- Key poster results with a TMDB identity on the identity only (`poster-v7-cache.local`), so different title spellings share one entry.
+
 ## [1.0.36] - 2026-11-08
 
 ### Fixed

@@ -202,14 +202,14 @@ describe('calculateRecommendationScore', () => {
     const result = calculateRecommendationScore({
       rating: 5.0,
       votes: 1000,
-      genres: ['恐怖', '血腥'],
+      genres: ['恐怖', '战争'],
       hasWiki: false,
       source: 'tmdb',
       summary: ''
     });
     expect(result.score).toBeLessThan(50);
     expect(result.report.cons).toContain('包含恐怖元素');
-    expect(result.report.cons).toContain('可能含有血腥镜头');
+    expect(result.report.cons).toContain('战争题材，可能含暴力或血腥镜头');
   });
 
   it('无评分 + 无 Wiki + 无简介 => 扣分', () => {

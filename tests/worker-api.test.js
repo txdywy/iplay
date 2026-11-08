@@ -2147,7 +2147,7 @@ test('cacheable responses expose their cache policy to clients', async t => {
             put: async () => undefined
         }
     };
-    globalThis.fetch = async () => Response.json([]);
+    globalThis.fetch = async () => Response.json([{ id: '1', title: 'Cache Header' }]);
     t.after(() => {
         globalThis.caches = originalCaches;
         globalThis.fetch = originalFetch;

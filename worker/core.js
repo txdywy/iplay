@@ -89,12 +89,20 @@ export function createHttpError(message, status = 500, publicMessage = message) 
     return error;
 }
 
+// Upstream credential statuses describe the Worker's own requests, not the
+// visitor's: a revoked TMDB key must not reach the browser as its own 401/403.
+function toClientErrorStatus(status) {
+    return status === 401 || status === 403 || status === 407 ? 502 : status;
+}
+
 export function errorResponse(error, fallbackStatus = 502) {
-    const status = getErrorStatus(error, fallbackStatus);
+    const upstreamStatus = getErrorStatus(error, fallbackStatus);
+    const status = toClientErrorStatus(upstreamStatus);
     const publicMessage = error && typeof error === "object" ? publicHttpErrors.get(error) : null;
     return jsonResponse({ error: publicMessage || (status === 504
         ? "Upstream request timed out"
-        : status === 500 ? "Internal Server Error" : "Upstream service unavailable") }, status);
+        : status === 500 ? "Internal Server Error" : "Upstream service unavailable") },
+    status, status === 429 || status === 503 ? { "Retry-After": "60" } : {});
 }
 
 export const UPSTREAM_TIMEOUT_MS = 10000;
@@ -413,6 +421,8 @@ export function uniqueSearchValues(values, maxLength = 100, maxValues = 6) {
     return result;
 }
 
+const NAMED_HTML_ENTITIES = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " " };
+
 export function decodeHtmlEntities(value) {
     if (!value) return "";
 
@@ -421,15 +431,11 @@ export function decodeHtmlEntities(value) {
         return number > 0 && number <= 0x10ffff && !(number >= 0xd800 && number <= 0xdfff)
             ? String.fromCodePoint(number) : "\uFFFD";
     };
-    return value
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;|&apos;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&#(\d+);/g, (_, code) => codePoint(code, 10))
-        .replace(/&#x([0-9a-f]+);/gi, (_, code) => codePoint(code, 16));
+    // Decode in one pass: "&amp;lt;" is the literal text "&lt;", not "<".
+    return value.replace(/&(?:(amp|quot|apos|lt|gt|nbsp)|#(\d+)|#x([0-9a-f]+));/gi, (entity, name, decimal, hex) => {
+        if (name) return NAMED_HTML_ENTITIES[name.toLowerCase()] ?? entity;
+        return decimal ? codePoint(decimal, 10) : codePoint(hex, 16);
+    });
 }
 
 export function stripHtml(value) {

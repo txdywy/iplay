@@ -2,20 +2,51 @@
  * 个性化推荐算法
  */
 
+// Keys must be genre names the data sources actually return: TMDB zh-CN
+// genres (after normalizeGenres) and Douban detail genres.
 const PREFERENCE_WEIGHTS = {
     '喜剧': { score: 2.5, reason: '符合喜剧偏好' },
-    '轻松': { score: 2.0, reason: '基调轻松减压' },
     '爱情': { score: 1.5, reason: '包含浪漫/Melo元素' },
+    '家庭': { score: 1.5, reason: '温情家庭题材' },
     '剧情': { score: 1.0, reason: '剧情导向' },
-    '职业': { score: 1.5, reason: '职场背景设定' },
+    '动画': { score: 1.0, reason: '动画作品' },
     '恐怖': { score: -3.0, reason: '包含恐怖元素' },
-    '血腥': { score: -3.0, reason: '可能含有血腥镜头' },
-    '暴力': { score: -2.5, reason: '存在暴力情节' },
     '惊悚': { score: -2.0, reason: '惊悚刺激氛围' },
-    '犯罪': { score: -1.0, reason: '犯罪题材' },
-    '悲剧': { score: -3.0, reason: '剧情致郁/苦大仇深' },
-    '灾难': { score: -1.5, reason: '环境压抑' }
+    '战争': { score: -2.0, reason: '战争题材，可能含暴力或血腥镜头' },
+    '灾难': { score: -1.5, reason: '环境压抑' },
+    '犯罪': { score: -1.0, reason: '犯罪题材' }
 };
+
+// TMDB leaves some TV genres untranslated or combined ("War & Politics",
+// "动作冒险"); Douban uses "纪录片". Split them into the names used above.
+const GENRE_ALIASES = new Map(Object.entries({
+    'war & politics': ['战争', '政治'],
+    'sci-fi & fantasy': ['科幻', '奇幻'],
+    'action & adventure': ['动作', '冒险'],
+    '动作冒险': ['动作', '冒险'],
+    'kids': ['儿童'],
+    'news': ['新闻'],
+    'reality': ['真人秀'],
+    'soap': ['肥皂剧'],
+    'talk': ['脱口秀'],
+    '纪录片': ['纪录']
+}));
+
+/** Normalize and de-duplicate genre names from TMDB and Douban. */
+export function normalizeGenres(...genreLists) {
+    const result = [];
+    for (const list of genreLists) {
+        if (!Array.isArray(list)) continue;
+        for (const genre of list) {
+            if (typeof genre !== 'string' || !genre.trim()) continue;
+            const name = genre.trim();
+            for (const normalized of GENRE_ALIASES.get(name.toLowerCase()) || [name]) {
+                if (!result.includes(normalized)) result.push(normalized);
+            }
+        }
+    }
+    return result;
+}
 
 const PREFERENCE_STORAGE_KEY = 'iplay_preference_weights';
 const PREFERENCE_SCORE_LIMIT = 5;
@@ -89,6 +120,8 @@ export function getPreferenceSettings() {
 export function savePreferenceWeights(scores) {
     const stored = {};
     for (const [genre, value] of Object.entries(scores || {})) {
+        // An emptied field means "use the default", not a score of 0.
+        if (value === null || value === undefined || String(value).trim() === '') continue;
         const score = Number(value);
         if (UNSAFE_PREFERENCE_KEYS.has(genre) || !Number.isFinite(score)) continue;
         const defaults = PREFERENCE_WEIGHTS[genre];
@@ -132,9 +165,7 @@ export function calculateRecommendationScore(data = {}) {
         : 0;
     const numericVotes = Number(votes);
     const safeVotes = Number.isFinite(numericVotes) && numericVotes > 0 ? numericVotes : 0;
-    const safeGenres = Array.isArray(genres)
-        ? [...new Set(genres.filter(genre => typeof genre === 'string').map(genre => genre.trim()).filter(Boolean))]
-        : [];
+    const safeGenres = normalizeGenres(genres);
 
     let baseScore;
     if (safeRating >= 9.0) {

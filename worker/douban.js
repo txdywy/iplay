@@ -9,6 +9,7 @@ import {
     cacheJson,
     compactSearchText,
     createHttpError,
+    decodeHtmlEntities,
     deleteCachedResponse,
     errorResponse,
     fetchUpstream,
@@ -57,24 +58,46 @@ export async function handleDoubanSearch(query, ctx) {
     if (cached) return cached;
 
     try {
-        const res = await fetchUpstream(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
-            headers: DOUBAN_SEARCH_HEADERS
-        });
-
-        if (!res.ok) {
-            await releaseUpstreamResponse(res);
-            return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
-        }
-
-        const data = JSON.parse(await readTextWithLimit(res));
-        if (!Array.isArray(data)) {
-            throw createHttpError("Douban returned an invalid response", 502);
-        }
-        return cacheJson(ctx, cacheKey, data, 86400);
+        const data = await fetchDoubanSuggestions(query);
+        return cacheJson(ctx, cacheKey, data, getDoubanSuggestionMaxAge(data));
     } catch (e) {
         logEvent("error", "douban_search_failed", { error: logErrorMessage(e) });
         return errorResponse(e);
     }
+}
+
+// A newly announced title may have no suggestions yet; recheck it sooner.
+function getDoubanSuggestionMaxAge(data) {
+    return data.length ? 86400 : 3600;
+}
+
+async function fetchDoubanSuggestions(query, deadline = null) {
+    const res = await fetchUpstream(
+        `https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`,
+        { headers: DOUBAN_SEARCH_HEADERS },
+        remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
+    );
+
+    if (!res.ok) {
+        await releaseUpstreamResponse(res);
+        // Douban blocking or throttling the Worker is a temporary outage for the visitor.
+        if (res.status === 403 || res.status === 429) {
+            throw createHttpError(`Douban rejected with status ${res.status}`, 503, "Douban unavailable");
+        }
+        throw createHttpError(`Douban rejected with status ${res.status}`, res.status, `Douban rejected with status ${res.status}`);
+    }
+
+    // A followed redirect to Douban's verification page arrives as HTML with 200.
+    const body = await readTextWithLimit(res);
+    if (isChallengePage(body)) throw createHttpError("Douban search returned a challenge page", 503, "Douban unavailable");
+    let data;
+    try {
+        data = JSON.parse(body);
+    } catch {
+        throw createHttpError("Douban returned an invalid response", 502);
+    }
+    if (!Array.isArray(data)) throw createHttpError("Douban returned an invalid response", 502);
+    return data;
 }
 
 export async function fetchDoubanAliasCandidates(query, ctx, deadline = null) {
@@ -90,25 +113,13 @@ export async function fetchDoubanAliasCandidates(query, ctx, deadline = null) {
     }
 
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-    const res = await fetchUpstream(
-        `https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`,
-        { headers: DOUBAN_SEARCH_HEADERS },
-        remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
-    );
-
-    if (!res.ok) {
-        await releaseUpstreamResponse(res);
-        throw createHttpError(`Douban rejected with status ${res.status}`, res.status);
-    }
-
-    const data = await readJsonWithLimit(res);
-    if (!Array.isArray(data)) throw createHttpError("Douban returned an invalid response", 502);
+    const data = await fetchDoubanSuggestions(query, deadline);
 
     const cacheResponse = new Response(JSON.stringify(data), {
         status: 200,
         headers: {
             "Content-Type": "application/json;charset=UTF-8",
-            "Cache-Control": "public, max-age=86400"
+            "Cache-Control": `public, max-age=${getDoubanSuggestionMaxAge(data)}`
         }
     });
     scheduleCachePut(ctx, cacheKey, cacheResponse);
@@ -223,8 +234,9 @@ export async function handleDoubanDetail(id, ctx) {
         await rewriter.transform(new Response(html)).text();
         result.rating = parseFloat(ratingText.trim()) || 0;
         result.votes = parseInt(votesText.trim(), 10) || 0;
-        result.genres = [...new Set(result.genres.map(genre => genre.trim()).filter(Boolean))];
-        result.summary = result.summary.replace(/\s+/g, ' ').trim();
+        // HTMLRewriter text chunks are raw markup text; entities are not decoded.
+        result.genres = [...new Set(result.genres.map(genre => decodeHtmlEntities(genre).trim()).filter(Boolean))];
+        result.summary = decodeHtmlEntities(result.summary).replace(/\s+/g, ' ').trim();
         if (!result.rating && !result.votes && result.genres.length === 0 && !result.summary && !result.imdbId) {
             throw createHttpError("Douban returned an invalid detail page", 502);
         }

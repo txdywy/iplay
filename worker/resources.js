@@ -75,7 +75,9 @@ const RESOURCE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // into a different, apparently valid share.
 const RESOURCE_LINK_PATTERN = /(?:https?:\/\/|(?:pan|drive)\.quark\.cn\/s\/)[^\s"'<>\\(),\x5B\x5D，。；;、（）【】《》]+/gi;
 
-const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*[：:=]?\s*([a-z0-9]{2,12})(?![a-z0-9])/gi;
+// Keep a single whitespace run on each side of the optional separator. Two
+// adjacent `\s*` let a long blank run backtrack quadratically on forum HTML.
+const QUARK_PASSWORD_PATTERN = /(?:提取码|密码|访问码)\s*(?:[：:=]\s*)?([a-z0-9]{2,12})(?![a-z0-9])/gi;
 
 const BY669_BASE = "https://by669.org";
 
@@ -1026,6 +1028,8 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
         if (failedProviders.length === providerResults.length) {
             logEvent("warn", "resource_providers_failed",
                 Object.fromEntries(failedProviders.map(([source, result]) => [source, logErrorMessage(result.reason)])));
+            // A forced refresh must not replace a usable cached answer with an error.
+            if (refresh && cached) return withStaleMarker(cached);
             return jsonResponse({ error: "Resource providers unavailable" }, 502);
         }
 
@@ -1072,6 +1076,14 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
         const cacheContext = isPartial && previousComplete ? null : ctx;
         return cacheJson(cacheContext, cacheKey, result, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
+        if (refresh && cached) return withStaleMarker(cached);
         return errorResponse(e);
     }
+}
+
+function withStaleMarker(response) {
+    const headers = new Headers(response.headers);
+    headers.set("Cache-Control", "no-store");
+    headers.set("X-iPlay-Stale", "1");
+    return new Response(response.body, { status: response.status, headers });
 }
