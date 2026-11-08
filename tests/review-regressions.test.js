@@ -641,8 +641,7 @@ test('Wiki search never fetches an unrelated first result', async t => {
     assert.equal(response.status, 404);
     const summaries = urls.filter(url => new URL(url).pathname.includes('/summary/'))
         .map(url => decodeURIComponent(new URL(url).pathname.split('/summary/')[1]));
-    assert.deepEqual(summaries, ['不存在的片名 (电视剧)', '不存在的片名 (电影)'],
-        'only standard article names for the query itself are tried');
+    assert.deepEqual(summaries, [], 'standard names are resolved first and missing pages are never fetched');
     assert.equal(ctx.writes.length, 0);
 });
 
@@ -800,8 +799,7 @@ test('Wiki classifies adaptations by their own medium and keeps explicit novel s
     extract = 'Shared Work is a novel adapted into a television series.';
     const response = await worker.fetch(request('/api/wiki/zh?q=Shared%20Work&type=tv'), {}, ctx);
     assert.equal(response.status, 404);
-    assert.deepEqual(summaries.slice(4), ['Shared Work (电视剧)', 'Shared Work (动画)'],
-        'explicit novel disambiguator must be rejected before summary fetch; only standard names follow');
+    assert.equal(summaries.length, 4, 'explicit novel disambiguator must be rejected before summary fetch');
     title = 'Shared Work';
     description = '根据电视剧改编的小说';
     extract = '《Shared Work》是一部小说。';
@@ -1193,27 +1191,34 @@ test('resource years accept covered ranges for movies and later seasons for seri
     ]);
 });
 
-test('Wiki tries the standard article name when search ranking omits it', async t => {
+test('Wiki resolves standard article names across script variants when search ranking omits them', async t => {
     const summaries = [];
+    let lookup = null;
     const ctx = mockUpstreams(t, async (input, options) => {
         const url = new URL(input);
         assert.match(new globalThis.Headers(options?.headers).get('User-Agent'), /^iPlay\/\S+ \(https:\/\/iplay\.hackx64\.eu\.org/);
         assert.equal(new globalThis.Headers(options?.headers).get('Accept-Language'), 'zh-CN');
-        if (!url.pathname.includes('/summary/')) {
+        if (url.searchParams.get('list') === 'search') {
             return Response.json({ query: { search: [{ title: '狂飆' }, { title: '狂飙突进运动' }] } });
+        }
+        if (url.searchParams.has('titles')) {
+            lookup = url.searchParams;
+            return Response.json({ query: {
+                converted: [{ from: '狂飙 (电视剧)', to: '狂飆 (電視劇)' }],
+                pages: [{ title: '狂飙 (2023年电视剧)', missing: true }, { title: '狂飆 (電視劇)', pageid: 1 }]
+            } });
         }
         const title = decodeURIComponent(url.pathname.split('/summary/')[1]);
         summaries.push(title);
-        if (title === '狂飙 (电视剧)') {
-            return Response.json({ title, description: '2023年中国大陆电视剧', extract: '《狂飙》是一部2023年播出的中国大陆电视剧。' });
-        }
-        if (title === '狂飆') return Response.json({ title, type: 'disambiguation', extract: '狂飆可以指：' });
-        return Response.json({ title, extract: '' }, { status: 404 });
+        return Response.json({ title, description: '2023年中国大陆电视剧', extract: '《狂飙》是一部2023年播出的中国大陆电视剧。' });
     });
     const response = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('狂飙')}&type=tv&year=2023`), {}, ctx);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).title, '狂飙 (电视剧)');
-    assert.deepEqual(summaries, ['狂飙 (2023年电视剧)', '狂飙 (电视剧)']);
+    assert.equal((await response.json()).title, '狂飆 (電視劇)');
+    assert.equal(lookup.get('converttitles'), '1');
+    assert.equal(lookup.get('redirects'), '1');
+    assert.deepEqual(lookup.get('titles').split('|'), ['狂飙 (2023年电视剧)', '狂飙 (电视剧)', '狂飙 (动画)']);
+    assert.deepEqual(summaries, ['狂飆 (電視劇)'], 'only existing pages are summarized');
 });
 
 test('Wiki accepts an adjacent premiere year for series but not for films', async t => {
@@ -1268,4 +1273,23 @@ test('resource titles match TMDB aliases, separator variants and adjacent movie 
         '哪吒之魔童闹海 2026 流媒体版'
     ]);
     assert.ok(tmdbPaths.includes('/3/movie/1022789/alternative_titles'));
+});
+
+test('the scheduled refresh does nothing unless titles are configured', async t => {
+    let upstreamCalls = 0;
+    mockUpstreams(t, async () => { upstreamCalls += 1; return Response.json({ results: [] }); });
+    const pending = [];
+    await worker.scheduled({ scheduledTime: Date.now() }, { TMDB_API_KEY: 'test-key' }, { waitUntil(promise) { pending.push(promise); } });
+    await Promise.all(pending);
+    assert.equal(upstreamCalls, 0);
+});
+
+test('forum reposts with identical titles only use detail slots after distinct titles', async t => {
+    const titles = Array.from({ length: 14 }, (_, index) => index < 8 ? 'Repost Title (2024) 夸克' : `Repost Title (2024) 版本${index}`);
+    const { data, detailUrls } = await searchPublicIndex(t, [], '/api/resource?q=Repost%20Title', {
+        by669: titles.map((title, id) => ({ id: `r${id}`, attributes: { title } }))
+    });
+    assert.equal(detailUrls.length, 12);
+    const scanned = new Set(data.resourceMeta.pages.filter(page => page.status === 'ok').map(page => page.url));
+    for (let index = 8; index < 14; index++) assert.ok(scanned.has(`https://by669.org/d/r${index}`), `distinct title ${index} is scanned`);
 });

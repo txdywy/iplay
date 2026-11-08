@@ -1,18 +1,27 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.33';
-import { calculateRecommendationScore, getRecommendationLabel } from './scorer.js?v=1.0.33';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.33';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.33';
-import { RELEASE_VERSION } from './release.js?v=1.0.33';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.34';
+import {
+    calculateRecommendationScore,
+    getRecommendationLabel,
+    getPreferenceSettings,
+    resetPreferenceWeights,
+    savePreferenceWeights
+} from './scorer.js?v=1.0.34';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.34';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.34';
+import { RELEASE_VERSION } from './release.js?v=1.0.34';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.33';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.33';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.33';
+} from './match.js?v=1.0.34';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.34';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.34';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
+// The font stylesheet loads as print media so it never blocks rendering. The
+// CSP forbids inline handlers, so the module switches it on instead.
+for (const link of document.querySelectorAll('link[data-deferred-style]')) link.media = 'all';
 
 const els = {
     input: document.getElementById('searchInput'),
@@ -84,6 +93,9 @@ const els = {
     resourceList: document.getElementById('resourceList'),
     wpzysResourceList: document.getElementById('wpzysResourceList'),
     quarkUrlList: document.getElementById('quarkUrlList'),
+    preferenceForm: document.getElementById('preferenceForm'),
+    preferenceFields: document.getElementById('preferenceFields'),
+    preferenceReset: document.getElementById('preferenceReset'),
     toast: document.getElementById('toast')
 };
 
@@ -1589,7 +1601,57 @@ function renderQuarkUrls(quarkUrls) {
     });
 }
 
+let lastScoreRender = null;
+
+function renderPreferenceFields() {
+    if (!els.preferenceFields) return;
+    clearNode(els.preferenceFields);
+    for (const { genre, score, defaultScore } of getPreferenceSettings()) {
+        const label = document.createElement('label');
+        label.className = 'flex items-center justify-between gap-2 rounded-lg border border-cinema-700/60 px-3 py-2 text-xs text-cinema-100';
+        const name = document.createElement('span');
+        name.textContent = genre;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.name = genre;
+        input.min = '-5';
+        input.max = '5';
+        input.step = '0.5';
+        input.value = String(score);
+        input.title = `默认 ${defaultScore}`;
+        input.className = 'w-16 rounded bg-cinema-900 border border-cinema-700 px-2 py-1 text-right font-mono text-cinema-100';
+        label.append(name, input);
+        els.preferenceFields.append(label);
+    }
+}
+
+function rerenderScoreWithPreferences() {
+    if (lastScoreRender) renderScore(...lastScoreRender, true);
+}
+
+els.preferenceForm?.addEventListener('submit', event => {
+    event.preventDefault();
+    const scores = Object.fromEntries(new globalThis.FormData(els.preferenceForm).entries());
+    if (!savePreferenceWeights(scores)) {
+        showToast('无法保存偏好：浏览器禁止本地存储');
+        return;
+    }
+    renderPreferenceFields();
+    rerenderScoreWithPreferences();
+    showToast('推荐偏好已保存');
+});
+
+els.preferenceReset?.addEventListener('click', () => {
+    resetPreferenceWeights();
+    renderPreferenceFields();
+    rerenderScoreWithPreferences();
+    showToast('已恢复默认偏好');
+});
+
+renderPreferenceFields();
+
 function renderScore(data, sourceLabel, isUpdate = false) {
+    lastScoreRender = [data, sourceLabel];
     const scoreData = calculateRecommendationScore({
         rating: data.rating,
         votes: data.votes,
