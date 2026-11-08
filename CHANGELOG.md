@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.35] - 2026-11-08
+
+### Fixed
+
+- Accept an adjacent Wikipedia year only for a series that premiered in November–February, using the TMDB premiere date. v1.0.33 accepted any adjacent year and matched the 2018 live-action 《斗破苍穹》 to the January 2017 animation.
+- Resolve standard Wikipedia article names only after the search candidates fail, one request at a time; the concurrent lookup was throttled and 《狂飙》 still had no summary. A `404` now reports whether the lookup succeeded.
+
 ## [1.0.34] - 2026-11-08
 
 ### Added

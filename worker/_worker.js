@@ -164,7 +164,9 @@ export default {
             if (path === "/api/wiki/zh") {
                 return withCors(await handleWikiZh(url.searchParams.get("q"), ctx, {
                     mediaType: url.searchParams.get("type"),
-                    year: url.searchParams.get("year")
+                    year: url.searchParams.get("year"),
+                    id: url.searchParams.get("id"),
+                    env
                 }), request, env);
             }
 
@@ -3351,10 +3353,9 @@ function wikiTitleMatches(query, title) {
     return scoreSearchText(query, baseTitle) >= 0.86;
 }
 
-// Series often premiere across a year boundary or on different dates per
-// region ("繁花" premiered on 2023-12-27, Wikipedia says 2024), so a series
-// accepts an adjacent year. Films keep the exact year to separate remakes.
-function wikiYearMatches(year, text, mediaType = null) {
+// adjacentYear is set only for a series premiering near a year boundary;
+// see getWikiAdjacentYear. Films and other series need the exact year.
+function wikiYearMatches(year, text, adjacentYear = null) {
     if (!year) return true;
     const evidence = String(text || "");
     const matches = [...evidence.matchAll(/(?:19|20)\d{2}/g)];
@@ -3384,7 +3385,7 @@ function wikiYearMatches(year, text, mediaType = null) {
     // release years; do not guess a single year merely from their order.
     const years = workYears.length ? workYears : possibleYears;
     if (matches.length === 0 || years.includes(year)) return true;
-    return mediaType === "tv" && years.some(value => Math.abs(Number(value) - Number(year)) <= 1);
+    return Boolean(adjacentYear) && years.includes(adjacentYear);
 }
 
 // Wikimedia asks API clients to identify themselves with a contact URL
@@ -3438,7 +3439,7 @@ async function resolveZhWikiTitles(titles, deadline = null) {
     return result;
 }
 
-async function searchZhWikiTitles(query, deadline = null, { mediaType = null, year = "" } = {}) {
+async function searchZhWikiTitles(query, deadline = null, { mediaType = null, year = "", adjacentYear = null } = {}) {
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
     const searchRes = await fetchUpstream(
         `https://zh.wikipedia.org/w/api.php?action=query&list=search&srlimit=10&srsearch=${encodeURIComponent(query)}&format=json&origin=*`,
@@ -3454,17 +3455,38 @@ async function searchZhWikiTitles(query, deadline = null, { mediaType = null, ye
     if (!Array.isArray(searchData?.query?.search)) throw createHttpError("Wiki returned an invalid search response", 502);
     const candidates = searchData.query.search
         .filter(item => isObject(item) && wikiTitleMatches(query, item.title)
-            && wikiYearMatches(year, getWikiTitleDisambiguator(item.title), mediaType))
+            && wikiYearMatches(year, getWikiTitleDisambiguator(item.title), adjacentYear))
         .filter(item => !mediaType || !getWikiTitleKind(item.title) || getWikiTitleKind(item.title) === mediaType);
     if (mediaType || year) candidates.sort((a, b) => (
-        Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(b.title), mediaType)
+        Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(b.title), adjacentYear)
             && /(?:19|20)\d{2}/u.test(getWikiTitleDisambiguator(b.title)))
-            - Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(a.title), mediaType)
+            - Number(Boolean(year) && wikiYearMatches(year, getWikiTitleDisambiguator(a.title), adjacentYear)
                 && /(?:19|20)\d{2}/u.test(getWikiTitleDisambiguator(a.title)))
         || Number(Boolean(mediaType) && getWikiTitleKind(b.title) === mediaType)
             - Number(Boolean(mediaType) && getWikiTitleKind(a.title) === mediaType)
     ));
     return candidates.slice(0, 10).map(candidate => candidate.title);
+}
+
+const WIKI_IDENTITY_TIMEOUT_MS = 3000;
+
+// A series premiering in November or December is often dated the next year
+// on Wikipedia (繁花: 2023-12-27, listed as 2024), and one premiering in
+// January or February the previous year. Only then is the adjacent year the
+// same work; otherwise it is a different adaptation (斗破苍穹: the 2017
+// animation versus the 2018 live-action series).
+async function getWikiAdjacentYear(id, mediaType, year, env, ctx) {
+    if (!id || mediaType !== "tv" || !year || !getTmdbAuth(env)) return null;
+    try {
+        const data = await fetchTmdbJson(`/tv/${id}`, { language: "zh-CN", append_to_response: "external_ids,credits" },
+            env, ctx, { deadline: createDeadline(WIKI_IDENTITY_TIMEOUT_MS) });
+        const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(data?.first_air_date || "");
+        if (!match || match[1] !== year) return null;
+        const month = Number(match[2]);
+        return month >= 11 ? String(Number(year) + 1) : month <= 2 ? String(Number(year) - 1) : null;
+    } catch {
+        return null;
+    }
 }
 
 async function handleWikiZh(query, ctx, options = {}) {
@@ -3476,84 +3498,97 @@ async function handleWikiZh(query, ctx, options = {}) {
     if (mediaTypeCheck.error) return mediaTypeCheck.error;
     const yearCheck = validateOptionalYear(options.year);
     if (yearCheck.error) return yearCheck.error;
+    const idCheck = options.id === null || options.id === undefined ? null : validatePositiveInteger(options.id);
+    if (idCheck?.error) return idCheck.error;
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
+    const adjacentYear = await getWikiAdjacentYear(idCheck?.value, mediaType, year, options.env, ctx);
 
-    const cacheKey = new Request(`https://wiki-zh-v7-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}`);
+    const cacheKey = new Request(`https://wiki-zh-v8-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}&near=${adjacentYear || ""}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const [searchTitles, directTitles] = await Promise.all([
-            searchZhWikiTitles(query, deadline, { mediaType, year }),
-            resolveZhWikiTitles(getWikiDirectTitles(query, { mediaType, year }), deadline).catch(error => {
+        const yearMatches = text => wikiYearMatches(year, text, adjacentYear);
+        const trySummaries = async (titles, verifiedTitles = new Set()) => {
+            for (const title of titles) {
+                if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
+                const summaryRes = await fetchUpstream(
+                    `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+                    { headers: WIKI_HEADERS },
+                    remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
+                );
+
+                if (!summaryRes.ok) {
+                    const status = summaryRes.status;
+                    await releaseUpstreamResponse(summaryRes);
+                    // Deleted candidates are normal in Wikipedia's search index.
+                    // Other provider failures should stop without fanning out.
+                    if (status === 404) continue;
+                    throw createHttpError(`Wiki summary failed: ${status}`, status);
+                }
+
+                const summaryData = await readJsonWithLimit(summaryRes);
+                if (!isObject(summaryData)
+                    || typeof summaryData.title !== "string"
+                    || typeof summaryData.extract !== "string") {
+                    throw createHttpError("Wiki returned an invalid response", 502);
+                }
+
+                // Latin titles such as "Mr. Bean" can contain periods inside the
+                // Chinese lead sentence; keep its media/year evidence intact.
+                const intro = summaryData.extract.split(/[。!?！？\r\n]/u)[0];
+                const introEvidence = getWikiIntroEvidence(intro, summaryData.title);
+                const descriptionEvidence = getWikiIdentityEvidence(summaryData.description);
+                const titleKind = getWikiTitleKind(summaryData.title);
+                const descriptionKind = getWikiKind(summaryData.description || "");
+                const introKind = getWikiKind(introEvidence);
+                if (summaryData.type === "disambiguation"
+                    || !summaryData.extract.trim()
+                    // Variant conversion proves a resolved standard name is this
+                    // query, although its stored script ("狂飆") differs.
+                    || !(verifiedTitles.has(title) || wikiTitleMatches(query, summaryData.title))
+                    || !yearMatches(getWikiTitleDisambiguator(summaryData.title))
+                    || !yearMatches(descriptionEvidence)
+                    || !yearMatches(introEvidence)
+                    || (mediaType && titleKind && titleKind !== mediaType)
+                    || (mediaType && [descriptionKind, introKind].some(kind => kind && kind !== mediaType))
+                    || (mediaType && !descriptionKind && !introKind && titleKind !== mediaType)) {
+                    continue;
+                }
+
+                return {
+                    title: summaryData.title,
+                    extract: summaryData.extract,
+                    thumbnail: isObject(summaryData.thumbnail) ? summaryData.thumbnail : null
+                };
+            }
+            return null;
+        };
+
+        const searchTitles = (await searchZhWikiTitles(query, deadline, { mediaType, year, adjacentYear }))
+            .slice(0, WIKI_MAX_SUMMARY_CANDIDATES);
+        const fromSearch = await trySummaries(searchTitles);
+        if (fromSearch) return cacheJson(ctx, cacheKey, fromSearch, 86400);
+
+        // Resolve standard article names only when search found nothing, and
+        // only after it: Wikimedia throttles concurrent anonymous requests.
+        let lookup = "ok";
+        const directTitles = await resolveZhWikiTitles(getWikiDirectTitles(query, { mediaType, year }), deadline)
+            .catch(error => {
+                lookup = "failed";
                 logEvent("warn", "wiki_title_lookup_failed", { error: logErrorMessage(error) });
                 return [];
-            })
-        ]);
-        const seen = new Set(searchTitles);
-        const titles = [...searchTitles, ...directTitles.filter(title => !seen.has(title))]
-            .slice(0, WIKI_MAX_SUMMARY_CANDIDATES + 3);
-        if (titles.length === 0) return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
+            });
+        const remaining = directTitles.filter(title => !searchTitles.includes(title));
+        const fromLookup = await trySummaries(remaining, new Set(remaining));
+        if (fromLookup) return cacheJson(ctx, cacheKey, fromLookup, 86400);
 
-        // Variant conversion proves a resolved standard name is this query,
-        // although its stored script ("狂飆") differs from the query.
-        const verifiedTitles = new Set(directTitles);
-        for (const title of titles) {
-            if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
-            const summaryRes = await fetchUpstream(
-                `https://zh.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-                { headers: WIKI_HEADERS },
-                remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS)
-            );
-
-            if (!summaryRes.ok) {
-                const status = summaryRes.status;
-                await releaseUpstreamResponse(summaryRes);
-                // Deleted candidates are normal in Wikipedia's search index.
-                // Other provider failures should stop without fanning out.
-                if (status === 404) continue;
-                throw createHttpError(`Wiki summary failed: ${status}`, status);
-            }
-
-            const summaryData = await readJsonWithLimit(summaryRes);
-            if (!isObject(summaryData)
-                || typeof summaryData.title !== "string"
-                || typeof summaryData.extract !== "string") {
-                throw createHttpError("Wiki returned an invalid response", 502);
-            }
-
-            // Latin titles such as "Mr. Bean" can contain periods inside the
-            // Chinese lead sentence; keep its media/year evidence intact.
-            const intro = summaryData.extract.split(/[。!?！？\r\n]/u)[0];
-            const introEvidence = getWikiIntroEvidence(intro, summaryData.title);
-            const descriptionEvidence = getWikiIdentityEvidence(summaryData.description);
-            const titleKind = getWikiTitleKind(summaryData.title);
-            const descriptionKind = getWikiKind(summaryData.description || "");
-            const introKind = getWikiKind(introEvidence);
-            if (summaryData.type === "disambiguation"
-                || !summaryData.extract.trim()
-                || !(verifiedTitles.has(title) || wikiTitleMatches(query, summaryData.title))
-                || !wikiYearMatches(year, getWikiTitleDisambiguator(summaryData.title), mediaType)
-                || !wikiYearMatches(year, descriptionEvidence, mediaType)
-                || !wikiYearMatches(year, introEvidence, mediaType)
-                || (mediaType && titleKind && titleKind !== mediaType)
-                || (mediaType && [descriptionKind, introKind].some(kind => kind && kind !== mediaType))
-                || (mediaType && !descriptionKind && !introKind && titleKind !== mediaType)) {
-                continue;
-            }
-
-            const result = {
-                title: summaryData.title,
-                extract: summaryData.extract,
-                thumbnail: isObject(summaryData.thumbnail) ? summaryData.thumbnail : null
-            };
-
-            return cacheJson(ctx, cacheKey, result, 86400);
-        }
-
-        return jsonResponse({ error: "No matching media summary on zh.wikipedia" }, 404);
+        return jsonResponse({
+            error: searchTitles.length || remaining.length ? "No matching media summary on zh.wikipedia" : "Not found on zh.wikipedia",
+            lookup
+        }, 404);
     } catch (e) {
         return errorResponse(e);
     }

@@ -476,7 +476,7 @@ GET /api/wiki/zh?q={query}&type={movie|tv}&year={year}
 
 类型与年份校验使用消歧义后缀、摘要描述和中文简介首句中的作品身份信息，不把片名中的“小说/漫画/电视”或数字当作类型/发行年份，也不把改编原著的类型和年份当作电影自身信息。可靠年份证据与所选年份冲突时返回 `404` 并保留 TMDB 简介；同名小说和消歧义页仍被拒绝。片名中的英文句点不会截断首句。未出现年份的文本仍须通过片名和媒体类型校验；这不等同于已确认上映年份。前端请求额外携带发布版本 `v`，隔离先前发布的浏览器摘要缓存。
 
-Worker 并行执行搜索，并用一次 `action=query&converttitles=1&redirects=1` 请求解析标准条目名（如 `狂飙 (2023年电视剧)`、`狂飙 (电视剧)`、`片名 (电影)`），因为搜索排名可能遗漏条目本身，且中文维基只保存一种字形（`狂飆 (電視劇)`），摘要接口不做简繁转换。只请求真实存在的条目；经转换解析出的条目视为同名，仍须通过类型与年份校验。剧集首播常跨年或各地区日期不同（《繁花》2023-12-27 首播，维基记为 2024 年），因此剧集接受相邻年份；电影仍要求年份一致以区分翻拍。请求按 Wikimedia 规范使用 `iPlay/{version} (站点 URL)` 作为 User-Agent，并以 `Accept-Language: zh-CN` 获取简体文本。
+搜索候选均未通过校验时，Worker 再用一次 `action=query&converttitles=1&redirects=1` 请求解析标准条目名（顺序执行，避免触发 Wikimedia 对匿名并发请求的限流）（如 `狂飙 (2023年电视剧)`、`狂飙 (电视剧)`、`片名 (电影)`），因为搜索排名可能遗漏条目本身，且中文维基只保存一种字形（`狂飆 (電視劇)`），摘要接口不做简繁转换。只请求真实存在的条目；经转换解析出的条目视为同名，仍须通过类型与年份校验。可选参数 `id` 为所选剧集的 TMDB ID：首播在 11–12 月的剧集也接受下一年，1–2 月首播的也接受上一年（《繁花》2023-12-27 首播，维基记为 2024 年）；其他情况与电影一样要求年份一致，以区分改编（2017 年 1 月的《斗破苍穹》动画不是 2018 年的真人剧）。404 响应的 `lookup` 字段为 `ok` 或 `failed`，表示标准条目名解析是否成功。请求按 Wikimedia 规范使用 `iPlay/{version} (站点 URL)` 作为 User-Agent，并以 `Accept-Language: zh-CN` 获取简体文本。
 
 多年份简介优先使用明确作品定义、首映或发行年份；修复、重新上映和导演获奖年份不能覆盖原作年份。两个真正的地区发行年份仍可分别匹配。标题消歧义年份、描述和引言分别校验，后两者出现所选年份不能抵消标题中的明确冲突。
 
@@ -515,7 +515,7 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
 | `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v19-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v7-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v8-cache.local/?q={query}&type={type}&year={year}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 

@@ -1,22 +1,22 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.34';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.35';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
     getPreferenceSettings,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.34';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.34';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.34';
-import { RELEASE_VERSION } from './release.js?v=1.0.34';
+} from './scorer.js?v=1.0.35';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.35';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.35';
+import { RELEASE_VERSION } from './release.js?v=1.0.35';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.34';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.34';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.34';
+} from './match.js?v=1.0.35';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.35';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.35';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -2185,7 +2185,9 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
         }
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
 
-    WikiAPI.getSummary(enrichmentQuery, { ...searchOptions, mediaType: candidate.mediaType, year: candidate.year }).then(wikiResult => {
+    WikiAPI.getSummary(enrichmentQuery, {
+        ...searchOptions, mediaType: candidate.mediaType, year: candidate.year, mediaId: candidate.id
+    }).then(wikiResult => {
         if (!isActiveSearch(searchId, loadId)) return;
         const hasWiki = Boolean(wikiResult?.extract);
         if (hasWiki) {
