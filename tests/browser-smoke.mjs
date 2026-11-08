@@ -596,6 +596,42 @@ async function assertSearchReady(title) {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
 }
 
+async function runPreferencePanelFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("localStorage.removeItem('iplay_preference_weights')");
+    // Install the listener before any page script or stylesheet loads.
+    await command('Page.addScriptToEvaluateOnNewDocument', { source: `
+        window.__cspViolations = [];
+        document.addEventListener('securitypolicyviolation', event => window.__cspViolations.push(event.violatedDirective + ' ' + event.blockedURI));
+    ` });
+    await command('Page.reload');
+    await waitFor('Array.isArray(window.__cspViolations)');
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    const state = await evaluate(`(() => {
+        const inputs = [...document.querySelectorAll('#preferenceFields input[type=number]')];
+        const comedy = inputs.find(input => input.name === '喜剧');
+        comedy.value = '-4';
+        document.getElementById('preferenceForm').requestSubmit();
+        const saved = JSON.parse(localStorage.getItem('iplay_preference_weights'));
+        document.getElementById('preferenceReset').click();
+        return {
+            count: inputs.length,
+            saved,
+            afterReset: localStorage.getItem('iplay_preference_weights'),
+            resetValue: document.querySelector('#preferenceFields input[name="喜剧"]').value,
+            fontsMedia: document.querySelector('link[data-deferred-style]').media,
+            csp: Boolean(document.querySelector('meta[http-equiv="Content-Security-Policy"]'))
+        };
+    })()`);
+    assert.equal(state.count, 12);
+    assert.deepEqual(state.saved, { '喜剧': { score: -4, reason: '符合喜剧偏好' } }, 'only changed genres are stored');
+    assert.equal(state.afterReset, null);
+    assert.equal(state.resetValue, '2.5');
+    assert.equal(state.fontsMedia, 'all', 'the deferred font stylesheet is enabled without an inline handler');
+    assert.ok(state.csp);
+}
+
 async function runObserverFlow() {
     await command('Page.navigate', { url: baseUrl });
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -762,9 +798,10 @@ async function runActorResponsivePosterFlow() {
             await waitFor("history.state?.kind === 'home'");
             if (scrollbarWidth) {
                 await evaluate(`(() => {
-                    const style = document.createElement('style');
-                    style.textContent = 'html { overflow-y: scroll; } ::-webkit-scrollbar { width: ${scrollbarWidth}px; }';
-                    document.head.appendChild(style);
+                    // The page CSP forbids inline <style>; constructed sheets are CSSOM.
+                    const sheet = new CSSStyleSheet();
+                    sheet.replaceSync('html { overflow-y: scroll; } ::-webkit-scrollbar { width: ${scrollbarWidth}px; }');
+                    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
                 })()`);
                 await waitFor(`innerWidth - document.documentElement.clientWidth === ${scrollbarWidth}`);
             }
@@ -1499,8 +1536,10 @@ try {
     await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
+    await runPreferencePanelFlow();
+    assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'preference-panel-and-csp'] }));
 } finally {
     socket.close();
 }

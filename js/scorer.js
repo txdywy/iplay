@@ -17,29 +17,43 @@ const PREFERENCE_WEIGHTS = {
     '灾难': { score: -1.5, reason: '环境压抑' }
 };
 
+const PREFERENCE_STORAGE_KEY = 'iplay_preference_weights';
+const PREFERENCE_SCORE_LIMIT = 5;
+// Stored JSON comes from the viewer's own browser, but keys such as
+// "__proto__" must still never reach an object's prototype chain.
+const UNSAFE_PREFERENCE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 let preferenceStorageErrorLogged = false;
 
-function getPreferenceWeights() {
-    const weights = { ...PREFERENCE_WEIGHTS };
-
+function getPreferenceStorage() {
     try {
-        const customWeights = typeof window !== 'undefined'
-            ? window.localStorage.getItem('iplay_preference_weights')
-            : null;
-        if (!customWeights) return weights;
+        return typeof window !== 'undefined' ? window.localStorage : null;
+    } catch {
+        return null;
+    }
+}
 
-        const parsed = JSON.parse(customWeights);
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return weights;
+function clampPreferenceScore(score) {
+    return Math.max(-PREFERENCE_SCORE_LIMIT, Math.min(PREFERENCE_SCORE_LIMIT, score));
+}
 
+function readCustomPreferenceWeights() {
+    const custom = new Map();
+    try {
+        const raw = getPreferenceStorage()?.getItem(PREFERENCE_STORAGE_KEY);
+        if (!raw) return custom;
+        const parsed = JSON.parse(raw);
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return custom;
         for (const [genre, value] of Object.entries(parsed)) {
+            const name = genre.trim();
+            if (!name || name.length > 40 || UNSAFE_PREFERENCE_KEYS.has(name)) continue;
             const score = typeof value === 'number' ? value : Number(value?.score);
             if (!Number.isFinite(score)) continue;
-            weights[genre] = {
-                score: Math.max(-5, Math.min(5, score)),
+            custom.set(name, {
+                score: clampPreferenceScore(score),
                 reason: typeof value?.reason === 'string' && value.reason.trim()
                     ? value.reason.trim().slice(0, 120)
-                    : `自定义偏好：${genre}`
-            };
+                    : `自定义偏好：${name}`
+            });
         }
     } catch (error) {
         if (!preferenceStorageErrorLogged) {
@@ -47,8 +61,58 @@ function getPreferenceWeights() {
             preferenceStorageErrorLogged = true;
         }
     }
+    return custom;
+}
 
+function getPreferenceWeights() {
+    const weights = new Map(Object.entries(PREFERENCE_WEIGHTS));
+    for (const [genre, value] of readCustomPreferenceWeights()) weights.set(genre, value);
     return weights;
+}
+
+/**
+ * Genre preferences for the settings panel: built-in genres first, then any
+ * custom genres the viewer added, each with its current and default score.
+ */
+export function getPreferenceSettings() {
+    const custom = readCustomPreferenceWeights();
+    const genres = [...Object.keys(PREFERENCE_WEIGHTS), ...[...custom.keys()].filter(genre => !(genre in PREFERENCE_WEIGHTS))];
+    return genres.map(genre => ({
+        genre,
+        score: custom.get(genre)?.score ?? PREFERENCE_WEIGHTS[genre].score,
+        defaultScore: PREFERENCE_WEIGHTS[genre]?.score ?? 0,
+        reason: custom.get(genre)?.reason ?? PREFERENCE_WEIGHTS[genre]?.reason ?? `自定义偏好：${genre}`
+    }));
+}
+
+/** Persist scores that differ from the defaults. Returns false if storage is unavailable. */
+export function savePreferenceWeights(scores) {
+    const stored = {};
+    for (const [genre, value] of Object.entries(scores || {})) {
+        const score = Number(value);
+        if (UNSAFE_PREFERENCE_KEYS.has(genre) || !Number.isFinite(score)) continue;
+        const defaults = PREFERENCE_WEIGHTS[genre];
+        if (defaults && defaults.score === clampPreferenceScore(score)) continue;
+        stored[genre] = { score: clampPreferenceScore(score), reason: defaults?.reason || `自定义偏好：${genre}` };
+    }
+    try {
+        const storage = getPreferenceStorage();
+        if (!storage) return false;
+        if (Object.keys(stored).length) storage.setItem(PREFERENCE_STORAGE_KEY, JSON.stringify(stored));
+        else storage.removeItem(PREFERENCE_STORAGE_KEY);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export function resetPreferenceWeights() {
+    try {
+        getPreferenceStorage()?.removeItem(PREFERENCE_STORAGE_KEY);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function getRatingLabel(source) {
@@ -107,7 +171,7 @@ export function calculateRecommendationScore(data = {}) {
 
     if (safeGenres.length > 0) {
         safeGenres.forEach(genre => {
-            const pref = Object.prototype.hasOwnProperty.call(preferenceWeights, genre) ? preferenceWeights[genre] : null;
+            const pref = preferenceWeights.get(genre) || null;
             if (pref) {
                 preferenceScore += pref.score * 2.5;
                 if (pref.score > 0) {

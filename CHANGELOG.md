@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.34] - 2026-11-08
+
+### Added
+
+- A **调整推荐偏好** panel to change genre weights (-5 to 5), re-score the current title and reset to defaults.
+- A Content Security Policy that limits scripts to the site, network requests to the Worker and fonts to Google Fonts.
+
+### Fixed
+
+- Resolve standard Chinese Wikipedia article names with variant conversion and redirects in one request. 《狂飙》 is stored as `狂飆 (電視劇)`, which the summary endpoint did not find from the simplified name.
+- Scan distinct resource titles before reposts with identical titles.
+- Stored preference keys such as `__proto__` no longer reach the weight object's prototype.
+- The scheduled refresh no longer refreshes a built-in title; it only runs for `CRON_REFRESH_TITLES`.
+
+### Changed
+
+- Update ESLint to 10.14, Tailwind CSS to 4.3.5 and Wrangler to 4.158.0, and the Worker compatibility date to 2026-10-01.
+
 ## [1.0.33] - 2026-11-08
 
 ### Fixed

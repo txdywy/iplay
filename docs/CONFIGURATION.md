@@ -226,9 +226,13 @@ The recommendation scoring algorithm in `js/scorer.js` uses a set of genre-based
 | 悲剧 (Tragedy) | -3.0 | 剧情致郁/苦大仇深 |
 | 灾难 (Disaster) | -1.5 | 环境压抑 |
 
+#### Customizing in the page
+
+Open **调整推荐偏好** below the analysis report on any title. Each genre accepts a score from -5 to 5; **保存偏好** stores only genres that differ from the defaults and re-scores the current title immediately, and **恢复默认** removes the stored weights. Preferences stay in this browser's `localStorage`.
+
 #### Customizing via localStorage
 
-Users can override the default weights by setting a custom JSON object in the browser's `localStorage`:
+The same weights can be set from the browser console. Keys such as `__proto__`, `constructor` and `prototype` are ignored:
 
 ```javascript
 // Open browser DevTools Console and run:

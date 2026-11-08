@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 
-const { calculateRecommendationScore, getRecommendationLabel } = await import('../js/scorer.js');
+const scorer = await import('../js/scorer.js');
+const { calculateRecommendationScore, getRecommendationLabel } = scorer;
 
 test('recommendation scoring normalizes numeric strings from external APIs', () => {
     const result = calculateRecommendationScore({
@@ -86,4 +87,37 @@ test('custom preference changes take effect on the next score and zero scores ad
     assert.ok(updatedResult.score > neutralResult.score);
     assert.ok(updatedResult.report.pros.includes('New preference'));
     assert.deepEqual(errors, []);
+});
+
+function withLocalStorage(t, initial = {}) {
+    const store = new Map(Object.entries(initial));
+    const previous = globalThis.window;
+    globalThis.window = { localStorage: {
+        getItem: key => store.has(key) ? store.get(key) : null,
+        setItem: (key, value) => store.set(key, String(value)),
+        removeItem: key => store.delete(key)
+    } };
+    t.after(() => { globalThis.window = previous; });
+    return store;
+}
+
+test('stored preference keys cannot reach the weight prototype chain', t => {
+    withLocalStorage(t, { iplay_preference_weights: '{"__proto__":{"score":5},"constructor":3,"喜剧":-5}' });
+    const { getPreferenceSettings, calculateRecommendationScore: score } = scorer;
+    const settings = getPreferenceSettings();
+    assert.ok(!settings.some(item => ['__proto__', 'constructor'].includes(item.genre)));
+    assert.equal(settings.find(item => item.genre === '喜剧').score, -5);
+    const result = score({ rating: 8, votes: 1000, genres: ['score', 'constructor', '喜剧'], source: 'tmdb' });
+    assert.ok(result.report.cons.some(reason => reason.includes('喜剧')));
+});
+
+test('preference settings save only changed genres and reset to defaults', t => {
+    const store = withLocalStorage(t);
+    const { getPreferenceSettings, savePreferenceWeights, resetPreferenceWeights } = scorer;
+    assert.equal(savePreferenceWeights({ '喜剧': '2.5', '恐怖': '9', '__proto__': '1' }), true);
+    assert.deepEqual(JSON.parse(store.get('iplay_preference_weights')), { '恐怖': { score: 5, reason: '包含恐怖元素' } });
+    assert.equal(getPreferenceSettings().find(item => item.genre === '恐怖').score, 5);
+    resetPreferenceWeights();
+    assert.equal(store.has('iplay_preference_weights'), false);
+    assert.equal(getPreferenceSettings().find(item => item.genre === '恐怖').score, -3);
 });

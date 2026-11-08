@@ -939,9 +939,8 @@ async function refreshScheduledData(env, ctx) {
 }
 
 function getScheduledRefreshTitles(env) {
-    const rawTitles = typeof env?.CRON_REFRESH_TITLES === "string" && env.CRON_REFRESH_TITLES
-        ? env.CRON_REFRESH_TITLES
-        : "大叔再出招";
+    // Refresh only titles the operator configured; there is no built-in list.
+    const rawTitles = typeof env?.CRON_REFRESH_TITLES === "string" ? env.CRON_REFRESH_TITLES : "";
     return rawTitles
         .split(",")
         .map(title => title.trim())
@@ -2987,6 +2986,20 @@ function serializeQuarkEntry({ title, url, password, sourceUrl, sourceTitle, _pa
 // every provider represented before the response-wide share cap applies.
 const isPrefetchedResource = entry => typeof entry?.text === "string";
 
+// Forums repost the same release under identical titles. Scan distinct
+// titles first so reposts only use detail slots that would otherwise be idle.
+function preferDistinctTitles(resources) {
+    const seen = new Set();
+    const distinct = [];
+    const reposts = [];
+    for (const entry of resources) {
+        const key = compactSearchText(entry.title);
+        (seen.has(key) ? reposts : distinct).push(entry);
+        seen.add(key);
+    }
+    return [...distinct, ...reposts];
+}
+
 function selectResourceDetails(...groups) {
     const selected = [];
     let fetchedPages = 0;
@@ -3125,7 +3138,11 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
         const wpzysResources = wpzysResult.value ?? [];
         const zuidouyinPosts = zuidouyinResult.value ?? [];
         const zuidouyinResources = zuidouyinPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
-        const detailResources = selectResourceDetails(resources, wpzysResources.slice(0, RESOURCE_MAX_WPZY_DETAIL_PAGES), zuidouyinPosts);
+        const detailResources = selectResourceDetails(
+            preferDistinctTitles(resources),
+            preferDistinctTitles(wpzysResources).slice(0, RESOURCE_MAX_WPZY_DETAIL_PAGES),
+            zuidouyinPosts
+        );
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
         const selectedUrls = new Set(detailResult.pages.map(page => page.url));
         const unselectedPages = [...resources, ...wpzysResources, ...zuidouyinResources]
@@ -3385,6 +3402,42 @@ function getWikiDirectTitles(query, { mediaType = null, year = "" } = {}) {
     return kinds.flatMap(kind => [...(year && kind !== "动画" ? [`${query} (${year}年${kind})`] : []), `${query} (${kind})`]);
 }
 
+// Chinese Wikipedia stores one script variant ("狂飆 (電視劇)"), and the REST
+// summary endpoint does not convert "狂飙 (电视剧)" to it. Resolve all
+// standard names in one query with variant conversion and redirects, and
+// keep only pages that exist.
+async function resolveZhWikiTitles(titles, deadline = null) {
+    if (titles.length === 0 || isDeadlineExpired(deadline)) return [];
+    const url = new URL("https://zh.wikipedia.org/w/api.php");
+    for (const [key, value] of Object.entries({
+        action: "query", titles: titles.join("|"), redirects: "1", converttitles: "1",
+        format: "json", formatversion: "2", origin: "*"
+    })) url.searchParams.set(key, value);
+    const res = await fetchUpstream(url.href, { headers: WIKI_HEADERS }, remainingDeadlineMs(deadline, UPSTREAM_TIMEOUT_MS));
+    if (!res.ok) {
+        await releaseUpstreamResponse(res);
+        throw createHttpError(`Wiki title lookup rejected with status ${res.status}`, res.status);
+    }
+    const data = await readJsonWithLimit(res);
+    const pages = Array.isArray(data?.query?.pages) ? data.query.pages : [];
+    const existing = new Set(pages.filter(page => isObject(page) && !page.missing && !page.invalid
+        && typeof page.title === "string").map(page => page.title));
+    // Keep the guess order (year-qualified names first).
+    const resolved = new Map();
+    for (const list of [data?.query?.normalized, data?.query?.converted, data?.query?.redirects]) {
+        for (const item of Array.isArray(list) ? list : []) {
+            if (typeof item?.from === "string" && typeof item?.to === "string") resolved.set(item.from, item.to);
+        }
+    }
+    const result = [];
+    for (const title of titles) {
+        let current = title;
+        for (let step = 0; step < 3 && resolved.has(current); step++) current = resolved.get(current);
+        if (existing.has(current) && !result.includes(current)) result.push(current);
+    }
+    return result;
+}
+
 async function searchZhWikiTitles(query, deadline = null, { mediaType = null, year = "" } = {}) {
     if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
     const searchRes = await fetchUpstream(
@@ -3432,11 +3485,21 @@ async function handleWikiZh(query, ctx, options = {}) {
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
-        const searchTitles = await searchZhWikiTitles(query, deadline, { mediaType, year });
-        const seen = new Set(searchTitles.map(title => title.normalize("NFKC")));
-        const titles = [...searchTitles, ...getWikiDirectTitles(query, { mediaType, year })
-            .filter(title => !seen.has(title))].slice(0, WIKI_MAX_SUMMARY_CANDIDATES + 3);
+        const [searchTitles, directTitles] = await Promise.all([
+            searchZhWikiTitles(query, deadline, { mediaType, year }),
+            resolveZhWikiTitles(getWikiDirectTitles(query, { mediaType, year }), deadline).catch(error => {
+                logEvent("warn", "wiki_title_lookup_failed", { error: logErrorMessage(error) });
+                return [];
+            })
+        ]);
+        const seen = new Set(searchTitles);
+        const titles = [...searchTitles, ...directTitles.filter(title => !seen.has(title))]
+            .slice(0, WIKI_MAX_SUMMARY_CANDIDATES + 3);
+        if (titles.length === 0) return jsonResponse({ error: "Not found on zh.wikipedia" }, 404);
 
+        // Variant conversion proves a resolved standard name is this query,
+        // although its stored script ("狂飆") differs from the query.
+        const verifiedTitles = new Set(directTitles);
         for (const title of titles) {
             if (isDeadlineExpired(deadline)) throw createHttpError("Upstream request timed out", 504);
             const summaryRes = await fetchUpstream(
@@ -3471,7 +3534,7 @@ async function handleWikiZh(query, ctx, options = {}) {
             const introKind = getWikiKind(introEvidence);
             if (summaryData.type === "disambiguation"
                 || !summaryData.extract.trim()
-                || !wikiTitleMatches(query, summaryData.title)
+                || !(verifiedTitles.has(title) || wikiTitleMatches(query, summaryData.title))
                 || !wikiYearMatches(year, getWikiTitleDisambiguator(summaryData.title), mediaType)
                 || !wikiYearMatches(year, descriptionEvidence, mediaType)
                 || !wikiYearMatches(year, introEvidence, mediaType)
