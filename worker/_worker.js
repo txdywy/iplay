@@ -3400,7 +3400,10 @@ const WIKI_MAX_SUMMARY_CANDIDATES = 10;
 // …). Standard disambiguated article names are cheap, exact candidates.
 function getWikiDirectTitles(query, { mediaType = null, year = "" } = {}) {
     const kinds = mediaType === "movie" ? ["电影"] : mediaType === "tv" ? ["电视剧", "动画"] : ["电视剧", "电影"];
-    return kinds.flatMap(kind => [...(year && kind !== "动画" ? [`${query} (${year}年${kind})`] : []), `${query} (${kind})`]);
+    // The bare name comes last: search finds it unless its stored script
+    // differs ("狂飙" is stored as "狂飆"), and it then still needs the
+    // media type and year evidence.
+    return [...kinds.flatMap(kind => [...(year && kind !== "动画" ? [`${query} (${year}年${kind})`] : []), `${query} (${kind})`]), query];
 }
 
 // Chinese Wikipedia stores one script variant ("狂飆 (電視劇)"), and the REST
