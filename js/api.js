@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.34';
+import { RELEASE_VERSION } from './release.js?v=1.0.35';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -213,11 +213,12 @@ export const DoubanAPI = {
  */
 export const WikiAPI = {
     async getSummary(query, options = {}) {
-        const { mediaType, year, ...requestOptions } = options;
+        const { mediaType, year, mediaId, ...requestOptions } = options;
         const typeParam = mediaType ? `&type=${encodeURIComponent(mediaType)}` : '';
         const yearParam = year ? `&year=${encodeURIComponent(year)}` : '';
+        const idParam = mediaId ? `&id=${encodeURIComponent(mediaId)}` : '';
         try {
-            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}${typeParam}${yearParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions);
+            return await fetchWithTimeout(`${API_BASE}/api/wiki/zh?q=${encodeURIComponent(query)}${typeParam}${yearParam}${idParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
             console.debug("Wiki zh fetch failed:", e);

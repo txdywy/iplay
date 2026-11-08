@@ -1221,18 +1221,32 @@ test('Wiki resolves standard article names across script variants when search ra
     assert.deepEqual(summaries, ['狂飆 (電視劇)'], 'only existing pages are summarized');
 });
 
-test('Wiki accepts an adjacent premiere year for series but not for films', async t => {
-    let description = '2024年中国大陆电视剧';
-    let title = '繁花 (电视剧)';
-    const ctx = mockUpstreams(t, async input => new URL(input).pathname.includes('/summary/')
-        ? Response.json({ title, description, extract: '《繁花》是一部中国大陆电视剧，由王家卫执导。' })
-        : Response.json({ query: { search: [{ title }] } }));
-    const series = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('繁花')}&type=tv&year=2023`), {}, ctx);
-    assert.equal(series.status, 200);
-    description = '2024年中国大陆电影';
-    title = '繁花 (电影)';
-    const film = await worker.fetch(request(`/api/wiki/zh?q=${encodeURIComponent('繁花')}&type=movie&year=2023`), {}, ctx);
-    assert.equal(film.status, 404);
+test('Wiki accepts the adjacent year only for a series premiering near the year boundary', async t => {
+    let summary = { title: '繁花 (电视剧)', description: '2024年中国大陆电视剧' };
+    let firstAirDate = '2023-12-27';
+    const tmdbIds = [];
+    const ctx = mockUpstreams(t, async input => {
+        const url = new URL(input);
+        if (url.hostname === 'api.themoviedb.org') {
+            tmdbIds.push(url.pathname);
+            return Response.json({ id: 1, name: 'Series', first_air_date: firstAirDate, external_ids: {}, credits: { cast: [], crew: [] } });
+        }
+        return url.pathname.includes('/summary/')
+            ? Response.json({ ...summary, extract: `《${summary.title.split(' ')[0]}》是一部中国大陆电视剧。` })
+            : Response.json({ query: { search: [{ title: summary.title }] } });
+    });
+    const env = { TMDB_API_KEY: 'test-key' };
+    const wiki = path => worker.fetch(request(path), env, ctx);
+    const fanhua = `/api/wiki/zh?q=${encodeURIComponent('繁花')}&type=tv&year=2023`;
+    assert.equal((await wiki(`${fanhua}&id=1`)).status, 200, 'a December premiere may be listed the next year');
+    assert.equal((await wiki(fanhua)).status, 404, 'without the premiere date the year stays exact');
+    assert.deepEqual(tmdbIds, ['/3/tv/1']);
+
+    // 斗破苍穹: the January 2017 animation is not the 2018 live-action series.
+    summary = { title: '斗破苍穹 (电视剧)', description: '2018年中国大陆电视剧' };
+    firstAirDate = '2017-01-07';
+    const doupo = await wiki(`/api/wiki/zh?q=${encodeURIComponent('斗破苍穹')}&type=tv&year=2017&id=2`);
+    assert.equal(doupo.status, 404);
 });
 
 test('resource titles match TMDB aliases, separator variants and adjacent movie years', async t => {
