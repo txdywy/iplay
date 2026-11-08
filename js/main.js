@@ -1,22 +1,23 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.36';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.37';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
     getPreferenceSettings,
+    normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.36';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.36';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.36';
-import { RELEASE_VERSION } from './release.js?v=1.0.36';
+} from './scorer.js?v=1.0.37';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.37';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.37';
+import { RELEASE_VERSION } from './release.js?v=1.0.37';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.36';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.36';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.36';
+} from './match.js?v=1.0.37';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.37';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.37';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -104,10 +105,12 @@ function showToast(msg) {
     if (!els.toast) return;
     clearTimeout(toastTimer);
     els.toast.textContent = msg;
-    els.toast.style.transform = 'translateY(0)';
+    // Tailwind 4 positions with the `translate` property; `transform` would
+    // stack on top of it and leave the toast below the viewport.
+    els.toast.style.translate = '0 0';
     els.toast.style.opacity = '1';
     toastTimer = setTimeout(() => {
-        els.toast.style.transform = 'translateY(20px)';
+        els.toast.style.translate = '';
         els.toast.style.opacity = '0';
     }, 3000);
 }
@@ -127,7 +130,7 @@ function showDataNotice({ title, detail, actionLabel = '', onAction = null, tone
     clearNode(els.dataNotice);
     els.dataNotice.className = `rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
     els.dataNotice.setAttribute('role', tone === 'error' ? 'alert' : 'status');
-    els.dataNotice.setAttribute('aria-live', 'polite');
+    els.dataNotice.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
 
     const row = document.createElement('div');
     row.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
@@ -426,6 +429,9 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
         if (error?.name === 'AbortError') return;
         if (isCurrentPage()) {
             state.retryRequest = retryRequest;
+            setText(els.actorMeta, state.loadedCredits.length > 0
+                ? `已显示 ${state.loadedCredits.length} / 共 ${state.totalResults} 部出演作品`
+                : '作品加载失败');
             showActorNotice(`作品加载失败：${getSearchErrorMessage(error)}。点击下方按钮重试。`, 'error');
         }
     } finally {
@@ -945,7 +951,7 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         title: source.title || candidate?.title || '—',
         subtitle: `${source.year || candidate?.year || '????'} // ${(source.mediaType || source.type) === 'movie' ? 'FILM' : (source.mediaType || source.type) === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
         summary: source.summary || (wikiResult && wikiResult.extract) || candidate?.summary || '',
-        genres: Array.isArray(source.genres) && source.genres.length > 0 ? source.genres : [],
+        genres: normalizeGenres(source.genres),
         rating: source.tmdbRating ?? candidate?.tmdbRating ?? 0,
         votes: source.tmdbVotes ?? candidate?.tmdbVotes ?? candidate?.votes ?? 0,
         posterUrl: pickSafeImageUrl(
@@ -1545,6 +1551,14 @@ function renderResourceErrorStates(onRetry) {
     });
 }
 
+// Before a scan has run, "nothing found" would be a claim the page cannot make.
+function renderResourcesAwaitingDetails() {
+    const waiting = { title: '等待详情确认', detail: '确认作品后开始扫描资源', isLoading: false };
+    renderResourceStatus(els.quarkUrlList, { ...waiting, iconName: 'cloud', iconClass: 'text-accent-red' });
+    renderResourceStatus(els.resourceList, { ...waiting, iconName: 'link', iconClass: 'text-[#0099ff]' });
+    renderResourceStatus(els.wpzysResourceList, { ...waiting, iconName: 'comments', iconClass: 'text-accent-gold' });
+}
+
 function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: '暂未发现资源页面',
@@ -1618,7 +1632,8 @@ function renderPreferenceFields() {
         input.max = '5';
         input.step = '0.5';
         input.value = String(score);
-        input.title = `默认 ${defaultScore}`;
+        input.placeholder = String(defaultScore);
+        input.title = `默认 ${defaultScore}，留空恢复默认`;
         input.className = 'w-16 rounded bg-cinema-900 border border-cinema-700 px-2 py-1 text-right font-mono text-cinema-100';
         label.append(name, input);
         els.preferenceFields.append(label);
@@ -1642,7 +1657,10 @@ els.preferenceForm?.addEventListener('submit', event => {
 });
 
 els.preferenceReset?.addEventListener('click', () => {
-    resetPreferenceWeights();
+    if (!resetPreferenceWeights()) {
+        showToast('无法恢复默认偏好：浏览器禁止本地存储');
+        return;
+    }
     renderPreferenceFields();
     rerenderScoreWithPreferences();
     showToast('已恢复默认偏好');
@@ -1815,7 +1833,8 @@ function resetRatingBoxes() {
 
 function setSearching(isSearching) {
     if (!els.searchButton) return;
-    els.searchButton.disabled = isSearching;
+    // Keep the submit button enabled: a disabled default button blocks Enter,
+    // and a new query must be able to replace the running search.
     els.searchButton.setAttribute('aria-busy', String(isSearching));
     els.searchButton.classList.toggle('opacity-60', isSearching);
     els.searchButton.classList.toggle('cursor-wait', isSearching);
@@ -1959,6 +1978,11 @@ function showSearchError(error, query, searchId, onRetry = null) {
     setSearching(false);
     lastSearchQuery = query;
     searchRetryAction = onRetry;
+    // The control that started the load may have been hidden with its picker.
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || !focused.isConnected || focused.closest('.hidden')) {
+        els.retrySearchButton?.focus();
+    }
 }
 
 function resetResultAnimation() {
@@ -2182,6 +2206,21 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
             viewModel.doubanRating = doubanResult.rating;
             viewModel.doubanImdbId = doubanResult.imdbId || null;
             renderBackupDoubanRating(viewModel.doubanRating);
+            // Douban genres (灾难, 战争, 悬疑 …) fill gaps in TMDB's genre list.
+            const mergedGenres = normalizeGenres(viewModel.genres, doubanResult.genres);
+            if (mergedGenres.length > viewModel.genres.length) {
+                viewModel.genres = mergedGenres;
+                renderGenres(viewModel.genres);
+                renderTmdbProfile(viewModel);
+                renderScore({
+                    rating: viewModel.rating,
+                    votes: viewModel.votes,
+                    genres: viewModel.genres,
+                    hasWiki: viewModel.overviewSource === 'ZH.WIKIPEDIA',
+                    summary: viewModel.summary,
+                    source: 'tmdb'
+                }, 'TMDB', true);
+            }
         }
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
 
@@ -2280,9 +2319,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     renderBackupDoubanRating(viewModel.doubanRating);
     if (!isRetry || !resourceResultState) {
         setResourceStatus('等待详情确认后扫描资源');
-        renderResourceList([]);
-        renderWpzysResourceList([]);
-        renderQuarkUrls([]);
+        renderResourcesAwaitingDetails();
         hideResourceNotice();
     }
 
@@ -2361,10 +2398,12 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         .catch(error => {
             if (error?.name === 'AbortError') throw error;
             if (isActiveSearch(searchId, loadId)) {
+                const seasonMissing = Boolean(requestedSeason) && error?.status === 404;
                 setSearchStatus(deferEnrichments ? '该链接的详情尚未确认，请重试或重新搜索' : `已找到“${viewModel.title}”，基础信息已加载`);
                 showDataNotice({
-                    title: requestedSeason ? `未找到第 ${requestedSeason} 季` : 'TMDB 详情暂时不可用',
-                    detail: requestedSeason ? error.message : deferEnrichments
+                    // Only a 404 means the season is missing; timeouts and outages are retryable.
+                    title: seasonMissing ? `未找到第 ${requestedSeason} 季` : 'TMDB 详情暂时不可用',
+                    detail: seasonMissing ? error.message : deferEnrichments
                         ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
                         : retained ? '详情更新失败，已保留当前资料、简介和补充评分，可稍后重试。'
                             : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
@@ -2493,7 +2532,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             els.results.classList.add('hidden');
             hideCandidatePicker();
             setSearching(false);
-            setSearchStatus(`找到 ${actorCandidates.length} 位可能的演员，请确认身份`);
+            setSearchStatus(`找到 ${Math.min(actorCandidates.length, 6)} 位可能的演员，请确认身份`);
             scrollToVisible(els.actorCandidatePicker);
             return;
         }
@@ -2539,8 +2578,13 @@ async function handleSearch({ historyMode = 'push' } = {}) {
 }
 
 if (els.searchForm) {
+    let lastSubmittedQuery = '';
     els.searchForm.addEventListener('submit', e => {
         e.preventDefault();
+        const query = els.input.value.trim();
+        // A repeated Enter for the query already running must not restart it.
+        if (query && query === lastSubmittedQuery && els.searchButton?.getAttribute('aria-busy') === 'true') return;
+        lastSubmittedQuery = query;
         handleSearch();
     });
 }

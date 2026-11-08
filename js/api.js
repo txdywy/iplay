@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.36';
+import { RELEASE_VERSION } from './release.js?v=1.0.37';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -125,7 +125,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
                 httpError.status = response.status;
                 throw httpError;
             }
-            throw error;
+            // A 200 HTML page (proxy or challenge) must not surface as a raw SyntaxError.
+            const invalidError = new Error('数据服务返回了无效响应，请稍后重试');
+            invalidError.status = 502;
+            throw invalidError;
         }
         if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 

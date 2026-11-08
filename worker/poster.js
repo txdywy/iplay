@@ -73,7 +73,10 @@ async function handlePosterSearchUncoalesced(title, year, env, ctx, { refresh = 
     year = yearCheck.value;
 
     if (!getTmdbAuth(env)) return jsonResponse({ error: "TMDB is not configured" }, 503);
-    const cacheKey = new Request(`https://poster-v6-cache.local/?title=${encodeURIComponent(title)}&year=${year}&id=${identity.tmdbId || ""}&type=${identity.mediaType || ""}&imdb=${identity.imdbId || ""}`);
+    // A TMDB identity ignores the title and year, so its spelling must not split the cache.
+    const cacheKey = new Request(identity.tmdbId
+        ? `https://poster-v7-cache.local/?id=${identity.tmdbId}&type=${identity.mediaType}&imdb=${identity.imdbId || ""}`
+        : `https://poster-v7-cache.local/?title=${encodeURIComponent(title)}&year=${year}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cached) return cached;
     try {

@@ -214,21 +214,21 @@ The recommendation scoring algorithm in `js/scorer.js` uses a set of genre-based
 | Genre | Score | Reason |
 |-------|-------|--------|
 | 喜剧 (Comedy) | +2.5 | 符合喜剧偏好 |
-| 轻松 (Light) | +2.0 | 基调轻松减压 |
 | 爱情 (Romance) | +1.5 | 包含浪漫/Melo元素 |
+| 家庭 (Family) | +1.5 | 温情家庭题材 |
 | 剧情 (Drama) | +1.0 | 剧情导向 |
-| 职业 (Career) | +1.5 | 职场背景设定 |
+| 动画 (Animation) | +1.0 | 动画作品 |
 | 恐怖 (Horror) | -3.0 | 包含恐怖元素 |
-| 血腥 (Gore) | -3.0 | 可能含有血腥镜头 |
-| 暴力 (Violence) | -2.5 | 存在暴力情节 |
 | 惊悚 (Thriller) | -2.0 | 惊悚刺激氛围 |
-| 犯罪 (Crime) | -1.0 | 犯罪题材 |
-| 悲剧 (Tragedy) | -3.0 | 剧情致郁/苦大仇深 |
+| 战争 (War) | -2.0 | 战争题材，可能含暴力或血腥镜头 |
 | 灾难 (Disaster) | -1.5 | 环境压抑 |
+| 犯罪 (Crime) | -1.0 | 犯罪题材 |
+
+Genres come from TMDB and, once a Douban match is confirmed, from Douban. `normalizeGenres` splits TMDB's untranslated or combined TV genres (`War & Politics` → 战争、政治, `Sci-Fi & Fantasy` → 科幻、奇幻, `动作冒险` → 动作、冒险) and maps Douban's 纪录片 to 纪录, so every default above can match a real title. A score of -2.5 or lower counts as a hard dislike and caps the recommendation below 60.
 
 #### Customizing in the page
 
-Open **调整推荐偏好** below the analysis report on any title. Each genre accepts a score from -5 to 5; **保存偏好** stores only genres that differ from the defaults and re-scores the current title immediately, and **恢复默认** removes the stored weights. Preferences stay in this browser's `localStorage`.
+Open **调整推荐偏好** below the analysis report on any title. Each genre accepts a score from -5 to 5, and an emptied field keeps the default; **保存偏好** stores only genres that differ from the defaults and re-scores the current title immediately, and **恢复默认** removes the stored weights. Preferences stay in this browser's `localStorage`.
 
 #### Customizing via localStorage
 

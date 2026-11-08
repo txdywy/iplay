@@ -249,11 +249,12 @@ export async function handleWikiZh(query, ctx, options = {}) {
     if (idCheck?.error) return idCheck.error;
     const mediaType = mediaTypeCheck.value;
     const year = yearCheck.value;
-    const adjacentYear = await getWikiAdjacentYear(idCheck?.value, mediaType, year, options.env, ctx);
-
-    const cacheKey = new Request(`https://wiki-zh-v8-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}&near=${adjacentYear || ""}`);
+    // Key on the request inputs. The adjacent year is derived from the TMDB id,
+    // so a cache hit must not wait on (or be split by) that TMDB lookup.
+    const cacheKey = new Request(`https://wiki-zh-v9-cache.local/?q=${encodeURIComponent(query)}&type=${mediaType || ""}&year=${year}&id=${idCheck?.value || ""}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached) return cached;
+    const adjacentYear = await getWikiAdjacentYear(idCheck?.value, mediaType, year, options.env, ctx);
 
     try {
         const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);

@@ -55,8 +55,9 @@ TMDB 上游错误按 HTTP 状态处理，即使正文是 HTML 或为空，也不
 | 400 | 缺少必要参数 |
 | 404 | 资源未找到 |
 | 405 | 请求方法不支持 |
-| 429 | 本服务或上游限流。本服务普通接口每分钟 60 次、资源搜索每分钟 10 次，命中本服务限流时响应包含 `Retry-After: 60` |
-| 502 | 上游服务或所有资源提供方不可用 |
+| 429 | 本服务或上游限流。本服务普通接口每分钟 60 次、资源搜索每分钟 10 次；响应包含 `Retry-After` |
+| 502 | 上游服务或所有资源提供方不可用；上游拒绝 Worker 凭据（`401`/`403`）也返回 `502` |
+| 503 | 上游暂时不可用（如豆瓣拦截或限流、限流服务故障），响应包含 `Retry-After` |
 | 504 | 直连上游请求超时；聚合接口会按可用来源返回部分结果或 `502` |
 | 500 | 上游服务异常或内部错误 |
 
@@ -378,7 +379,7 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
 | `year` | number | 否 | 已选作品年份。上游只按片名搜索，年份在本地校验：电影要求标题含该年份、相邻年份（帖子常写本地上映年份）或覆盖该年份的区间（如「2019-2023」）；剧集还接受更晚的年份或未写年份的标题（帖子常写最新一季年份）。醉都音合集的小标题未写年份时，可由帖子标题或该作品小节的正文证明；分享链接中的数字不计为年份。 |
-| `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存 |
+| `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存。所有来源都失败时返回已有缓存结果，并带 `X-iPlay-Stale: 1` 与 `Cache-Control: no-store` |
 
 **Example Request：**
 
@@ -450,7 +451,7 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 GET /api/poster?title={title}&year={year}&id={id}&type={movie|tv}&refresh=1
 ```
 
-`title` 必填；`year` 可选；`id` / `type` 必须同时提供。`refresh=1` 绕过海报聚合及 TMDB 缓存。缓存命名空间为 `poster-v6-cache.local`，成功结果缓存 24 小时，错误不缓存。
+`title` 必填；`year` 可选；`id` / `type` 必须同时提供；`imdb`（如 `tt1234567`）可选，必须与 `id` 一起提供，用于拒绝 IMDb 编号不一致的 TMDB 条目。`refresh=1` 绕过海报聚合及 TMDB 缓存。缓存命名空间为 `poster-v7-cache.local`，成功结果缓存 24 小时，错误不缓存。
 
 ```json
 {"poster":"https://image.tmdb.org/t/p/w500/xxx.jpg","tmdbRating":6.4,"tmdbVotes":1205,"tmdb":true,"tmdbId":550988,"mediaType":"movie"}
@@ -514,8 +515,8 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
 | `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v19-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
-| `/api/poster` | 成功结果 24h；查询失败不缓存 | `poster-v6-cache.local/?title={title}&year={year}&id={id}&type={type}` |
-| `/api/wiki/zh` | 24h | `wiki-zh-v8-cache.local/?q={query}&type={type}&year={year}` |
+| `/api/poster` | 成功结果 24h；查询失败不缓存 | 有 TMDB 身份时 `poster-v7-cache.local/?id={id}&type={type}&imdb={imdb}`，否则 `poster-v7-cache.local/?title={title}&year={year}` |
+| `/api/wiki/zh` | 24h | `wiki-zh-v9-cache.local/?q={query}&type={type}&year={year}&id={id}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 

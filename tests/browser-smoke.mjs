@@ -624,7 +624,17 @@ async function runPreferencePanelFlow() {
             csp: Boolean(document.querySelector('meta[http-equiv="Content-Security-Policy"]'))
         };
     })()`);
-    assert.equal(state.count, 12);
+    assert.equal(state.count, 10);
+    // The toast must slide into the viewport (Tailwind 4 uses the translate property).
+    await new Promise(resolve => setTimeout(resolve, 450));
+    const toast = await evaluate(`(() => {
+        const toast = document.getElementById('toast');
+        const rect = toast.getBoundingClientRect();
+        return { text: toast.textContent, bottom: rect.bottom, viewport: innerHeight, opacity: getComputedStyle(toast).opacity };
+    })()`);
+    assert.equal(toast.text, '已恢复默认偏好');
+    assert.ok(toast.bottom <= toast.viewport, `toast is below the viewport (${toast.bottom} > ${toast.viewport})`);
+    assert.equal(toast.opacity, '1');
     assert.deepEqual(state.saved, { '喜剧': { score: -4, reason: '符合喜剧偏好' } }, 'only changed genres are stored');
     assert.equal(state.afterReset, null);
     assert.equal(state.resetValue, '2.5');

@@ -31,7 +31,9 @@ test('TMDB non-JSON errors preserve stop statuses without retries or diagnostic 
     for (status of [401, 403, 429, 503, 504]) {
         calls.length = 0;
         const response = await worker.fetch(request(`/api/tmdb/search?q=Gateway${status}`), { TMDB_API_KEY: 'test' }, ctx);
-        assert.equal(response.status, status);
+        // Upstream credential failures are the Worker's, not the visitor's.
+        assert.equal(response.status, status === 401 || status === 403 ? 502 : status);
+        assert.equal(response.headers.get('retry-after'), status === 429 || status === 503 ? '60' : null);
         assert.equal(response.headers.get('cache-control'), 'no-store');
         assert.deepEqual(calls, ['/3/search/multi'], 'an upstream stop applies even when its body is not JSON');
         assert.ok(!(await response.text()).includes('private-key'));
