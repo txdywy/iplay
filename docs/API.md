@@ -65,6 +65,10 @@ TMDB 上游错误按 HTTP 状态处理，即使正文是 HTML 或为空，也不
 
 ## Endpoint Reference
 
+### 0. Telegram Bot
+
+`POST /telegram/webhook` 接收 Telegram 更新（需 `X-Telegram-Bot-Api-Secret-Token`），`GET /telegram/setup?token=<TOKEN>` 注册 webhook。两个路由仅在配置 `TELEGRAM_BOT_TOKEN` 后启用，不返回 CORS 头。详见 [TELEGRAM.md](TELEGRAM.md)。
+
 ### 1. TMDB 搜索
 
 搜索电影和电视剧，返回 TMDB 多类型搜索结果。

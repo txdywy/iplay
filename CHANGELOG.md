@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.38] - 2026-11-09
+
+### Added
+
+- A Telegram bot in the same Worker. Send a title or actor name, or use `/search` and `/actor`, to get the web page's flows as chat messages and inline buttons: candidate pickers, a detail card with poster, TMDB rating, iPlay recommendation score, cast and seasons, the actor's works with filters and paging, the full synopsis, and the Quark resource scan with paged links, one-tap password copy buttons, forum posts and rescans. Setup is in `docs/TELEGRAM.md`.
+- `POST /telegram/webhook`, authenticated with a secret derived from `TELEGRAM_BOT_TOKEN`, and `GET /telegram/setup?token=…` to register the webhook and command menu. Each Telegram user is rate-limited like a web client; `TELEGRAM_ALLOWED_USERS` restricts the bot to listed user IDs.
+
+### Changed
+
+- Logs redact Telegram bot tokens in API paths.
+
 ## [1.0.37] - 2026-11-08
 
 ### Fixed
