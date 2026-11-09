@@ -31,6 +31,12 @@ import {
     pickBestTmdbPosterCandidate
 } from './tmdb.js';
 import {
+    TELEGRAM_SETUP_PATH,
+    TELEGRAM_WEBHOOK_PATH,
+    handleTelegramSetup,
+    handleTelegramWebhook
+} from './telegram.js';
+import {
     handleWikiZh
 } from './wiki.js';
 
@@ -98,6 +104,18 @@ export default {
                     "X-iPlay-Version": RELEASE_VERSION,
                 }
             });
+        }
+
+        const requestPath = new URL(request.url).pathname.replace(/\/+$/, "");
+        // Telegram posts updates from shared IPs; the webhook authenticates
+        // with its secret header and rate-limits per Telegram user instead.
+        if (requestPath === TELEGRAM_WEBHOOK_PATH) {
+            try {
+                return await handleTelegramWebhook(request, env, ctx);
+            } catch (error) {
+                logEvent("error", "telegram_webhook_failed", { error: logErrorMessage(error) });
+                return errorResponse(error, 500);
+            }
         }
 
         if (request.method !== "GET") {
@@ -185,6 +203,10 @@ export default {
                         imdbId: url.searchParams.get("imdb")
                     }
                 ), request, env);
+            }
+
+            if (path === TELEGRAM_SETUP_PATH) {
+                return await handleTelegramSetup(request, env);
             }
 
             if (path === "/api/wiki/zh") {

@@ -20,15 +20,20 @@ const productionConfig = loadProductionRuntimeConfig(fileURLToPath(new URL('../w
 const workerDirectory = fileURLToPath(new URL('../worker/', import.meta.url));
 const siblingModules = (await readdir(workerDirectory)).filter(name => name.endsWith('.js'))
     .map(name => join(workerDirectory, name)).filter(path => path !== resolve(productionConfig.main));
+// The Telegram bot reuses the page's pure scoring, matching and season helpers.
+const sharedFrontendModules = ['release.js', 'scorer.js', 'match.js', 'seasons.js']
+    .map(name => fileURLToPath(new URL(`../js/${name}`, import.meta.url)));
 const modules = await Promise.all([
-    productionConfig.main, ...siblingModules, fileURLToPath(new URL('../js/release.js', import.meta.url))
+    productionConfig.main, ...siblingModules, ...sharedFrontendModules
 ].map(async path => ({
     type: 'ESModule', path,
     contents: await readFile(path, 'utf8')
 })));
 const checks = [];
 const runtimeCookie = 'bbs_token=runtime-wpzy-secret; bbs_sid=runtime-wpzy-sid';
-const bindings = { ...productionConfig.bindings, TMDB_ACCESS_TOKEN: 'runtime-test-bearer', WPZY_COOKIE: runtimeCookie };
+const telegramToken = '123456789:RuntimeTelegramTokenForWorkerdTests00';
+const telegramCalls = [];
+const bindings = { ...productionConfig.bindings, TMDB_ACCESS_TOKEN: 'runtime-test-bearer', WPZY_COOKIE: runtimeCookie, TELEGRAM_BOT_TOKEN: telegramToken };
 let wpzyMode = 'public';
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
@@ -52,6 +57,12 @@ const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (url.hostname === 'api.telegram.org') {
+        assert.equal(url.pathname.startsWith(`/bot${telegramToken}/`), true);
+        const method = url.pathname.split('/').at(-1);
+        telegramCalls.push({ method, body: await request.json() });
+        return Response.json({ ok: true, result: method === 'sendMessage' || method === 'sendPhoto' ? { message_id: telegramCalls.length } : true });
+    }
     if (url.hostname === 'untrusted.example') {
         redirectedRequests++;
         return Response.json(tmdbDetail({ id: 606, title: 'Untrusted Redirect' }));
@@ -182,6 +193,25 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const { createHash } = await import('node:crypto');
+    const telegramSecret = createHash('sha256').update(`iplay-telegram-webhook:${telegramToken}`).digest('hex');
+    const webhook = (secret, update) => runtime.dispatchFetch('https://worker.test/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': secret, 'cf-connecting-ip': '149.154.167.1' },
+        body: JSON.stringify(update)
+    });
+    assert.equal((await webhook('wrong-secret', {})).status, 401);
+    const helpUpdate = { update_id: 1, message: { message_id: 1, text: '/help', chat: { id: 42, type: 'private' }, from: { id: 42 } } };
+    assert.equal((await webhook(telegramSecret, helpUpdate)).status, 200);
+    for (let waited = 0; !telegramCalls.some(call => call.method === 'sendMessage') && waited < 5000; waited += 50) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const help = telegramCalls.find(call => call.method === 'sendMessage');
+    assert.ok(help, 'the bot replies from waitUntil after acknowledging the webhook');
+    assert.match(help.body.text, /iPlay 追剧助手/);
+    assert.equal(help.body.chat_id, 42);
+    checks.push('telegram-webhook-secret-and-reply');
 
     const redirect = await request('/api/tmdb/detail?id=606&type=movie', 'runtime-tmdb-redirect');
     assert.equal(redirect.status, 502);

@@ -17,6 +17,9 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `CORS_ALLOWED_ORIGINS` | Optional | — | Comma-separated additional frontend origins. At most 20 configured values are read. |
 | `ENVIRONMENT` | Production required | — | Set to `production` in the deployed Worker. When production rate-limit bindings are missing, requests fail closed with `503` instead of using an isolate-local counter. |
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
+| `TELEGRAM_BOT_TOKEN` | Optional | — | Enables the Telegram bot. See [TELEGRAM.md](TELEGRAM.md) for setup. |
+| `TELEGRAM_ALLOWED_USERS` | Optional | — | Comma-separated Telegram user IDs allowed to use the bot. Empty means public, rate-limited per user. |
+| `TELEGRAM_WEBHOOK_SECRET` | Optional | Derived from the token | Overrides the webhook secret Telegram must send. Re-run `/telegram/setup` after changing it. |
 
 ### Setting Secrets via Wrangler CLI
 
@@ -33,6 +36,9 @@ npm run wrangler -- secret put TMDB_API_KEY
 
 # Add self-hosted frontend origins when needed
 npm run wrangler -- secret put CORS_ALLOWED_ORIGINS
+
+# Optional Telegram bot (see docs/TELEGRAM.md)
+npm run wrangler -- secret put TELEGRAM_BOT_TOKEN
 ```
 
 ### Setting Secrets via Cloudflare Dashboard

@@ -22,6 +22,8 @@ export function logErrorMessage(error) {
         .replace(/([?&](?:api_key|apikey|access_token|token)=)[^&\s]+/giu, "$1[REDACTED]")
         .replace(/(\bbbs_(?:token|sid)\s*=\s*)[^;\s"<>]+/giu, "$1[REDACTED]")
         .replace(/(\b(?:Bearer|Basic)\s+)[^\s;,"<>]+/giu, "$1[REDACTED]")
+        // Telegram puts the bot token in the request path: /bot<id>:<secret>/.
+        .replace(/(\/bot)\d+:[A-Za-z0-9_-]+/gu, "$1[REDACTED]")
         .slice(0, 500);
 }
 
