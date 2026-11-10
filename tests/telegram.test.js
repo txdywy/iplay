@@ -5,7 +5,9 @@ import { logErrorMessage } from '../worker/core.js';
 import {
     buildQuarkPage,
     callbackData,
+    buildPostPage,
     escapeHtml,
+    escapeTruncated,
     getTelegramWebhookSecret,
     parseCommand
 } from '../worker/telegram.js';
@@ -140,8 +142,8 @@ test('a confident title search sends the detail card with poster, score and acti
     assert.match(photo.body.caption, /推荐指数 <b>\d+<\/b>/);
     assert.match(photo.body.caption, /阿宝&lt;从&gt;/, 'summaries are HTML-escaped');
     const data = allCallbackData(photo.body.reply_markup);
-    assert.ok(data.includes('r|tv|106841|0'));
-    assert.ok(data.includes('a|1001|0|'));
+    assert.ok(data.includes('ro|tv|106841'));
+    assert.ok(data.includes('ao|1001'));
     const urls = photo.body.reply_markup.inline_keyboard.flat().map(entry => entry.url).filter(Boolean);
     assert.deepEqual(urls, ['https://iplay.hackx64.eu.org/?id=106841&type=tv&title=%E7%B9%81%E8%8A%B1']);
 });
@@ -179,14 +181,15 @@ test('resource buttons scan Quark links with copyable passwords and page in plac
         return Response.json([]);
     } });
 
-    await deliver(callback('r|tv|106841|0'));
+    await deliver(callback('ro|tv|106841'));
     const messages = sent();
     assert.match(messages[0].body.text, /正在扫描/);
+    assert.deepEqual(allCallbackData(messages[0].body.reply_markup), ['rf|tv|106841'], 'the placeholder can always be rescanned');
     const page = messages.at(-1);
     assert.equal(page.method, 'editMessageText');
     assert.equal(page.body.message_id, messages[0].result.message_id, 'the scan result replaces its placeholder');
     assert.match(page.body.text, /共 8 个分享链接/);
-    assert.match(page.body.text, /https:\/\/pan\.quark\.cn\/s\/fanhua0/);
+    assert.match(page.body.text, /<a href="https:\/\/pan\.quark\.cn\/s\/fanhua0">https:\/\/pan\.quark\.cn\/s\/fanhua0<\/a>/);
     assert.match(page.body.text, /提取码：<code>ab00<\/code>/);
     const copy = page.body.reply_markup.inline_keyboard.flat().filter(entry => entry.copy_text);
     assert.equal(copy.length, 6, 'one copy button per password on the page');
@@ -234,16 +237,21 @@ test('group chats only answer commands', async t => {
     const { sent } = setup(t);
     await deliver(textMessage('随便聊聊', { chatType: 'group' }));
     assert.equal(sent().length, 0);
+    await deliver(textMessage('/ban someone', { chatType: 'group' }));
+    await deliver(textMessage('/help@another_bot', { chatType: 'group' }));
+    assert.equal(sent().filter(call => call.method !== 'getMe').length, 0, 'unknown commands and other bots\' commands are ignored');
     await deliver(textMessage('/help@iplay_test_bot', { chatType: 'group' }));
-    assert.match(sent()[0].body.text, /iPlay 追剧助手/);
+    const help = sent().filter(call => call.method !== 'getMe')[0];
+    assert.match(help.body.text, /iPlay 追剧助手/);
+    assert.equal(help.body.reply_parameters.message_id, 1, 'group answers reply to the asking message');
 });
 
 test('helpers keep callback data within Telegram limits and escape HTML', () => {
     assert.throws(() => callbackData('q', 'x'.repeat(70)));
     assert.equal(callbackData('r', 'tv', 123456789012, 99), 'r|tv|123456789012|99');
     assert.equal(escapeHtml('<a href="x">&</a>'), '&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;');
-    assert.deepEqual(parseCommand('/search@bot 繁花 第二季'), { command: 'search', argument: '繁花 第二季' });
-    assert.deepEqual(parseCommand('繁花'), { command: null, argument: '繁花' });
+    assert.deepEqual(parseCommand('/search@Bot 繁花 第二季'), { command: 'search', mention: 'bot', argument: '繁花 第二季' });
+    assert.deepEqual(parseCommand('繁花'), { command: null, mention: null, argument: '繁花' });
     assert.equal(logErrorMessage(`fetch https://api.telegram.org/bot${TOKEN}/sendMessage failed`), 'fetch https://api.telegram.org/bot[REDACTED]/sendMessage failed');
 });
 
@@ -257,4 +265,105 @@ test('a resource page reports provider failures and stale rescans', () => {
     assert.match(text, /WPZY 暂时不可用/);
     assert.match(text, /之前的结果/);
     assert.ok(allCallbackData(markup).includes('rp|movie|1|0'));
+});
+
+test('a requested season is never attached to a movie', async t => {
+    const { sent } = setup(t, { tmdb: {
+        '/search/multi': { page: 1, total_results: 2, results: [
+            { id: 11, media_type: 'movie', title: '英雄', release_date: '2002-12-19' },
+            { id: 12, media_type: 'tv', name: '英雄', first_air_date: '2006-01-01' }
+        ] },
+        '/search/tv': { page: 1, total_results: 1, results: [{ id: 12, name: '英雄', first_air_date: '2006-01-01' }] },
+        '/movie/11': tmdbDetail({ id: 11, title: '英雄', release_date: '2002-12-19' })
+    } });
+    await deliver(textMessage('英雄 第二季'));
+    const data = sent().flatMap(call => allCallbackData(call.body.reply_markup));
+    assert.ok(!data.some(value => /^d\|movie\|\d+\|\d/.test(value)), `movie buttons carry no season: ${data}`);
+
+    // A stale button from an older release still opens the movie.
+    await deliver(callback('d|movie|11|2'));
+    assert.match(sent().at(-1).body.text, /<b>英雄<\/b> \(2002\)/);
+});
+
+test('a failed scan turns its placeholder into a retry, not a dead end', async t => {
+    const { sent } = setup(t, { resources: () => new Response('down', { status: 503 }) });
+    await deliver(callback('ro|tv|106841'));
+    const last = sent().at(-1);
+    assert.equal(last.method, 'editMessageText');
+    assert.match(last.body.text, /资源扫描失败/);
+    assert.deepEqual(allCallbackData(last.body.reply_markup), ['rf|tv|106841']);
+    assert.equal(sent().filter(call => call.method === 'sendMessage').length, 1, 'no separate error message');
+});
+
+test('posts and Quark links switch inside one message', async t => {
+    const { sent } = setup(t, { resources: parsed => {
+        const value = parsed.toString();
+        if (value.startsWith('https://by669.org/api/discussions')) {
+            return Response.json({ data: [{ id: '1', attributes: { title: '《繁花》2023 全30集' } }] });
+        }
+        if (value === 'https://by669.org/d/1') return new Response('<p>no links here</p>');
+        if (value.startsWith('https://wpzy.org/search.htm')) return new Response(WPZY_EMPTY_SEARCH_HTML);
+        return Response.json([]);
+    } });
+    const resourceMessage = { message_id: 70, text: '繁花 · 夸克资源' };
+    await deliver(callback('rp|tv|106841|0', { message: resourceMessage }));
+    const posts = sent().at(-1);
+    assert.equal(posts.method, 'editMessageText');
+    assert.equal(posts.body.message_id, 70);
+    assert.match(posts.body.text, /资源帖（1）/);
+    assert.ok(allCallbackData(posts.body.reply_markup).includes('r|tv|106841|0'));
+
+    await deliver(callback('r|tv|106841|0', { message: { message_id: 70, text: '繁花 · 资源帖（1）' } }));
+    const back = sent().at(-1);
+    assert.equal(back.method, 'editMessageText', 'going back edits in place instead of posting a new scan');
+    assert.equal(back.body.message_id, 70);
+});
+
+test('long URLs and escaped text never cut the HTML markup', () => {
+    const longUrl = `https://pan.quark.cn/s/${'a'.repeat(1900)}`;
+    const detail = { id: 1, mediaType: 'movie', title: '测试', year: '2024' };
+    const { text, markup } = buildQuarkPage(detail, {
+        quarkUrls: Array.from({ length: 6 }, (_, index) => ({ title: `分享${index}`, url: `${longUrl}${index}`, password: 'ab12', sourceUrl: `${longUrl}src` }))
+    }, 0);
+    assert.ok(text.length <= 4096);
+    assert.equal((text.match(/<a /g) || []).length, (text.match(/<\/a>/g) || []).length, 'every link is closed');
+    assert.match(text, /链接过长未显示/);
+    const shownLinks = (text.match(/🔗/g) || []).length;
+    assert.equal(markup.inline_keyboard.flat().filter(entry => entry.copy_text).length, shownLinks, 'copy buttons match the links shown');
+
+    const posts = buildPostPage(detail, { resources: Array.from({ length: 8 }, (_, index) => ({ title: `帖${index}`, url: `${longUrl}${index}` })) }, 0);
+    assert.ok(posts.text.length <= 4096);
+
+    const escaped = escapeTruncated('"&<>'.repeat(2000), 3600);
+    assert.ok(escaped.length <= 3600);
+    assert.doesNotMatch(escaped, /&[a-z]*$/, 'no entity is cut in half');
+    assert.equal(escapeTruncated('短文本', 100), '短文本');
+});
+
+test('internal and Telegram errors are not shown to users', async t => {
+    const { sent } = setup(t, { telegramFailures: { sendPhoto: 'Bad Request: wrong file identifier/HTTP URL specified' }, tmdb: {
+        '/search/multi': { page: 1, total_results: 1, results: [{ ...FANHUA, media_type: 'tv' }] }
+    } });
+    await deliver(textMessage('繁花'));
+    const messages = sent();
+    assert.equal(messages.at(-1).method, 'sendMessage', 'a rejected photo falls back to a text card');
+    assert.ok(!messages.some(call => /Bad Request|Telegram/.test(call.body.text || '')));
+});
+
+test('non-text private messages get a hint and bots are ignored', async t => {
+    const { sent } = setup(t);
+    await deliver({ update_id: 5, message: { message_id: 3, photo: [{}], chat: { id: 42, type: 'private' }, from: { id: 42 } } });
+    assert.match(sent()[0].body.text, /请发送文字/);
+    await deliver({ update_id: 6, message: { message_id: 4, text: '繁花', chat: { id: 42, type: 'private' }, from: { id: 99, is_bot: true } } });
+    assert.equal(sent().length, 1);
+});
+
+test('buttons on photo cards from older releases still work', async t => {
+    const { sent } = setup(t, { resources: () => Response.json([]), tmdb: {
+        '/person/1001': { id: 1001, name: '胡歌', combined_credits: { cast: [] } }
+    } });
+    await deliver(callback('a|1001|0|', { message: { message_id: 7, caption: 'card' } }));
+    assert.equal(sent().at(-1).method, 'sendMessage', 'a photo card is never edited into text');
+    await deliver(callback('r|tv|106841|0', { message: { message_id: 7, caption: 'card' } }));
+    assert.ok(!sent().some(call => call.method === 'editMessageText' && call.body.message_id === 7));
 });

@@ -490,6 +490,10 @@ function buildSearchIntent(query) {
         : /(?:\b(?:movie|film)\b|电影)/iu.test(originalQuery)
             ? "movie"
             : null;
+    // Words that implied the type, kept to recognize titles that contain them
+    // ("The Truman Show", "电影世界") instead of filtering those works out.
+    const typeWords = season.value ? []
+        : Array.from(originalQuery.matchAll(/\b(?:tv|series|show|movie|film)\b|电视剧|剧集|连续剧|电影/giu), match => match[0].toLowerCase());
     const literalTitle = cleanSearchTitle(originalQuery, season.match, year.match, { keepTypeWords: true });
     const animationTitle = literalTitle.replace(SEARCH_ANIMATION_SUFFIX, "").trim();
     const animation = Boolean(animationTitle && animationTitle !== literalTitle);
@@ -513,6 +517,7 @@ function buildSearchIntent(query) {
         year: year.value,
         season: season.value,
         mediaType,
+        typeWords,
         animation,
         hasCjk: hasCjkText(originalQuery)
     };
@@ -644,8 +649,26 @@ function scoreTmdbCandidate(item, intent, sourceIndex = 0, strategy = "direct", 
     if (intent.year && candidateYear && candidateYear !== intent.year) bestScore -= 0.08;
 
     const mediaType = getTmdbMediaType(item);
-    if (intent.mediaType && mediaType && mediaType !== intent.mediaType) return null;
-    if (intent.mediaType && mediaType === intent.mediaType) bestScore += 0.08;
+    if (intent.mediaType && mediaType && mediaType !== intent.mediaType) {
+        // "truman show" implies TV only through a word of the movie's own
+        // title. Keep a work whose title contains that word and matches the
+        // query as typed; everything else of the other type is filtered out.
+        const titles = [title, originalTitle].filter(Boolean);
+        // Every type word must belong to the title: in "The Truman Show 1998 TV"
+        // the separate "TV" is an instruction and still filters the movie.
+        const typeWords = intent.typeWords || [];
+        const namesTypeWord = typeWords.length > 0
+            && titles.some(value => typeWords.every(word => value.toLowerCase().includes(word)));
+        const literalScore = namesTypeWord ? Math.max(...titles.map(value => scoreText(intent.literalTitle, value))) : 0;
+        if (literalScore < SEARCH_ACCEPT_SCORE) return null;
+        if (literalScore + 0.1 > bestScore) {
+            bestScore = literalScore + 0.1;
+            bestMethod = "title-contains";
+            matchedQuery = intent.literalTitle;
+        }
+    } else if (intent.mediaType && mediaType === intent.mediaType) {
+        bestScore += 0.08;
+    }
 
     // A strong title match does not establish the requested remake's identity.
     // Keep it selectable, but ask the user to confirm conflicting/missing years.

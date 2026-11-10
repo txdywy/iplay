@@ -403,7 +403,7 @@ async function fetchAllowedResource(resourceUrl, options = {}, deadline = null, 
 // boundaries; a trailing number other than a year names another work.
 const RESOURCE_TITLE_PREFIX_PATTERN = /(?:电视剧|电影|剧集|连续剧|动漫|动画|番剧|纪录片|综艺|国产剧|国剧|美剧|英剧|韩剧|日剧|泰剧|港剧|台剧|剧|国漫|日漫|美漫|国影|美影|港影|日影|韩影|首发|主演|又名|片名|译名)$/u;
 
-const RESOURCE_TITLE_SUFFIX_PATTERN = /^(?:第|全|共|电视剧|电影|剧集|连续剧|动漫|动画|国语|粤语|国粤|中字|中英|双语|简繁|字幕|高清|超清|蓝光|原盘|完结|已完结|完整|更新|夸克|百度|迅雷|阿里|网盘|年番|合集|系列|未删减|无删减|导演剪辑|加长|特别篇|番外|主演|又名|豆瓣|评分|季|部|集)/u;
+const RESOURCE_TITLE_SUFFIX_PATTERN = /^(?:第|全|共|电视剧|电影|剧集|连续剧|动漫|动画|国语|粤语|沪语|普通话|国配|国粤|中字|中英|双语|简繁|字幕|高清|超清|蓝光|原盘|杜比|修复|完结|已完结|完整|更新|夸克|百度|迅雷|阿里|网盘|年番|合集|系列|未删减|无删减|导演剪辑|加长|特别篇|番外|主演|又名|豆瓣|评分|季|部|集)/u;
 
 const RESOURCE_SEPARATOR_PATTERN = /[\p{P}\p{S}\s]/u;
 
@@ -416,7 +416,16 @@ function createResourceTitlePattern(name) {
     return new RegExp(chars.map(escapeRegExp).join("[\\p{P}\\p{S}\\s]{0,3}"), "gu");
 }
 
-function createResourceTitleMatcher(names) {
+// A series thread names its seasons after the title: "庆余年2 全36集",
+// "庆余年1-2季", "鱿鱼游戏S03", "庆余年Ⅱ" (NFKC: "ii"). For a movie the same
+// suffix names a sequel, so only series accept it; a numbered subtitle such
+// as "斗破苍穹4：逃亡" is another work either way.
+const RESOURCE_SEASON_SUFFIX_PATTERN = /^(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}(?:\s*[-~+]\s*\d{1,2})?(?:季|部|集)?|i{2,3}|iv)(?![\p{L}\p{N}])(?!\s*[:：])/u;
+
+// Quality tags glued to a Han title: "长安的荔枝HDR", "繁花4K".
+const RESOURCE_QUALITY_SUFFIX_PATTERN = /^(?:hdr|uhd|hd|bd|web|dv|4k|8k|1080|2160|720)/u;
+
+export function createResourceTitleMatcher(names, mediaType = null) {
     const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
     if (patterns.length === 0) return () => false;
     const isWord = char => /[\p{L}\p{N}]/u.test(char || "");
@@ -431,6 +440,8 @@ function createResourceTitleMatcher(names) {
                 || RESOURCE_TITLE_PREFIX_PATTERN.test(before);
             if (!leftOk) continue;
             if (!isWord(next)) return true;
+            if (mediaType === "tv" && RESOURCE_SEASON_SUFFIX_PATTERN.test(after)) return true;
+            if (/\p{Script=Han}/u.test(match[0].at(-1)) && RESOURCE_QUALITY_SUFFIX_PATTERN.test(after)) return true;
             if (/\p{N}/u.test(next)) {
                 // "狂飙2023" carries a year; "流浪地球2" is a sequel.
                 if (/^(?:19|20)\d{2}(?!\d)/u.test(after) || /^(?:4k|8k|1080|2160|720)/u.test(after)) return true;
@@ -446,9 +457,12 @@ function createResourceTitleMatcher(names) {
 // local release, e.g. a December premiere shown the next year) or a covered
 // range such as "（2019-2023年）". Series threads usually state the latest
 // season's year, so any later year, or no year at all, is consistent.
-function resourceTitleHasYear(text, releaseYear, mediaType = null) {
+export function resourceTitleHasYear(text, releaseYear, mediaType = null) {
     if (!releaseYear) return true;
-    const value = String(text || "").replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " ");
+    // Share tokens, resolutions ("1920x1080") and bitrates are not years.
+    const value = String(text || "")
+        .replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " ")
+        .replace(/\d{3,4}\s*[x×*]\s*\d{3,4}|\d+\s*kbps/giu, " ");
     const year = Number(releaseYear);
     for (const range of value.matchAll(/(?:^|\D)((?:19|20)\d{2})\s*(?:-|–|—|~|～|至|到)\s*((?:19|20)\d{2})(?!\d)/gu)) {
         if (Number(range[1]) - 1 <= year && year <= Number(range[2]) + 1) return true;
@@ -532,7 +546,7 @@ async function fetchBy669Resources(query, deadline = null, releaseYear = "", med
     if (!data || typeof data !== "object" || !Array.isArray(data.data)) {
         throw createHttpError("By669 returned an invalid response", 502);
     }
-    const matchesTitle = await (titleMatcher || createResourceTitleMatcher(query));
+    const matchesTitle = await (titleMatcher || createResourceTitleMatcher(query, mediaType));
     const resources = [];
 
     for (const item of data.data.slice(0, RESOURCE_MAX_PROVIDER_RESULTS)) {
@@ -562,7 +576,7 @@ function collapseHanSpaces(text) {
     return text.replace(/(\p{Script=Han})\s+(?=\p{Script=Han})/gu, "$1");
 }
 
-function parseWpzysResources(html, query, releaseYear = "", mediaType = null, matchesTitle = createResourceTitleMatcher(query)) {
+function parseWpzysResources(html, query, releaseYear = "", mediaType = null, matchesTitle = createResourceTitleMatcher(query, mediaType)) {
     const resources = [];
     let hasResultItems = false;
     const seenUrls = new Set();
@@ -660,7 +674,7 @@ async function fetchWpzysResources(query, deadline = null, wpzySession = null, r
     }
     if (isWpzyLoginPage(html)) throw createResourceAccessError("login_required");
     const parsed = parseWpzysResources(html, query, releaseYear, mediaType,
-        await (titleMatcher || createResourceTitleMatcher(query)));
+        await (titleMatcher || createResourceTitleMatcher(query, mediaType)));
     if (!parsed.hasResultItems && !isWpzyEmptySearchPage(html)) {
         throw createHttpError("WPZY returned an unrecognized search page", 502);
     }
@@ -721,7 +735,7 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = nul
     }
     const posts = JSON.parse(await readTextWithLimit(response));
     if (!Array.isArray(posts)) throw createHttpError("Zuidouyin returned an invalid response", 502);
-    const namesWork = await (titleMatcher || createResourceTitleMatcher(query));
+    const namesWork = await (titleMatcher || createResourceTitleMatcher(query, mediaType));
 
     const matches = new Map();
     for (const post of posts.slice(0, ZUIDOUYIN_SEARCH_PAGE_SIZE)) {
@@ -1016,7 +1030,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
         // and accepts the work's aliases once it has its own response.
         const titleMatcher = getResourceTitleAliases(query, identity, env, ctx)
             .catch(() => [])
-            .then(aliases => createResourceTitleMatcher([query, ...aliases]));
+            .then(aliases => createResourceTitleMatcher([query, ...aliases], identity.mediaType));
         const [by669Result, wpzysResult, zuidouyinResult] = await Promise.allSettled([
             fetchBy669Resources(query, deadline, identity.year, identity.mediaType, titleMatcher),
             fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType, titleMatcher),
@@ -1074,7 +1088,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
             }
         };
         const cacheContext = isPartial && previousComplete ? null : ctx;
-        return cacheJson(cacheContext, cacheKey, result, isPartial ? 900 : 43200, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+        // Links for a new release appear within hours: recheck an empty scan sooner.
+        const maxAge = isPartial ? 900 : detailResult.quarkUrls.length === 0 ? 1800 : 43200;
+        return cacheJson(cacheContext, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
         if (refresh && cached) return withStaleMarker(cached);
         return errorResponse(e);
