@@ -516,15 +516,15 @@ Worker 通过 Cloudflare Rate Limiting bindings 按客户端 IP 限制请求：�
 | `/api/tmdb/search` | 24h | TMDB 原始请求 URL |
 | `/api/tmdb/person` | 24h | TMDB 人物搜索与 combined credits 请求 URL |
 | `/api/tmdb/detail` | 24h | TMDB 原始请求 URL |
-| `/api/douban/search` | 24h | `douban-search-cache.local/?q={query}` |
+| `/api/douban/search` | 24h；空结果 1h | `douban-search-cache.local/?q={query}` |
 | `/api/douban/detail` | 24h | `douban-detail-cache.local/?id={id}` |
-| `/api/resource` | 完整结果 12h；提供方或详情页部分失败 15min | `resource-search-v19-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
+| `/api/resource` | 完整结果 12h；没有夸克链接的完整结果 30min；提供方或详情页部分失败 15min | `resource-search-v19-cache.local/?q={query}&id={id}&type={type}&year={year}&scope={loginStateHash}` |
 | `/api/poster` | 成功结果 24h；查询失败不缓存 | 有 TMDB 身份时 `poster-v7-cache.local/?id={id}&type={type}&imdb={imdb}`，否则 `poster-v7-cache.local/?title={title}&year={year}` |
 | `/api/wiki/zh` | 24h | `wiki-zh-v9-cache.local/?q={query}&type={type}&year={year}&id={id}` |
 
 > 缓存使用 Cloudflare Worker 的 `caches.default` API。内部命中时不向上游发起请求。资源响应对外另设 `no-store`，不把服务器登录态结果存进浏览器 HTTP 缓存。完整成功的 `/api/tmdb/search`、`/api/tmdb/person` 与 `/api/tmdb/detail` 响应允许浏览器缓存 5 分钟，前端请求附带 `v={release}`，使历史返回/前进不必重复往返，新版本也不会读取旧版本的浏览器缓存；失败或降级结果保持 `no-store`。
 
-详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅在 Worker 内缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。资源 v12 缓存排除旧的无长度限制条目，海报 v6 缓存隔离旧版聚合结果，Wiki v5 缓存排除多年份简介误配的旧结果。
+详情页即使返回 HTTP 200，只要是维护、临时不可用或频率限制状态页，也会计为失败页、保留来源入口、返回部分完成并仅在 Worker 内缓存 15 分钟。普通帖子正文讨论这些问题不会被误判。缓存命名空间带版本号（当前为资源 v19、海报 v7、Wiki v9），匹配规则变化时递增，以排除旧规则产生的条目。
 
 Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务只刷新 `CRON_REFRESH_TITLES`（逗号分隔，最多 20 个）中配置的标题，绕过旧缓存重新写入 TMDB 搜索和详情缓存；未配置时不发起任何请求。
 

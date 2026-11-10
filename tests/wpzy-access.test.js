@@ -108,7 +108,7 @@ test('recognized WPZY empty search results remain healthy and cacheable', async 
     assert.equal(body.resourceMeta.providers.wpzys, 'ok');
     assert.deepEqual(body.wpzysResources, []);
     assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=43200');
+    assert.equal([...entries.values()][0].headers.get('cache-control'), 'public, max-age=1800', 'an empty scan is rechecked sooner');
 });
 
 test('unknown WPZY HTTP 200 documents do not qualify as empty search results', async t => {

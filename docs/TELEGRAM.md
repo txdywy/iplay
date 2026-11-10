@@ -49,7 +49,7 @@ https://iplayw.hackx64.eu.org/telegram/setup?token=<TOKEN>
 { "ok": true, "bot": "@your_bot", "webhook": "https://iplayw.hackx64.eu.org/telegram/webhook", "pendingUpdates": 0, "access": "public" }
 ```
 
-该地址会调用 Telegram 的 `setWebhook`（附带校验密钥）并设置命令菜单。只需执行一次；更换 token 或 Worker 域名后再执行一次即可。完成后在 Telegram 中给 bot 发送 `/start`。
+该地址会调用 Telegram 的 `setWebhook`（附带校验密钥）并设置命令菜单；加上 `&drop=1` 会丢弃注册前积压的消息。只需执行一次；更换 token 或 Worker 域名后再执行一次即可。完成后在 Telegram 中给 bot 发送 `/start`。
 
 ### 4. （可选）限制可用用户
 

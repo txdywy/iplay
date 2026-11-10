@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.39] - 2026-11-10
+
+### Fixed
+
+- Telegram: a requested season is attached only to series, so "某片 第二季" no longer fails on movie results.
+- Telegram: every state of the resource message keeps a rescan button, and a failed or interrupted scan becomes a retry instead of staying on "正在扫描".
+- Telegram: in groups the bot ignores unknown commands and commands addressed to another bot, replies to the asking message and stays in its forum topic.
+- Telegram: rate limits apply before any reply and a limited user gets no reply; only opening or rescanning resources counts against the scan limit, so paging no longer exhausts it.
+- Telegram: Quark links and forum posts switch inside one message; long URLs can no longer cut the message markup; Telegram and runtime error text is not shown to users; a short `retry_after` is honored once.
+- Search keeps a work whose title contains a type word: `truman show` finds The Truman Show instead of filtering it as "not a TV show". A separate type word (`The Truman Show 1998 TV`) still filters.
+- Resource search accepts series threads that name a season after the title (`庆余年2 全36集`, `庆余年1-2季`, `鱿鱼游戏S03`, `庆余年Ⅱ`) and quality tags glued to the title (`长安的荔枝HDR`); numbered subtitles and movie sequels are still excluded.
+- Resolutions and bitrates such as `1920x1080` are no longer read as release years.
+- A missing season offers 查看全剧 and a missing entry says 条目不存在 without a retry that would repeat the same `404`.
+- Search errors are shown in Chinese instead of the Worker's English messages.
+- Allow the Cloudflare Web Analytics beacon in the Content Security Policy; it had been blocked since v1.0.34.
+
+### Changed
+
+- Cache a complete resource scan with no Quark links for 30 minutes instead of 12 hours.
+- `/telegram/setup` keeps pending messages unless called with `drop=1`.
+- Link the committed touch and PNG icons, add a canonical URL and a share image.
+
 ## [1.0.38] - 2026-11-09
 
 ### Added

@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.38';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.39';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.38';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.38';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.38';
-import { RELEASE_VERSION } from './release.js?v=1.0.38';
+} from './scorer.js?v=1.0.39';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.39';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.39';
+import { RELEASE_VERSION } from './release.js?v=1.0.39';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.38';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.38';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.38';
+} from './match.js?v=1.0.39';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.39';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.39';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1930,7 +1930,15 @@ function getSearchErrorMessage(error) {
     if (error && (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError'))) {
         return '暂时无法连接数据服务，请检查网络或稍后重试。';
     }
-    return error?.message || '搜索失败，请稍后重试。';
+    const message = error?.message || '';
+    if (error?.status === 429) return '请求过于频繁';
+    if (error?.status === 504 || /timed out|timeout/i.test(message)) return '请求超时';
+    if (error?.status === 502 || error?.status === 503 || error?.status === 500) return '数据服务暂时不可用';
+    // The Worker's own messages are English; show Chinese text or a generic one.
+    if (/\p{Script=Han}/u.test(message)) return message;
+    if (error?.status === 404) return '未找到对应条目';
+    if (error?.status === 400) return '搜索内容无效，请修改后重试';
+    return '搜索失败，请稍后重试。';
 }
 
 function getSearchErrorHint(error) {
@@ -2400,15 +2408,22 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             if (isActiveSearch(searchId, loadId)) {
                 const seasonMissing = Boolean(requestedSeason) && error?.status === 404;
                 setSearchStatus(deferEnrichments ? '该链接的详情尚未确认，请重试或重新搜索' : `已找到“${viewModel.title}”，基础信息已加载`);
+                const entryMissing = !seasonMissing && error?.status === 404;
+                const reload = options => loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', ...options });
                 showDataNotice({
-                    // Only a 404 means the season is missing; timeouts and outages are retryable.
-                    title: seasonMissing ? `未找到第 ${requestedSeason} 季` : 'TMDB 详情暂时不可用',
-                    detail: seasonMissing ? error.message : deferEnrichments
-                        ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
-                        : retained ? '详情更新失败，已保留当前资料、简介和补充评分，可稍后重试。'
-                            : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
-                    actionLabel: '重试详情',
-                    onAction: () => loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, { isRetry: true, historyMode: 'none', deferEnrichments, requestedSeason }),
+                    // Only a 404 means the season or entry is missing; timeouts and
+                    // outages are retryable. Retrying a 404 would repeat it.
+                    title: seasonMissing ? `未找到第 ${requestedSeason} 季` : entryMissing ? '条目不存在' : 'TMDB 详情暂时不可用',
+                    detail: seasonMissing ? error.message : entryMissing
+                        ? '该 TMDB 条目不存在或已被移除，请重新搜索片名。'
+                        : deferEnrichments
+                            ? '链接对应的详情尚未确认，未加载补充评分、简介或资源。请重试，或重新搜索片名。'
+                            : retained ? '详情更新失败，已保留当前资料、简介和补充评分，可稍后重试。'
+                                : '当前显示搜索结果中的基础信息，评分和季集数据可能不完整。',
+                    actionLabel: seasonMissing ? '查看全剧' : entryMissing ? '' : '重试详情',
+                    onAction: seasonMissing
+                        ? () => reload({ deferEnrichments: false, requestedSeason: null })
+                        : entryMissing ? null : () => reload({ deferEnrichments, requestedSeason }),
                     tone: 'error'
                 });
             }

@@ -55,7 +55,10 @@ iplay/
 │   ├── quark.js            # 夸克链接与提取码复制文本格式化
 │   └── scorer.js           # 个性化推荐打分算法与标签体系
 ├── worker/
-│   └── _worker.js          # Cloudflare Worker 代理服务（CORS  bypass + 数据聚合）
+│   ├── _worker.js          # Worker 入口：路由、CORS、定时刷新
+│   ├── core.js             # 共享基础：校验、缓存、限流、超时
+│   ├── tmdb.js / douban.js / wiki.js / poster.js / resources.js   # 各数据源
+│   └── telegram.js         # Telegram bot
 ├── tests/                  # Node.js 内置测试运行器测试
 ├── package.json            # npm 脚本与开发依赖
 ├── wrangler.toml           # Cloudflare Worker 部署配置

@@ -78,7 +78,7 @@ If details fail, normal searches retain candidate metadata and a retry action; u
 
 TMDB search and detail responses provide the primary poster. The fallback `/api/poster` endpoint uses the selected TMDB ID and media type when available, or searches by title and year for legacy callers. It returns only a TMDB poster; it does not perform supplementary rating or Wikipedia lookups.
 
-Successful responses use `poster-v6-cache.local` with a 24-hour TTL. Explicit refresh bypasses cached results. Missing TMDB configuration returns `503`; a confirmed lookup with no poster returns `404`.
+Successful responses use `poster-v7-cache.local` with a 24-hour TTL. Explicit refresh bypasses cached results. Missing TMDB configuration returns `503`; a confirmed lookup with no poster returns `404`.
 
 ---
 
@@ -252,7 +252,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 
 - **TMDB credentials** stored as Cloudflare Worker secrets (`TMDB_ACCESS_TOKEN` or `TMDB_API_KEY`). Never exposed to frontend.
 - **TMDB redirects** are rejected before following them. This explicitly prevents cross-origin bearer forwarding under the configured compatibility date; non-JSON HTTP failures retain their status and never expose provider bodies.
-- **No user authentication** -- iPlay is a fully anonymous, stateless application.
+- **No user authentication** -- the web app is fully anonymous and stateless. The optional Telegram bot authenticates Telegram with a webhook secret and can restrict users with `TELEGRAM_ALLOWED_USERS`.
 
 ### CORS Handling
 
@@ -312,7 +312,8 @@ iplay/
 │   ├── douban.js           # Douban enrichment and block circuit
 │   ├── resources.js        # Quark resource search (By669, WPZY, 醉都音)
 │   ├── poster.js           # Poster lookup
-│   └── wiki.js             # Chinese Wikipedia summaries
+│   ├── wiki.js             # Chinese Wikipedia summaries
+│   └── telegram.js         # Telegram bot (webhook, cards, resource paging)
 ├── tests/                  # Node.js unit and Worker route tests
 └── docs/
     └── ARCHITECTURE.md     # This document
