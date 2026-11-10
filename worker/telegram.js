@@ -28,6 +28,12 @@ export const SITE_URL = "https://iplay.hackx64.eu.org/";
 
 const TELEGRAM_API = "https://api.telegram.org";
 const TELEGRAM_TIMEOUT_MS = 10000;
+// Acknowledgements and indicators must not eat into the 30 s waitUntil budget.
+const TELEGRAM_QUICK_TIMEOUT_MS = 4000;
+const TELEGRAM_MAX_RETRY_AFTER_SECONDS = 3;
+// Telegram counts 4096 characters after parsing; leave room for markup.
+const PAGE_TEXT_BUDGET = 3600;
+const VISIBLE_URL_LENGTH = 70;
 const MAX_UPDATE_BYTES = 256 * 1024;
 const MESSAGE_LIMIT = 4096;
 const CAPTION_LIMIT = 1024;
@@ -145,7 +151,8 @@ export async function handleTelegramSetup(request, env) {
             url: webhookUrl,
             secret_token: await getTelegramWebhookSecret(env),
             allowed_updates: ["message", "callback_query"],
-            drop_pending_updates: true,
+            // Keep messages sent while the webhook was unset unless asked to drop them.
+            drop_pending_updates: url.searchParams.get("drop") === "1",
             max_connections: 20
         });
         await callTelegram(env, "setMyCommands", { commands: TELEGRAM_COMMANDS });
@@ -170,14 +177,14 @@ export async function handleTelegramSetup(request, env) {
 // ---------------------------------------------------------------------------
 // Bot API client
 
-async function callTelegram(env, method, payload) {
+async function callTelegram(env, method, payload, timeoutMs = TELEGRAM_TIMEOUT_MS, allowRetry = true) {
     const token = getTelegramToken(env);
     if (!token) throw new Error("Telegram bot token is not configured");
     const response = await fetchUpstream(`${TELEGRAM_API}/bot${token}/${method}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
-    }, TELEGRAM_TIMEOUT_MS);
+    }, timeoutMs);
 
     let data = null;
     try {
@@ -186,10 +193,17 @@ async function callTelegram(env, method, payload) {
         await releaseUpstreamResponse(response);
     }
     if (!data?.ok) {
+        // Telegram's flood control names a short wait; honor it once.
+        const retryAfter = Number(data?.parameters?.retry_after);
+        if (allowRetry && response.status === 429 && retryAfter > 0 && retryAfter <= TELEGRAM_MAX_RETRY_AFTER_SECONDS) {
+            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+            return callTelegram(env, method, payload, timeoutMs, false);
+        }
         const description = typeof data?.description === "string" ? data.description.slice(0, 200) : `HTTP ${response.status}`;
         const error = new Error(`Telegram ${method} failed: ${description}`);
         error.publicMessage = description;
         error.telegramDescription = description;
+        if (response.status === 429) error.status = 429;
         throw error;
     }
     return data.result;
@@ -208,6 +222,17 @@ export function escapeHtml(value) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+}
+
+/** Escape text, shortening the source until the escaped form fits `maxLength`. */
+export function escapeTruncated(value, maxLength) {
+    let chars = [...String(value ?? "")];
+    let escaped = escapeHtml(chars.join(""));
+    while (escaped.length > maxLength && chars.length > 0) {
+        chars = chars.slice(0, Math.max(0, chars.length - Math.max(1, Math.ceil((escaped.length - maxLength) / 6)) - 1));
+        escaped = `${escapeHtml(chars.join(""))}…`;
+    }
+    return escaped;
 }
 
 function truncate(value, maxLength) {
@@ -287,6 +312,7 @@ async function readHandler(responsePromise) {
     if (!response.ok) {
         const error = new Error(typeof data?.error === "string" ? data.error : `HTTP ${response.status}`);
         error.status = response.status;
+        error.fromHandler = true;
         throw error;
     }
     return data;
@@ -318,7 +344,11 @@ function describeError(error) {
     if (error?.status === 429) return "请求比较频繁，请稍等片刻再试。";
     if (error?.status === 503) return "数据服务暂时不可用，稍后重试通常即可恢复。";
     if (error?.status === 504 || /timed out|timeout/i.test(error?.message || "")) return "数据源响应超时，请稍后重试。";
-    return error?.message ? truncate(error.message, 200) : "处理失败，请稍后重试。";
+    // Only the route handlers' own 4xx messages are written for visitors.
+    // Telegram API and runtime errors stay in the logs.
+    return error?.fromHandler && error.status >= 400 && error.status < 500 && error.message
+        ? truncate(error.message, 200)
+        : "处理失败，请稍后重试。";
 }
 
 // ---------------------------------------------------------------------------
@@ -327,22 +357,37 @@ function describeError(error) {
 export async function processTelegramUpdate(update, env, ctx) {
     if (update?.callback_query) return handleCallbackQuery(update.callback_query, env, ctx);
     const message = update?.message;
-    if (message && typeof message.text === "string" && message.chat?.id && message.from?.id) {
-        return handleTextMessage(message, env, ctx);
+    if (!message?.chat?.id || !message.from?.id || message.from.is_bot) return null;
+    if (typeof message.text === "string") return handleTextMessage(message, env, ctx);
+    // Photos, stickers and other content in a private chat get a short hint.
+    if (message.chat.type === "private" && await enforceLimits(env, message.from.id, "search") === "ok") {
+        return createChat(env, message).send("请发送文字：片名、剧名或演员名，例如 <code>繁花</code>。");
     }
     return null;
 }
 
-function createChat(env, chatId) {
+/**
+ * Replies go to the chat and forum topic of `message`. `replyTo` ties an
+ * answer to the asking message in groups, where several people may be talking.
+ */
+function createChat(env, message, { replyTo = null } = {}) {
+    const chatId = message.chat.id;
+    const target = {
+        chat_id: chatId,
+        ...(message.is_topic_message && message.message_thread_id ? { message_thread_id: message.message_thread_id } : {})
+    };
+    const reply = replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {};
     return {
         chatId,
-        send: (text, markup = null, extra = {}) => callTelegram(env, "sendMessage", {
-            chat_id: chatId,
+        target,
+        reply,
+        send: (text, markup = null) => callTelegram(env, "sendMessage", {
+            ...target,
+            ...reply,
             text: truncate(text, MESSAGE_LIMIT),
             parse_mode: "HTML",
             link_preview_options: { is_disabled: true },
-            ...(markup ? { reply_markup: markup } : {}),
-            ...extra
+            ...(markup ? { reply_markup: markup } : {})
         }),
         edit: async (messageId, text, markup = null) => {
             try {
@@ -359,15 +404,22 @@ function createChat(env, chatId) {
                 throw error;
             }
         },
-        typing: () => callTelegram(env, "sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => null)
+        // Fire and forget: the indicator must never delay or fail a reply.
+        typing: () => {
+            void callTelegram(env, "sendChatAction", { ...target, action: "typing" }, TELEGRAM_QUICK_TIMEOUT_MS).catch(() => null);
+        }
     };
 }
 
+/**
+ * Rate limits come first so that no reply, including "unauthorized", can be
+ * triggered without bound. Returns ok, limited, unavailable or unauthorized.
+ */
 async function enforceLimits(env, userId, kind) {
-    if (!isUserAllowed(env, userId)) return "unauthorized";
     const decision = await checkRateLimit(`tg:${userId}`, kind === "resource" ? "/api/resource" : "/api/telegram", env);
     if (decision === null) return "unavailable";
-    return decision ? "ok" : "limited";
+    if (!decision) return "limited";
+    return isUserAllowed(env, userId) ? "ok" : "unauthorized";
 }
 
 const LIMIT_MESSAGES = {
@@ -380,43 +432,67 @@ function unauthorizedText(userId) {
 }
 
 export function parseCommand(text) {
-    const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i.exec(text.trim());
-    if (!match) return { command: null, argument: text.trim() };
-    return { command: match[1].toLowerCase(), argument: (match[2] || "").trim() };
+    const match = /^\/([a-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    if (!match) return { command: null, mention: null, argument: text.trim() };
+    return { command: match[1].toLowerCase(), mention: match[2] ? match[2].toLowerCase() : null, argument: (match[3] || "").trim() };
+}
+
+const SEARCH_COMMANDS = new Set(["search", "s"]);
+const ACTOR_COMMANDS = new Set(["actor", "a"]);
+const HELP_COMMANDS = new Set(["start", "help"]);
+
+// One getMe per isolate and token: groups address commands as /cmd@username.
+const botUsernames = new Map();
+
+async function getBotUsername(env) {
+    const token = getTelegramToken(env);
+    if (!botUsernames.has(token)) {
+        const lookup = callTelegram(env, "getMe", {}, TELEGRAM_QUICK_TIMEOUT_MS)
+            .then(me => (typeof me?.username === "string" ? me.username.toLowerCase() : null))
+            .catch(() => null);
+        botUsernames.set(token, lookup);
+        // A failed lookup is retried by the next group command.
+        void lookup.then(username => { if (!username) botUsernames.delete(token); });
+    }
+    return botUsernames.get(token);
 }
 
 async function handleTextMessage(message, env, ctx) {
-    const chat = createChat(env, message.chat.id);
     const userId = message.from.id;
-    const { command, argument } = parseCommand(message.text);
+    const { command, mention, argument } = parseCommand(message.text);
     const isPrivate = message.chat.type === "private";
+    const chat = createChat(env, message, { replyTo: isPrivate ? null : message.message_id });
+    const isKnown = SEARCH_COMMANDS.has(command) || ACTOR_COMMANDS.has(command) || HELP_COMMANDS.has(command);
 
-    // In groups only commands are for the bot; any text in a private chat is a search.
-    if (!command && !isPrivate) return null;
-
-    if (command === "start" || command === "help") {
-        if (!isUserAllowed(env, userId)) return chat.send(unauthorizedText(userId));
-        return chat.send(HELP_TEXT, keyboard([EXAMPLE_QUERIES.map(query => button(`🔎 ${query}`, "q", query))]));
-    }
-
-    if (command && !["search", "s", "actor", "a"].includes(command)) {
-        return chat.send("未知命令。发送 /help 查看用法。");
+    if (!isPrivate) {
+        // In groups only this bot's own commands are for it: never answer
+        // plain chat, unknown commands or commands addressed to another bot.
+        if (!isKnown) return null;
+        if (mention && mention !== await getBotUsername(env)) return null;
     }
 
     const limit = await enforceLimits(env, userId, "search");
-    if (limit === "unauthorized") return chat.send(unauthorizedText(userId));
-    if (limit !== "ok") return chat.send(LIMIT_MESSAGES[limit]);
+    // Stay silent when limited: a reply per message would itself be unbounded.
+    if (limit === "limited") return null;
+    if (limit === "unavailable") return chat.send(LIMIT_MESSAGES.unavailable);
+    if (limit === "unauthorized") return isPrivate ? chat.send(unauthorizedText(userId)) : null;
 
+    if (HELP_COMMANDS.has(command)) {
+        return chat.send(HELP_TEXT, keyboard([EXAMPLE_QUERIES.map(query => button(`🔎 ${query}`, "q", query))]));
+    }
+    if (command && !isKnown) return chat.send("未知命令。发送 /help 查看用法。");
+
+    const wantsActor = ACTOR_COMMANDS.has(command);
     if (!argument) {
-        return chat.send(command === "actor" || command === "a"
+        return chat.send(wantsActor
             ? "请在命令后加上演员名，例如 <code>/actor 胡歌</code>"
             : "请发送片名、剧名或演员名，例如 <code>繁花</code>");
     }
     if ([...argument].length > MAX_QUERY_LENGTH) return chat.send(`关键词太长了，请控制在 ${MAX_QUERY_LENGTH} 个字以内。`);
 
-    await chat.typing();
+    chat.typing();
     try {
-        if (command === "actor" || command === "a") return await runActorSearch(chat, env, ctx, argument);
+        if (wantsActor) return await runActorSearch(chat, env, ctx, argument);
         return await runSearch(chat, env, ctx, argument);
     } catch (error) {
         logEvent("warn", "telegram_search_failed", { error: logErrorMessage(error) });
@@ -431,13 +507,17 @@ async function handleCallbackQuery(query, env, ctx) {
     const answer = (text = "", showAlert = false) => callTelegram(env, "answerCallbackQuery", {
         callback_query_id: query.id,
         ...(text ? { text, show_alert: showAlert } : {})
-    }).catch(() => null);
+    }, TELEGRAM_QUICK_TIMEOUT_MS).catch(() => null);
 
     if (!message?.chat?.id || !userId || data === "noop") return answer();
-    const chat = createChat(env, message.chat.id);
+    const chat = createChat(env, message);
     const [action, ...args] = data.split("|");
-    // Scans count against the resource limit; paging a scanned list reuses its cache.
-    const isScan = action === "rf" || (action === "r" && args[2] === "0");
+    // A photo card cannot be edited into a text page. Buttons that page a text
+    // message post a new one when pressed on a card (cards sent by older releases).
+    const editableId = typeof message.text === "string" ? message.message_id : null;
+    // Opening or rescanning resources runs a scan and counts against the
+    // resource limit; paging a scanned list ("r", "rp") reads its cache.
+    const isScan = action === "ro" || action === "rf";
 
     const limit = await enforceLimits(env, userId, isScan ? "resource" : "search");
     if (limit === "unauthorized") return answer("仅限授权用户使用", true);
@@ -447,27 +527,35 @@ async function handleCallbackQuery(query, env, ctx) {
         switch (action) {
             case "q":
                 await answer();
-                await chat.typing();
+                chat.typing();
                 return await runSearch(chat, env, ctx, args.join("|"));
             case "d":
                 await answer();
                 return await sendDetailCard(chat, env, ctx, args[0], args[1], args[2] ? Number(args[2]) : null);
-            case "r":
-                return await showQuarkPage(chat, env, ctx, message, args, answer, { refresh: false });
+            case "ro":
+                await answer("正在扫描资源，通常需要 5–15 秒…");
+                return await showQuarkPage(chat, env, ctx, args[0], args[1], 0, { messageId: null });
             case "rf":
-                return await showQuarkPage(chat, env, ctx, message, [...args.slice(0, 2), "0"], answer, { refresh: true });
+                await answer("正在重新扫描…");
+                return await showQuarkPage(chat, env, ctx, args[0], args[1], 0, { messageId: editableId, refresh: true });
+            case "r":
+                await answer();
+                return await showQuarkPage(chat, env, ctx, args[0], args[1], Number(args[2]) || 0, { messageId: editableId });
             case "rp":
                 await answer();
-                return await showPostPage(chat, env, ctx, message, args);
+                return await showPostPage(chat, env, ctx, editableId, args);
             case "w":
                 await answer();
                 return await sendSynopsis(chat, env, ctx, args[0], args[1]);
             case "ss":
                 await answer();
                 return await sendSeasons(chat, env, ctx, args[0]);
+            case "ao":
+                await answer();
+                return await showActorPage(chat, env, ctx, null, [args[0], 0, ""]);
             case "a":
                 await answer();
-                return await showActorPage(chat, env, ctx, message, args);
+                return await showActorPage(chat, env, ctx, editableId, args);
             default:
                 return answer("这个按钮已失效，请重新搜索");
         }
@@ -513,7 +601,7 @@ async function runSearch(chat, env, ctx, query) {
         actorCandidates = [meta.exactPerson, ...actorCandidates];
     }
     const actorRows = actorCandidates.filter(actor => actor?.id).slice(0, 4)
-        .map(actor => [button(`👤 演员：${truncate(actor.name || actor.originalName, 30)}`, "a", actor.id, 0, "")]);
+        .map(actor => [button(`👤 演员：${truncate(actor.name || actor.originalName, 30)}`, "ao", actor.id)]);
 
     if (results.length === 0) {
         if (actorRows.length > 0) return chat.send("找到以下可能的演员，请选择：", keyboard(actorRows));
@@ -521,16 +609,18 @@ async function runSearch(chat, env, ctx, query) {
         return chat.send(`没有找到“${escapeHtml(query)}”的可靠匹配。试试补充年份、季数，或换个更完整的名称。`);
     }
 
+    // A requested season only applies to series; a movie rejects it.
+    const seasonFor = item => (requestedSeason && item.mediaType === "tv" ? requestedSeason : "");
     const ranked = rankTmdbCandidates(results);
     const candidate = pickBestTmdbMatch(ranked, query) || (ranked.length === 1 ? ranked[0] : null);
 
     if (!candidate || shouldConfirmTmdbCandidate(ranked) || prefersActor || (actorRows.length > 0 && !hasReliableTitle)) {
         const rows = ranked.slice(0, CANDIDATE_BUTTONS)
-            .map(item => [button(candidateLabel(item), "d", item.mediaType, item.id, requestedSeason || "")]);
+            .map(item => [button(candidateLabel(item), "d", item.mediaType, item.id, seasonFor(item))]);
         return chat.send(`“${escapeHtml(query)}”找到 ${ranked.length} 个结果，请选择：`, keyboard([...actorRows, ...rows]));
     }
 
-    return sendDetailCard(chat, env, ctx, candidate.mediaType, candidate.id, requestedSeason);
+    return sendDetailCard(chat, env, ctx, candidate.mediaType, candidate.id, seasonFor(candidate) || null);
 }
 
 async function runActorSearch(chat, env, ctx, name) {
@@ -539,7 +629,7 @@ async function runActorSearch(chat, env, ctx, name) {
     const candidates = Array.isArray(person?.personCandidates) ? person.personCandidates : [];
     if (candidates.length > 0) {
         return chat.send("找到多位同名或相近的演员，请选择：", keyboard(
-            candidates.slice(0, 6).map(actor => [button(`👤 ${truncate(actor.name || actor.originalName, 40)}`, "a", actor.id, 0, "")])
+            candidates.slice(0, 6).map(actor => [button(`👤 ${truncate(actor.name || actor.originalName, 40)}`, "ao", actor.id)])
         ));
     }
     return chat.send(`没有找到演员“${escapeHtml(name)}”。`);
@@ -583,11 +673,11 @@ export function buildDetailCaption(detail, season = null) {
 
 export function buildDetailKeyboard(detail, season = null) {
     const rows = [
-        [button("🔍 夸克资源", "r", detail.mediaType, detail.id, 0)],
+        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id)],
         [button("📖 完整简介", "w", detail.mediaType, detail.id),
             ...(detail.mediaType === "tv" && detail.seasons?.length ? [button("🗂 分季", "ss", detail.id)] : [])],
         (detail.castDetails || []).filter(person => person.id).slice(0, CAST_BUTTONS)
-            .map(person => button(`👤 ${truncate(person.name, 12)}`, "a", person.id, 0, "")),
+            .map(person => button(`👤 ${truncate(person.name, 12)}`, "ao", person.id)),
         [{ text: "🌐 网页打开", url: buildSiteUrl(detail, season) }]
     ];
     return keyboard(rows);
@@ -595,15 +685,16 @@ export function buildDetailKeyboard(detail, season = null) {
 
 async function sendDetailCard(chat, env, ctx, mediaType, id, season = null) {
     if (mediaType !== "movie" && mediaType !== "tv") throw new Error("条目类型无效，请重新搜索");
-    await chat.typing();
+    if (mediaType !== "tv") season = null;
+    chat.typing();
     let detail;
     let seasonNote = "";
     try {
         detail = await getDetail(env, ctx, mediaType, id, season);
     } catch (error) {
-        if (!season || error.status !== 404) throw error;
+        if (!season || (error.status !== 404 && error.status !== 400)) throw error;
         // A season the series does not have still shows the series.
-        seasonNote = `\n\n⚠️ ${escapeHtml(error.message)}`;
+        seasonNote = error.status === 404 ? `\n\n⚠️ ${escapeHtml(error.message)}` : "";
         season = null;
         detail = await getDetail(env, ctx, mediaType, id);
     }
@@ -614,7 +705,8 @@ async function sendDetailCard(chat, env, ctx, mediaType, id, season = null) {
     if (poster && [...caption].length <= CAPTION_LIMIT) {
         try {
             return await callTelegram(env, "sendPhoto", {
-                chat_id: chat.chatId,
+                ...chat.target,
+                ...chat.reply,
                 photo: poster,
                 caption,
                 parse_mode: "HTML",
@@ -622,15 +714,25 @@ async function sendDetailCard(chat, env, ctx, mediaType, id, season = null) {
             });
         } catch (error) {
             logEvent("warn", "telegram_photo_failed", { error: logErrorMessage(error) });
+            // After a timeout Telegram may still deliver the photo card.
+            if (error?.status === 504) return null;
         }
     }
     return chat.send(caption, markup);
 }
 
+function detailTitle(detail) {
+    return detail.title || detail.originalTitle || "未命名";
+}
+
+function resourceShortcut(detail) {
+    return keyboard([[button("🔍 夸克资源", "ro", detail.mediaType, detail.id)]]);
+}
+
 async function sendSynopsis(chat, env, ctx, mediaType, id) {
-    await chat.typing();
+    chat.typing();
     const detail = await getDetail(env, ctx, mediaType, id);
-    const wiki = await readHandler(handleWikiZh(detail.title || detail.originalTitle, ctx, {
+    const wiki = await readHandler(handleWikiZh(detailTitle(detail), ctx, {
         mediaType: detail.mediaType,
         year: detail.year ? String(detail.year) : null,
         id: String(detail.id),
@@ -638,8 +740,9 @@ async function sendSynopsis(chat, env, ctx, mediaType, id) {
     })).catch(() => null);
     const text = typeof wiki?.extract === "string" && wiki.extract.trim() ? wiki.extract.trim() : String(detail.summary || "").trim();
     const source = wiki?.extract ? "中文 Wikipedia" : "TMDB";
-    if (!text) return chat.send(`《${escapeHtml(detail.title)}》暂无简介。`);
-    return chat.send(`<b>${escapeHtml(detail.title)}</b> · 简介（${source}）\n\n${escapeHtml(truncate(text, 3500))}`);
+    const title = escapeTruncated(detailTitle(detail), 300);
+    if (!text) return chat.send(`《${title}》暂无简介。`, resourceShortcut(detail));
+    return chat.send(`<b>${title}</b> · 简介（${source}）\n\n${escapeTruncated(text, PAGE_TEXT_BUDGET)}`, resourceShortcut(detail));
 }
 
 async function sendSeasons(chat, env, ctx, id) {
@@ -651,7 +754,7 @@ async function sendSeasons(chat, env, ctx, id) {
     const grouped = [];
     for (let index = 0; index < rows.length; index += 4) grouped.push(rows.slice(index, index + 4));
     return chat.send(
-        `<b>${escapeHtml(detail.title)}</b> · 分季${totals ? `（${escapeHtml(totals)}）` : ""}\n\n${counts.map(escapeHtml).join("\n") || "暂无分季资料"}`,
+        `<b>${escapeTruncated(detailTitle(detail), 300)}</b> · 分季${totals ? `（${escapeHtml(totals)}）` : ""}\n\n${escapeTruncated(counts.join("\n"), PAGE_TEXT_BUDGET) || "暂无分季资料"}`,
         keyboard(grouped)
     );
 }
@@ -667,38 +770,70 @@ function describeResourceProviders(meta) {
     return failed.length ? `⚠️ ${failed.join("、")} 暂时不可用，结果可能不完整。` : meta?.partial ? "⚠️ 部分资源页未能读取，结果可能不完整。" : "";
 }
 
+function resourceHeader(detail, label) {
+    return `<b>${escapeTruncated(detailTitle(detail), 300)}</b>${detail.year ? ` (${escapeHtml(detail.year)})` : ""} · ${label}`;
+}
+
+function collectPosts(result) {
+    return [...(result?.resources || []), ...(result?.wpzysResources || []), ...(result?.zuidouyinResources || [])]
+        .filter(post => safeHttpUrl(post?.url));
+}
+
+/** A link whose visible text is shortened; the href keeps the full URL. */
+function htmlLink(url, label) {
+    return `<a href="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+}
+
+/**
+ * Append entries while the page stays inside Telegram's message limit, so a
+ * few very long URLs can never cut the markup mid-tag. Returns the count used.
+ */
+function appendWithinBudget(lines, blocks) {
+    let used = lines.join("\n").length;
+    let count = 0;
+    for (const block of blocks) {
+        const size = block.join("\n").length + 2;
+        if (used + size > PAGE_TEXT_BUDGET) break;
+        lines.push("", ...block);
+        used += size;
+        count += 1;
+    }
+    return count;
+}
+
 export function buildQuarkPage(detail, result, page, { stale = false } = {}) {
     const items = Array.isArray(result?.quarkUrls) ? result.quarkUrls.filter(item => safeHttpUrl(item?.url)) : [];
-    const posts = [...(result?.resources || []), ...(result?.wpzysResources || []), ...(result?.zuidouyinResources || [])];
+    const posts = collectPosts(result);
     const totalPages = Math.max(1, Math.ceil(items.length / QUARK_PAGE_SIZE));
-    const current = Math.min(Math.max(0, page), totalPages - 1);
+    const current = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
     const pageItems = items.slice(current * QUARK_PAGE_SIZE, (current + 1) * QUARK_PAGE_SIZE);
-    const header = `<b>${escapeHtml(detail.title)}</b>${detail.year ? ` (${escapeHtml(detail.year)})` : ""} · 夸克资源`;
 
-    const lines = [header];
+    const lines = [resourceHeader(detail, "夸克资源")];
+    let shown = 0;
     if (items.length === 0) {
         lines.push("", posts.length
             ? `暂未提取到夸克链接，但找到 ${posts.length} 个资源帖，可点下方按钮查看。`
             : "暂未发现资源。可以稍后点“重新扫描”再试。");
     } else {
         lines.push(`共 ${items.length} 个分享链接`);
-        pageItems.forEach((item, index) => {
-            const number = current * QUARK_PAGE_SIZE + index + 1;
+        shown = appendWithinBudget(lines, pageItems.map((item, index) => {
             const url = safeHttpUrl(item.url);
-            lines.push("",
-                `${number}. ${escapeHtml(truncate(item.title || item.sourceTitle || "夸克网盘分享", 90))}`,
-                `🔗 <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`);
-            if (item.password) lines.push(`🔑 提取码：<code>${escapeHtml(item.password)}</code>`);
-            else if (item.passwordConflict) lines.push("🔑 提取码有多个候选，请到原帖确认");
             const source = safeHttpUrl(item.sourceUrl);
-            if (source) lines.push(`📄 <a href="${escapeHtml(source)}">来源帖子</a>`);
-        });
+            return [
+                `${current * QUARK_PAGE_SIZE + index + 1}. ${escapeHtml(truncate(item.title || item.sourceTitle || "夸克网盘分享", 90))}`,
+                `🔗 ${htmlLink(url, truncate(url, VISIBLE_URL_LENGTH))}`,
+                item.password ? `🔑 提取码：<code>${escapeHtml(item.password)}</code>`
+                    : item.passwordConflict ? "🔑 提取码有多个候选，请到原帖确认" : null,
+                source ? `📄 ${htmlLink(source, "来源帖子")}` : null
+            ].filter(Boolean);
+        }));
+        if (shown < pageItems.length) lines.push("", `（本页另有 ${pageItems.length - shown} 条链接过长未显示，可到资源帖查看）`);
     }
     const notice = describeResourceProviders(result?.resourceMeta || result);
     if (notice) lines.push("", notice);
     if (stale) lines.push("", "⚠️ 本次重新扫描失败，显示的是之前的结果。");
 
-    const copyButtons = pageItems
+    const copyButtons = pageItems.slice(0, shown)
         .map((item, index) => item.password ? { text: `📋 复制提取码 ${current * QUARK_PAGE_SIZE + index + 1}`, copy_text: { text: item.password } } : null)
         .filter(Boolean);
     const copyRows = [];
@@ -713,63 +848,63 @@ export function buildQuarkPage(detail, result, page, { stale = false } = {}) {
     return { text: lines.join("\n"), markup };
 }
 
-async function showQuarkPage(chat, env, ctx, message, args, answer, { refresh }) {
-    const [mediaType, id, pageText] = args;
-    const page = Number(pageText) || 0;
-    const isFirstOpen = !refresh && page === 0 && !message.text?.includes("夸克资源");
-    await answer(refresh || isFirstOpen ? "正在扫描资源，通常需要 5–15 秒…" : "");
-
+/**
+ * `messageId` null posts a new resource message (opened from a detail card);
+ * otherwise that message is edited in place (paging, rescans, back from posts).
+ */
+async function showQuarkPage(chat, env, ctx, mediaType, id, page, { messageId = null, refresh = false } = {}) {
     const detail = await getDetail(env, ctx, mediaType, id);
-    // Opening resources from a detail card posts a new message; paging and
-    // rescans edit the resource message in place.
-    let targetId = isFirstOpen ? null : message.message_id;
+    // Every state of the message keeps a rescan button: if the Worker is cut
+    // off mid-scan, the placeholder must not become a dead end.
+    const retryMarkup = keyboard([[button("🔄 重新扫描", "rf", detail.mediaType, detail.id)]]);
+    let targetId = messageId;
     if (!targetId) {
-        const placeholder = await chat.send(`<b>${escapeHtml(detail.title)}</b> · 夸克资源\n\n⏳ 正在扫描资源索引和论坛帖子…`);
-        targetId = placeholder?.message_id;
+        const placeholder = await chat.send(`${resourceHeader(detail, "夸克资源")}\n\n⏳ 正在扫描资源索引和论坛帖子…`, retryMarkup);
+        targetId = placeholder?.message_id ?? null;
     } else if (refresh) {
-        await chat.edit(targetId, `<b>${escapeHtml(detail.title)}</b> · 夸克资源\n\n⏳ 正在重新扫描…`);
+        await chat.edit(targetId, `${resourceHeader(detail, "夸克资源")}\n\n⏳ 正在重新扫描…`, retryMarkup).catch(() => null);
     }
+    const show = (text, markup) => (targetId ? chat.edit(targetId, text, markup) : chat.send(text, markup));
 
-    const response = await handleResourceSearch(detail.title || detail.originalTitle, env, ctx, {
-        refresh,
-        id: String(detail.id),
-        mediaType: detail.mediaType,
-        year: detail.year ? String(detail.year) : null
-    });
-    const stale = response.headers.get("X-iPlay-Stale") === "1";
-    let result;
     try {
-        result = await readHandler(response);
+        const response = await handleResourceSearch(detailTitle(detail), env, ctx, {
+            refresh,
+            id: String(detail.id),
+            mediaType: detail.mediaType,
+            year: detail.year ? String(detail.year) : null
+        });
+        const stale = response.headers.get("X-iPlay-Stale") === "1";
+        const { text, markup } = buildQuarkPage(detail, await readHandler(response), page, { stale });
+        return await show(text, markup);
     } catch (error) {
-        const text = `<b>${escapeHtml(detail.title)}</b> · 夸克资源\n\n😵 资源扫描失败：${escapeHtml(describeError(error))}`;
-        const markup = keyboard([[button("🔄 重试", "rf", detail.mediaType, detail.id)]]);
-        return targetId ? chat.edit(targetId, text, markup) : chat.send(text, markup);
+        logEvent("warn", "telegram_resource_failed", { error: logErrorMessage(error) });
+        return show(`${resourceHeader(detail, "夸克资源")}\n\n😵 资源扫描失败：${escapeHtml(describeError(error))}`, retryMarkup);
     }
-    const { text, markup } = buildQuarkPage(detail, result, page, { stale });
-    return targetId ? chat.edit(targetId, text, markup) : chat.send(text, markup);
 }
 
-async function showPostPage(chat, env, ctx, message, args) {
+export function buildPostPage(detail, result, page) {
+    const posts = collectPosts(result);
+    const totalPages = Math.max(1, Math.ceil(posts.length / POST_PAGE_SIZE));
+    const current = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
+    const lines = [resourceHeader(detail, `资源帖（${posts.length}）`)];
+    if (posts.length === 0) lines.push("", "暂无资源帖。");
+    appendWithinBudget(lines, posts.slice(current * POST_PAGE_SIZE, (current + 1) * POST_PAGE_SIZE).map((post, index) => {
+        const url = safeHttpUrl(post.url);
+        return [`${current * POST_PAGE_SIZE + index + 1}. ${htmlLink(url, truncate(post.title || url, 90))}`];
+    }));
+    const markup = keyboard([
+        paginationRow(current, totalPages, next => callbackData("rp", detail.mediaType, detail.id, next)),
+        [button("🔙 夸克链接", "r", detail.mediaType, detail.id, 0)]
+    ]);
+    return { text: lines.join("\n"), markup };
+}
+
+// The resource message switches between Quark links and forum posts in place.
+async function showPostPage(chat, env, ctx, messageId, args) {
     const [mediaType, id, pageText] = args;
     const detail = await getDetail(env, ctx, mediaType, id);
-    const result = await getResources(env, ctx, detail);
-    const posts = [...(result.resources || []), ...(result.wpzysResources || []), ...(result.zuidouyinResources || [])]
-        .filter(post => safeHttpUrl(post?.url));
-    const totalPages = Math.max(1, Math.ceil(posts.length / POST_PAGE_SIZE));
-    const page = Math.min(Math.max(0, Number(pageText) || 0), totalPages - 1);
-    const lines = [`<b>${escapeHtml(detail.title)}</b> · 资源帖（${posts.length}）`];
-    posts.slice(page * POST_PAGE_SIZE, (page + 1) * POST_PAGE_SIZE).forEach((post, index) => {
-        const url = safeHttpUrl(post.url);
-        lines.push("", `${page * POST_PAGE_SIZE + index + 1}. <a href="${escapeHtml(url)}">${escapeHtml(truncate(post.title || url, 90))}</a>`);
-    });
-    if (posts.length === 0) lines.push("", "暂无资源帖。");
-    const markup = keyboard([
-        paginationRow(page, totalPages, next => callbackData("rp", mediaType, id, next)),
-        [button("🔙 夸克链接", "r", mediaType, id, 0)]
-    ]);
-    // Posts always get their own message so the Quark list stays available.
-    if (message.text?.includes("资源帖")) return chat.edit(message.message_id, lines.join("\n"), markup);
-    return chat.send(lines.join("\n"), markup);
+    const { text, markup } = buildPostPage(detail, await getResources(env, ctx, detail), Number(pageText) || 0);
+    return messageId ? chat.edit(messageId, text, markup) : chat.send(text, markup);
 }
 
 // ---------------------------------------------------------------------------
@@ -787,7 +922,9 @@ function renderActorPage(chat, messageId, data, filter) {
     const text = [
         `👤 <b>${escapeHtml(person.name || "演员")}</b>${person.originalName && person.originalName !== person.name ? ` (${escapeHtml(person.originalName)})` : ""}`,
         `电影 ${counts.movie ?? 0} 部 · 剧集 ${counts.tv ?? 0} 部`,
-        total ? `${filterName}：第 ${offset + 1}–${offset + credits.length} 部，共 ${total} 部。点击作品查看详情：` : `暂无${filterName}。`
+        !total ? `暂无${filterName}。`
+            : credits.length ? `${filterName}：第 ${offset + 1}–${offset + credits.length} 部，共 ${total} 部。点击作品查看详情：`
+                : `${filterName}共 ${total} 部，这一页没有内容，请返回上一页。`
     ].join("\n");
 
     const filterButton = (label, value) => button(filter === value ? `· ${label} ·` : label, "a", person.id, 0, value);
@@ -796,17 +933,16 @@ function renderActorPage(chat, messageId, data, filter) {
             truncate(`${candidateLabel(credit)}${credit.character ? ` 饰 ${credit.character}` : ""}`, 60),
             "d", credit.mediaType, credit.id
         )]),
-        paginationRow(page, totalPages, next => callbackData("a", person.id, next * ACTOR_PAGE_SIZE, filter)),
+        paginationRow(Math.min(page, totalPages), totalPages, next => callbackData("a", person.id, next * ACTOR_PAGE_SIZE, filter)),
         [filterButton("全部", ""), filterButton("电影", "movie"), filterButton("剧集", "tv")]
     ]);
     return messageId ? chat.edit(messageId, text, markup) : chat.send(text, markup);
 }
 
-async function showActorPage(chat, env, ctx, message, args) {
+// "ao" opens an actor in a new message; "a" pages or filters that message.
+async function showActorPage(chat, env, ctx, messageId, args) {
     const [personId, offsetText, filter = ""] = args;
     const mediaType = filter === "movie" || filter === "tv" ? filter : "";
     const data = await getPersonPage(env, ctx, personId, Math.max(0, Number(offsetText) || 0), mediaType);
-    // Paging an actor list edits it; opening an actor from elsewhere posts one.
-    const isActorList = typeof message.text === "string" && message.text.startsWith("👤");
-    return renderActorPage(chat, isActorList ? message.message_id : null, data, mediaType);
+    return renderActorPage(chat, messageId, data, mediaType);
 }
