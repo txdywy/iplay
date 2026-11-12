@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.44';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.45';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.44';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.44';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.44';
-import { RELEASE_VERSION } from './release.js?v=1.0.44';
+} from './scorer.js?v=1.0.45';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.45';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.45';
+import { RELEASE_VERSION } from './release.js?v=1.0.45';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.44';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.44';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.44';
+} from './match.js?v=1.0.45';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.45';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.45';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The

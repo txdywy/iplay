@@ -173,3 +173,18 @@ test('favorites need a confirmed work, and only typed searches are remembered', 
     assert.match(main, /searchRetryEdits = !onRetry && error\?\.noMatch === true;/);
     assert.match(main, /if \(url\.search === window\.location\.search\) return;/);
 });
+
+test('"第N部" also looks up the numbered sequel of a film', async t => {
+    mock(t, async url => {
+        const parsed = new URL(String(url));
+        if (!parsed.pathname.includes('/search/')) return Response.json({ results: [] });
+        const query = parsed.searchParams.get('query');
+        return Response.json({ results: query === '沙丘2'
+            ? [{ id: 693134, media_type: 'movie', title: '沙丘2', release_date: '2024-02-27' }]
+            : query.startsWith('沙丘') ? [{ id: 438631, media_type: 'movie', title: '沙丘', release_date: '2021-09-15' }] : [] });
+    });
+    const plain = await search('沙丘 第二部', 'sequel-1');
+    assert.deepEqual(plain.results.map(item => item.title).sort(), ['沙丘', '沙丘2']);
+    const dated = await search('沙丘 第二部 2024', 'sequel-2');
+    assert.equal(dated.results[0].title, '沙丘2', 'the year picks the sequel');
+});
