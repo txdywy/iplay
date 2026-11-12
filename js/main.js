@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.42';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.43';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.42';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.42';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.42';
-import { RELEASE_VERSION } from './release.js?v=1.0.42';
+} from './scorer.js?v=1.0.43';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.43';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.43';
+import { RELEASE_VERSION } from './release.js?v=1.0.43';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.42';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.42';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.42';
+} from './match.js?v=1.0.43';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.43';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.43';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -2759,6 +2759,8 @@ async function handleSearch({ historyMode = 'push' } = {}) {
 
         const tmdbResults = tmdbSearch && Array.isArray(tmdbSearch.results) ? tmdbSearch.results : [];
         const requestedSeason = Number(tmdbSearch?.searchMeta?.season) || null;
+        // A season belongs to a series; a film found by "第2部" has none.
+        const seasonFor = item => (requestedSeason !== null && item?.mediaType === 'tv' ? requestedSeason : null);
         const titleMatchScore = toFiniteNumber(tmdbSearch?.searchMeta?.matchScore);
         // An exact actor name outranks works that merely contain it, such as
         // documentaries or compilations; an equally exact title still wins.
@@ -2827,8 +2829,8 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             renderCandidatePicker(rankedCandidates, query, selectedCandidate => {
                 if (!isActiveSearch(searchId)) return;
                 void loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, {
-                    requestedSeason,
-                    deferEnrichments: requestedSeason !== null
+                    requestedSeason: seasonFor(selectedCandidate),
+                    deferEnrichments: seasonFor(selectedCandidate) !== null
                 }).catch(error => {
                     if (error?.name !== 'AbortError') showSearchError(error, query, searchId);
                 });
@@ -2843,8 +2845,8 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配`);
         await loadCandidateDetails(candidate, query, searchId, searchOptions, {
             historyMode,
-            requestedSeason,
-            deferEnrichments: requestedSeason !== null
+            requestedSeason: seasonFor(candidate),
+            deferEnrichments: seasonFor(candidate) !== null
         });
 
     } catch (err) {

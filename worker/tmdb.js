@@ -448,9 +448,16 @@ function extractSearchSeason(text) {
     // A bare "s" marker must not be part of a Latin word or possessive ("Ocean's 8"),
     // while Chinese titles commonly put the marker directly after the title ("庆余年S02").
     const match = text.match(/(?:(?:(?<![\p{L}\p{N}'’])|(?<=\p{Script=Han}))(?:s|season)\s*0*(\d{1,2})(?:\s*e\d{1,3})?\b|第\s*([0-9一二三四五六七八九十百两]+)\s*季)/iu);
-    if (!match) return { value: null, match: "" };
-    const value = parseChineseNumber(match[1] || match[2]);
-    return value && value <= 99 ? { value, match: match[0] } : { value: null, match: "" };
+    if (match) {
+        const value = parseChineseNumber(match[1] || match[2]);
+        return value && value <= 99 ? { value, match: match[0] } : { value: null, match: "" };
+    }
+    // "第4部" names a season of a series but also a film in a franchise, so it
+    // is a soft hint: searched without it, and no restriction to series.
+    // Only at the end of the query: inside a title ("我的第一部动画片") it is a name.
+    const part = text.match(/(?<=\S\s*)第\s*([0-9一二三四五六七八九十两]+)\s*部\s*$/u);
+    const partValue = part ? parseChineseNumber(part[1]) : null;
+    return partValue && partValue <= 99 ? { value: partValue, match: part[0], soft: true } : { value: null, match: "" };
 }
 
 function extractSearchYear(text) {
@@ -485,14 +492,14 @@ function buildSearchIntent(query) {
     const originalQuery = normalizeSearchInput(query);
     const season = extractSearchSeason(originalQuery);
     const year = extractSearchYear(originalQuery);
-    const mediaType = season.value || /(?:\b(?:tv|series|show)\b|电视剧|剧集|连续剧)/iu.test(originalQuery)
+    const mediaType = (season.value && !season.soft) || /(?:\b(?:tv|series|show)\b|电视剧|剧集|连续剧)/iu.test(originalQuery)
         ? "tv"
         : /(?:\b(?:movie|film)\b|电影)/iu.test(originalQuery)
             ? "movie"
             : null;
     // Words that implied the type, kept to recognize titles that contain them
     // ("The Truman Show", "电影世界") instead of filtering those works out.
-    const typeWords = season.value ? []
+    const typeWords = season.value && !season.soft ? []
         : Array.from(originalQuery.matchAll(/\b(?:tv|series|show|movie|film)\b|电视剧|剧集|连续剧|电影/giu), match => match[0].toLowerCase());
     const literalTitle = cleanSearchTitle(originalQuery, season.match, year.match, { keepTypeWords: true });
     const animationTitle = literalTitle.replace(SEARCH_ANIMATION_SUFFIX, "").trim();
@@ -838,6 +845,9 @@ async function prefetchTmdbFollowUp(body, { query, env, ctx, deadline }) {
     // A slower lookup keeps running and caches its upstream answer, so the
     // page's own request after this response can still reuse it.
     ctx?.waitUntil?.(settled);
+    // A season query makes the page request "detail&season=N", which this
+    // payload cannot answer: warm the upstream cache without waiting.
+    if (followUp.kind === "detail" && body.searchMeta.season) return null;
     let timer;
     const timeout = new Promise(resolve => { timer = setTimeout(resolve, waitMs, null); });
     try {

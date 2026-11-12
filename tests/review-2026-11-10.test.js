@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { setTimeout } from 'node:timers';
 import worker from '../worker/_worker.js';
 import { createResourceTitleMatcher, resourceTitleHasYear } from '../worker/resources.js';
 
@@ -114,4 +115,44 @@ test('the detail page offers favorites, one synopsis and a way back to search', 
     assert.match(html, /<details id="tmdbOverviewPanel"/);
     assert.match(main, /RESOURCE_AUTO_START_MS = 1500/);
     assert.doesNotMatch(main, /createInfoCard\('(?:Runtime|Cast|Director|Genres)'/);
+});
+
+test('"第N部" searches without the marker and does not restrict results to series', async t => {
+    const queries = [];
+    mock(t, async url => {
+        const parsed = new URL(String(url));
+        if (!parsed.pathname.includes('/search/')) return Response.json({ results: [] });
+        queries.push(parsed.searchParams.get('query'));
+        return Response.json({ results: parsed.searchParams.get('query') === '怪奇物语' ? [
+            { id: 66732, media_type: 'tv', name: '怪奇物语', first_air_date: '2016-07-15' },
+            { id: 9001, media_type: 'movie', title: '怪奇物语', release_date: '2020-01-01' }
+        ] : [] });
+    });
+    const data = await search('怪奇物语 第4部', 'part-1');
+    assert.ok(queries.includes('怪奇物语'), 'the cleaned title is searched');
+    assert.equal(data.searchMeta.season, 4);
+    assert.equal(data.searchMeta.mediaType, null);
+    assert.deepEqual(data.results.map(item => item.mediaType).sort(), ['movie', 'tv']);
+
+    const strict = await search('怪奇物语 第4季', 'part-2');
+    assert.equal(strict.searchMeta.mediaType, 'tv');
+    assert.ok(strict.results.every(item => item.mediaType === 'tv'));
+});
+
+test('a season search does not wait for a detail the page cannot reuse', async t => {
+    let detailRequested = false;
+    mock(t, async url => {
+        const path = new URL(String(url)).pathname;
+        if (path.includes('/search/')) {
+            return Response.json({ results: [{ id: 5, media_type: 'tv', name: '庆余年', first_air_date: '2019-11-26' }] });
+        }
+        detailRequested = true;
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        return Response.json({ id: 5, name: '庆余年', external_ids: {}, credits: { cast: [], crew: [] } });
+    });
+    const started = Date.now();
+    const data = await search('庆余年 第二季', 'season-wait');
+    assert.ok(Date.now() - started < 600, 'the response is not held for the prefetch');
+    assert.equal(data.prefetched, undefined);
+    assert.equal(detailRequested, true, 'the upstream cache is still warmed');
 });
