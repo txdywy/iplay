@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.44] - 2026-11-12
+
+### Fixed
+
+- The 收藏 button shows its saved state in gold; the neutral style used to win. The same fix applies to the actor sort toggle.
+- A title can be saved only after TMDB confirms it, so a shared link with a made-up title cannot be added to favorites.
+- Recent searches record only searches typed or picked on the page, not shared links or back/forward navigation, and a broken shared link no longer removes a recent search.
+- Opening the favorite already on screen no longer adds a history entry.
+- `第N部` is recognised before a year, a type word or a bracketed note (`沙丘 第二部 2024`) and ignored when the query already names a season (`最终季 第2部`). A film found this way keeps its detail prefetch.
+- Telegram: a slow Wikipedia lookup for the card score finishes in the background and is cached for the next card.
+
 ## [1.0.43] - 2026-11-12
 
 ### Fixed

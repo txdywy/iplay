@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.43';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.44';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.43';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.43';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.43';
-import { RELEASE_VERSION } from './release.js?v=1.0.43';
+} from './scorer.js?v=1.0.44';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.44';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.44';
+import { RELEASE_VERSION } from './release.js?v=1.0.44';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.43';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.43';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.43';
+} from './match.js?v=1.0.44';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.44';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.44';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -301,6 +301,8 @@ function updateActorFilterControls() {
         els.actorSortToggle.setAttribute('aria-pressed', String(byRating));
         els.actorSortToggle.classList.toggle('border-accent-red/60', byRating);
         els.actorSortToggle.classList.toggle('text-cinema-100', byRating);
+        els.actorSortToggle.classList.toggle('border-cinema-700', !byRating);
+        els.actorSortToggle.classList.toggle('text-cinema-300', !byRating);
     }
     const counts = state.counts || {};
     const filters = [
@@ -2076,13 +2078,20 @@ function showEmptySearchError() {
 
 let searchRetryEdits = false;
 
+// The search ran and matched nothing, as opposed to a missing entry or an outage.
+function noMatchError(message) {
+    const error = new Error(message);
+    error.noMatch = true;
+    return error;
+}
+
 function showSearchError(error, query, searchId, onRetry = null) {
     if (!isActiveSearch(searchId)) return;
     const message = getSearchErrorMessage(error);
     setText(els.errorMsg, message);
     setText(els.errorHint, getSearchErrorHint(error));
     // Searching the same words again cannot find a title that does not match.
-    searchRetryEdits = !onRetry && /^未找到/.test(message);
+    searchRetryEdits = !onRetry && error?.noMatch === true;
     setText(els.retrySearchButton, onRetry ? '重试演员作品' : searchRetryEdits ? '修改关键词' : '重试搜索');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
@@ -2431,7 +2440,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         viewModel.posterFallbackPending = false;
         if (viewModel.failedPosterUrls.has(viewModel.posterUrl)) viewModel.posterUrl = null;
     }
-    activeDetailState = { searchId, candidate: selectedCandidate, viewModel };
+    activeDetailState = { searchId, candidate: selectedCandidate, viewModel, detailConfirmed: Boolean(viewModel.detail) };
     renderFavoriteToggle();
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
@@ -2511,6 +2520,10 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
             if (deferEnrichments) {
                 startEnrichments(selectedCandidate, query, viewModel, searchId, candidateOptions, loadId);
             }
+            if (activeDetailState?.viewModel === viewModel) {
+                activeDetailState.detailConfirmed = true;
+                renderFavoriteToggle();
+            }
             setSearchStatus(`已找到“${viewModel.title}”，详情已加载`);
             hideDataNotice();
             return tmdbDetail;
@@ -2572,8 +2585,15 @@ function renderFavoriteToggle() {
     const saved = Boolean(activeDetailState && isFavorite(activeDetailState.candidate));
     els.favoriteToggle.textContent = saved ? '★ 已收藏' : '☆ 收藏';
     els.favoriteToggle.setAttribute('aria-pressed', String(saved));
+    // Swap, not add: the stylesheet emits the gold utilities before the
+    // neutral ones, so both together would leave the neutral style.
     els.favoriteToggle.classList.toggle('border-accent-gold', saved);
     els.favoriteToggle.classList.toggle('text-accent-gold', saved);
+    els.favoriteToggle.classList.toggle('border-cinema-700', !saved);
+    els.favoriteToggle.classList.toggle('text-cinema-100', !saved);
+    // Only a work TMDB confirmed can be saved: a share link's title is unverified.
+    els.favoriteToggle.disabled = !activeDetailState?.detailConfirmed;
+    els.favoriteToggle.classList.toggle('opacity-50', !activeDetailState?.detailConfirmed);
 }
 
 function renderFavorites() {
@@ -2601,7 +2621,9 @@ function renderFavorites() {
             url.searchParams.set('id', String(item.id));
             url.searchParams.set('type', item.mediaType);
             url.searchParams.set('title', item.title);
-            window.history.pushState(null, '', url);
+            // Opening the title already on screen must not add a history entry.
+            if (url.search === window.location.search) return;
+            setAppHistoryState('pushState', { kind: 'detail', id: item.id, mediaType: item.mediaType, season: null, title: item.title }, getAppHistoryUrl(url));
             void restoreUrlState();
         });
         els.favoriteList.appendChild(chip);
@@ -2610,6 +2632,7 @@ function renderFavorites() {
 
 function toggleFavorite() {
     const candidate = activeDetailState?.candidate;
+    if (!activeDetailState?.detailConfirmed) return;
     if (!candidate?.id || (candidate.mediaType !== 'movie' && candidate.mediaType !== 'tv')) return;
     const id = Number(candidate.id);
     const existing = readFavorites();
@@ -2744,7 +2767,8 @@ async function handleSearch({ historyMode = 'push' } = {}) {
     }
 
     const { searchId, searchOptions } = beginSearchSession(query);
-    rememberSearch(query);
+    // Shared links and back/forward restores are not searches the visitor typed.
+    if (historyMode === 'push') rememberSearch(query);
 
     try {
         let tmdbSearch = null;
@@ -2818,7 +2842,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         }
 
         if (tmdbResults.length === 0) {
-            throw personSearchError || tmdbSearchError || new Error(`未找到“${query}”的可靠影视或演员匹配`);
+            throw personSearchError || tmdbSearchError || noMatchError(`未找到“${query}”的可靠影视或演员匹配`);
         }
 
         const rankedCandidates = rankTmdbCandidates(tmdbResults);
@@ -2842,7 +2866,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             return;
         }
 
-        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配`);
+        if (!candidate) throw noMatchError(`未找到“${query}”的可靠影视匹配`);
         await loadCandidateDetails(candidate, query, searchId, searchOptions, {
             historyMode,
             requestedSeason: seasonFor(candidate),

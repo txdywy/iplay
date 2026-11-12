@@ -454,8 +454,11 @@ function extractSearchSeason(text) {
     }
     // "第4部" names a season of a series but also a film in a franchise, so it
     // is a soft hint: searched without it, and no restriction to series.
-    // Only at the end of the query: inside a title ("我的第一部动画片") it is a name.
-    const part = text.match(/(?<=\S\s*)第\s*([0-9一二三四五六七八九十两]+)\s*部\s*$/u);
+    // Only after the title, followed by nothing but a year, a type word or a
+    // bracketed note: inside a title ("我的第一部动画片") it is a name. A query
+    // that already names a season ("最终季 第2部") means a part of that season.
+    if (/季/u.test(text)) return { value: null, match: "" };
+    const part = text.match(/(?<=\S\s*)第\s*([0-9一二三四五六七八九十两]+)\s*部(?=(?:\s*(?:(?:19|20)\d{2}|电视剧|剧集|连续剧|电影|[（(【[][^）)】\]]*[)）】\]]))*\s*$)/u);
     const partValue = part ? parseChineseNumber(part[1]) : null;
     return partValue && partValue <= 99 ? { value: partValue, match: part[0], soft: true } : { value: null, match: "" };
 }
@@ -847,7 +850,7 @@ async function prefetchTmdbFollowUp(body, { query, env, ctx, deadline }) {
     ctx?.waitUntil?.(settled);
     // A season query makes the page request "detail&season=N", which this
     // payload cannot answer: warm the upstream cache without waiting.
-    if (followUp.kind === "detail" && body.searchMeta.season) return null;
+    if (followUp.kind === "detail" && followUp.type === "tv" && body.searchMeta.season) return null;
     let timer;
     const timeout = new Promise(resolve => { timer = setTimeout(resolve, waitMs, null); });
     try {
