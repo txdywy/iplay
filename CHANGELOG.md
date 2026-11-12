@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.45] - 2026-11-12
+
+### Fixed
+
+- `沙丘 第二部` also finds the film TMDB lists as 沙丘2: a "第N部" query looks up the numbered sequel as well as the title without the marker.
+
 ## [1.0.44] - 2026-11-12
 
 ### Fixed

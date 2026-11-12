@@ -516,7 +516,9 @@ function buildSearchIntent(query) {
         .map(value => value.trim())
         .filter(value => [...value].length >= 2);
     const variants = uniqueSearchValues([literalTitle, searchTitle, cleanedTitle, punctuationVariant, ...aliases], MAX_QUERY_LENGTH, 6);
-    const matchQueries = uniqueSearchValues([literalTitle, searchTitle, cleanedTitle, punctuationVariant, ...aliases, originalQuery], MAX_QUERY_LENGTH, 8);
+    // For a film, "沙丘 第二部" names the sequel that TMDB lists as "沙丘2".
+    const sequelQuery = season.soft && season.value >= 2 && cleanedTitle ? `${cleanedTitle}${season.value}` : null;
+    const matchQueries = uniqueSearchValues([literalTitle, searchTitle, cleanedTitle, punctuationVariant, ...aliases, sequelQuery, originalQuery].filter(Boolean), MAX_QUERY_LENGTH, 8);
 
     return {
         originalQuery,
@@ -528,6 +530,7 @@ function buildSearchIntent(query) {
         season: season.value,
         mediaType,
         typeWords,
+        sequelQuery,
         animation,
         hasCjk: hasCjkText(originalQuery)
     };
@@ -1275,6 +1278,9 @@ export async function handleTmdbSearch(query, env, ctx) {
         }
 
         ranked = await runSearch("/search/multi", intent.originalQuery, "zh-CN");
+        // The title without "第N部" usually matches the first work exactly, so
+        // the sequel has to be looked up even when that match is confident.
+        if (intent.sequelQuery) ranked = await runSearch("/search/multi", intent.sequelQuery, "zh-CN", {}, null, "sequel");
         // Title fallbacks for a Chinese actor name only find works that mention
         // the name. Latin names keep the en-US pass: it can find the exact
         // English title of a foreign-language work.
