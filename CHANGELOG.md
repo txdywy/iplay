@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.43] - 2026-11-12
+
+### Fixed
+
+- A search with a season (`庆余年 第二季`) no longer waits up to 1.5 seconds for a detail prefetch the page cannot reuse; the lookup still warms the cache in the background.
+- `第4部` is read as a season hint: the title is searched without it and the season applies to a series result. Films stay in the results, because the same words name a film in a franchise.
+
 ## [1.0.42] - 2026-11-12
 
 ### Changed
