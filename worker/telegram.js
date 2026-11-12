@@ -702,10 +702,14 @@ async function sendDetailCard(chat, env, ctx, mediaType, id, season = null) {
 
     // The page adds points for a Chinese Wikipedia article. Use it when the
     // (cached) lookup answers quickly, and never hold the card for it.
+    const wikiLookup = getWikiSummary(env, ctx, detail).then(wiki => Boolean(wiki?.extract?.trim()));
+    // A lookup that loses the race still finishes and caches for the next card.
+    ctx?.waitUntil?.(wikiLookup);
+    let wikiTimer;
     const hasWiki = await Promise.race([
-        getWikiSummary(env, ctx, detail).then(wiki => Boolean(wiki?.extract?.trim())),
-        new Promise(resolve => setTimeout(() => resolve(false), WIKI_SCORE_WAIT_MS))
-    ]);
+        wikiLookup,
+        new Promise(resolve => { wikiTimer = setTimeout(resolve, WIKI_SCORE_WAIT_MS, false); })
+    ]).finally(() => clearTimeout(wikiTimer));
     const caption = buildDetailCaption(detail, season, { hasWiki }) + seasonNote;
     const markup = buildDetailKeyboard(detail, season);
     const poster = safeHttpUrl(detail.poster);

@@ -156,3 +156,20 @@ test('a season search does not wait for a detail the page cannot reuse', async t
     assert.equal(data.prefetched, undefined);
     assert.equal(detailRequested, true, 'the upstream cache is still warmed');
 });
+
+test('"第N部" is found before a year or type word and ignored after a named season', async t => {
+    mock(t, async () => Response.json({ results: [] }));
+    assert.equal((await search('沙丘 第二部 2024', 'part-year')).searchMeta.season, 2);
+    assert.equal((await search('哈利波特第1部（国语）', 'part-note')).searchMeta.season, 1);
+    assert.equal((await search('进击的巨人 最终季 第2部', 'part-final')).searchMeta.season, null);
+    assert.equal((await search('我的第一部动画片', 'part-title')).searchMeta.season, null);
+});
+
+test('favorites need a confirmed work, and only typed searches are remembered', async () => {
+    const main = await readFile('js/main.js', 'utf8');
+    assert.match(main, /if \(!activeDetailState\?\.detailConfirmed\) return;/);
+    assert.match(main, /favoriteToggle\.disabled = !activeDetailState\?\.detailConfirmed/);
+    assert.match(main, /if \(historyMode === 'push'\) rememberSearch\(query\);/);
+    assert.match(main, /searchRetryEdits = !onRetry && error\?\.noMatch === true;/);
+    assert.match(main, /if \(url\.search === window\.location\.search\) return;/);
+});
