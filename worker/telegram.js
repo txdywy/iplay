@@ -34,6 +34,7 @@ const TELEGRAM_MAX_RETRY_AFTER_SECONDS = 3;
 // Telegram counts 4096 characters after parsing; leave room for markup.
 const PAGE_TEXT_BUDGET = 3600;
 const VISIBLE_URL_LENGTH = 70;
+const WIKI_SCORE_WAIT_MS = 2500;
 const MAX_UPDATE_BYTES = 256 * 1024;
 const MESSAGE_LIMIT = 4096;
 const CAPTION_LIMIT = 1024;
@@ -638,13 +639,13 @@ async function runActorSearch(chat, env, ctx, name) {
 // ---------------------------------------------------------------------------
 // Detail card
 
-export function buildDetailCaption(detail, season = null) {
+export function buildDetailCaption(detail, season = null, { hasWiki = false } = {}) {
     const genres = normalizeGenres(detail.genres);
     const score = calculateRecommendationScore({
         rating: detail.tmdbRating,
         votes: detail.tmdbVotes,
         genres,
-        hasWiki: false,
+        hasWiki,
         summary: detail.summary,
         source: "tmdb"
     });
@@ -699,7 +700,13 @@ async function sendDetailCard(chat, env, ctx, mediaType, id, season = null) {
         detail = await getDetail(env, ctx, mediaType, id);
     }
 
-    const caption = buildDetailCaption(detail, season) + seasonNote;
+    // The page adds points for a Chinese Wikipedia article. Use it when the
+    // (cached) lookup answers quickly, and never hold the card for it.
+    const hasWiki = await Promise.race([
+        getWikiSummary(env, ctx, detail).then(wiki => Boolean(wiki?.extract?.trim())),
+        new Promise(resolve => setTimeout(() => resolve(false), WIKI_SCORE_WAIT_MS))
+    ]);
+    const caption = buildDetailCaption(detail, season, { hasWiki }) + seasonNote;
     const markup = buildDetailKeyboard(detail, season);
     const poster = safeHttpUrl(detail.poster);
     if (poster && [...caption].length <= CAPTION_LIMIT) {
@@ -725,24 +732,32 @@ function detailTitle(detail) {
     return detail.title || detail.originalTitle || "未命名";
 }
 
-function resourceShortcut(detail) {
-    return keyboard([[button("🔍 夸克资源", "ro", detail.mediaType, detail.id)]]);
-}
-
-async function sendSynopsis(chat, env, ctx, mediaType, id) {
-    chat.typing();
-    const detail = await getDetail(env, ctx, mediaType, id);
-    const wiki = await readHandler(handleWikiZh(detailTitle(detail), ctx, {
+function getWikiSummary(env, ctx, detail) {
+    return readHandler(handleWikiZh(detailTitle(detail), ctx, {
         mediaType: detail.mediaType,
         year: detail.year ? String(detail.year) : null,
         id: String(detail.id),
         env
     })).catch(() => null);
+}
+
+// Follow-up messages scroll away from their card: offer the way back.
+function followUpKeyboard(detail, extraRows = []) {
+    return keyboard([
+        ...extraRows,
+        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id), button("↩ 详情卡片", "d", detail.mediaType, detail.id, "")]
+    ]);
+}
+
+async function sendSynopsis(chat, env, ctx, mediaType, id) {
+    chat.typing();
+    const detail = await getDetail(env, ctx, mediaType, id);
+    const wiki = await getWikiSummary(env, ctx, detail);
     const text = typeof wiki?.extract === "string" && wiki.extract.trim() ? wiki.extract.trim() : String(detail.summary || "").trim();
     const source = wiki?.extract ? "中文 Wikipedia" : "TMDB";
     const title = escapeTruncated(detailTitle(detail), 300);
-    if (!text) return chat.send(`《${title}》暂无简介。`, resourceShortcut(detail));
-    return chat.send(`<b>${title}</b> · 简介（${source}）\n\n${escapeTruncated(text, PAGE_TEXT_BUDGET)}`, resourceShortcut(detail));
+    if (!text) return chat.send(`《${title}》暂无简介。`, followUpKeyboard(detail));
+    return chat.send(`<b>${title}</b> · 简介（${source}）\n\n${escapeTruncated(text, PAGE_TEXT_BUDGET)}`, followUpKeyboard(detail));
 }
 
 async function sendSeasons(chat, env, ctx, id) {
@@ -755,7 +770,7 @@ async function sendSeasons(chat, env, ctx, id) {
     for (let index = 0; index < rows.length; index += 4) grouped.push(rows.slice(index, index + 4));
     return chat.send(
         `<b>${escapeTruncated(detailTitle(detail), 300)}</b> · 分季${totals ? `（${escapeHtml(totals)}）` : ""}\n\n${escapeTruncated(counts.join("\n"), PAGE_TEXT_BUDGET) || "暂无分季资料"}`,
-        keyboard(grouped)
+        followUpKeyboard(detail, grouped)
     );
 }
 

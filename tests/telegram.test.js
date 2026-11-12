@@ -367,3 +367,30 @@ test('buttons on photo cards from older releases still work', async t => {
     await deliver(callback('r|tv|106841|0', { message: { message_id: 7, caption: 'card' } }));
     assert.ok(!sent().some(call => call.method === 'editMessageText' && call.body.message_id === 7));
 });
+
+test('the card score counts a Chinese Wikipedia article and follow-ups lead back to the card', async t => {
+    let wikiAvailable = true;
+    const { sent } = setup(t, { resources: parsed => {
+        if (parsed.hostname !== 'zh.wikipedia.org') return Response.json([]);
+        if (!wikiAvailable) return Response.json({ query: { search: [] } });
+        return parsed.pathname.endsWith('/w/api.php')
+            ? Response.json({ query: { search: [{ title: '繁花 (电视剧)' }] } })
+            : Response.json({ title: '繁花 (电视剧)', description: '2023年中国电视剧', extract: '《繁花》是2023年播出的中国电视剧。' });
+    } });
+    const score = text => Number(/推荐指数 <b>(\d+)<\/b>/.exec(text)[1]);
+    await deliver(callback('d|tv|106841|'));
+    const withWiki = score(sent().at(-1).body.caption);
+
+    await deliver(callback('w|tv|106841'));
+    const synopsis = sent().at(-1);
+    assert.match(synopsis.body.text, /中文 Wikipedia/);
+    assert.deepEqual(allCallbackData(synopsis.body.reply_markup), ['ro|tv|106841', 'd|tv|106841|']);
+
+    await deliver(callback('ss|106841'));
+    assert.ok(allCallbackData(sent().at(-1).body.reply_markup).includes('d|tv|106841|'));
+
+    wikiAvailable = false;
+    globalThis.caches.default.match = async () => null;
+    await deliver(callback('d|tv|106841|'));
+    assert.equal(withWiki - score(sent().at(-1).body.caption), 5, 'the article is worth the same 5 points as on the page');
+});

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.42] - 2026-11-12
+
+### Changed
+
+- Telegram: the synopsis and season messages have **↩ 详情卡片** and **🔍 夸克资源** buttons, so the card can be reopened without scrolling back.
+- Telegram: the recommendation score on a card counts a Chinese Wikipedia article, as the page does. The card waits at most 2.5 seconds for that lookup.
+
 ## [1.0.41] - 2026-11-12
 
 ### Added
