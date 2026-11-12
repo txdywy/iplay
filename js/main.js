@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.39';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.40';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.39';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.39';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.39';
-import { RELEASE_VERSION } from './release.js?v=1.0.39';
+} from './scorer.js?v=1.0.40';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.40';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.40';
+import { RELEASE_VERSION } from './release.js?v=1.0.40';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.39';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.39';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.39';
+} from './match.js?v=1.0.40';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.40';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.40';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -97,6 +97,9 @@ const els = {
     preferenceForm: document.getElementById('preferenceForm'),
     preferenceFields: document.getElementById('preferenceFields'),
     preferenceReset: document.getElementById('preferenceReset'),
+    quickSearches: document.getElementById('quickSearches'),
+    jumpToResources: document.getElementById('jumpToResources'),
+    resourcesSection: document.getElementById('resourcesSection'),
     toast: document.getElementById('toast')
 };
 
@@ -635,18 +638,40 @@ function renderCandidatePicker(candidates, query, onSelect) {
 
         const meta = document.createElement('span');
         meta.className = 'mt-3 block text-xs font-mono uppercase tracking-[0.18em] text-cinema-400';
-        meta.textContent = [candidate.year || '年份未知', candidateTypeLabel(candidate), candidateMatchLabel(candidate)].join(' · ');
+        const rating = toFiniteNumber(candidate.tmdbRating);
+        meta.textContent = [candidate.year || '年份未知', candidateTypeLabel(candidate),
+            rating !== null && rating > 0 ? `TMDB ${formatRating(rating)}` : null].filter(Boolean).join(' · ');
 
         const score = Number(candidate.matchScore);
-        const scoreText = Number.isFinite(score) ? `匹配度 ${Math.round(score * 100)}%` : 'TMDB 候选';
+        const scoreText = Number.isFinite(score) ? `匹配度 ${Math.round(score * 100)}%` : candidateMatchLabel(candidate);
         const scoreNode = document.createElement('span');
         scoreNode.className = 'mt-2 block text-xs font-mono text-accent-gold';
         scoreNode.textContent = scoreText;
 
-        button.appendChild(title);
-        if (originalTitle) button.appendChild(originalTitle);
-        button.appendChild(meta);
-        button.appendChild(scoreNode);
+        // A poster tells same-name works apart faster than year and type.
+        button.classList.add('flex', 'items-start', 'gap-4');
+        const posterUrl = toSafeHttpUrl(candidate.poster);
+        const poster = document.createElement(posterUrl ? 'img' : 'span');
+        poster.className = 'h-24 w-16 shrink-0 rounded-lg border border-cinema-700 bg-cinema-800 object-cover';
+        if (posterUrl) {
+            poster.src = posterUrl.replace('/t/p/w500/', '/t/p/w185/');
+            poster.alt = '';
+            poster.width = 64;
+            poster.height = 96;
+            poster.loading = 'lazy';
+            poster.decoding = 'async';
+            poster.addEventListener('error', () => { poster.classList.add('opacity-0'); }, { once: true });
+        } else {
+            poster.setAttribute('aria-hidden', 'true');
+        }
+        const text = document.createElement('span');
+        text.className = 'block min-w-0 flex-1';
+        text.appendChild(title);
+        if (originalTitle) text.appendChild(originalTitle);
+        text.appendChild(meta);
+        text.appendChild(scoreNode);
+        button.appendChild(poster);
+        button.appendChild(text);
         button.addEventListener('click', () => onSelect(candidate));
         fragment.appendChild(button);
     });
@@ -1046,6 +1071,12 @@ function renderTmdbFacts(viewModel) {
     }
 }
 
+// The desktop sidebar already shows these facts; phones have no sidebar.
+function sidebarDuplicate(card) {
+    card?.classList.add('lg:hidden');
+    return card;
+}
+
 function renderTmdbProfile(viewModel) {
     if (!els.profilePanel || !els.profileFields) return;
 
@@ -1069,11 +1100,11 @@ function renderTmdbProfile(viewModel) {
 
     appendInfoCards(els.profileFields, [
         createInfoCard('Runtime', detail.runtime ? `${detail.runtime} min` : '—'),
-        seasonTotals ? createInfoCard('Seasons / Episodes', seasonTotals) : null,
+        seasonTotals ? sidebarDuplicate(createInfoCard('Seasons / Episodes', seasonTotals)) : null,
         createInfoCard('Status', detail.status || '—'),
         createInfoCard('Language', detail.originalLanguage || '—'),
-        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
-        tmdbRating !== null && tmdbRating > 0 ? createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`) : null
+        detail.imdbId ? sidebarDuplicate(createInfoCard('IMDb ID', detail.imdbId)) : null,
+        tmdbRating !== null && tmdbRating > 0 ? sidebarDuplicate(createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`)) : null
     ].filter(Boolean));
 
     appendInfoCards(els.profileFields, [
@@ -1083,7 +1114,7 @@ function renderTmdbProfile(viewModel) {
         cast.length > 0 ? createInfoCard('Cast', cast, { wide: true, interactiveValues: castDetails }) : null,
         directors.length > 0 ? createInfoCard('Director', directors, { wide: true }) : null,
         writers.length > 0 ? createInfoCard('Writer', writers, { wide: true }) : null,
-        seasonEpisodes ? createInfoCard('Episodes / Season', seasonEpisodes, { wide: true }) : null,
+        seasonEpisodes ? sidebarDuplicate(createInfoCard('Episodes / Season', seasonEpisodes, { wide: true })) : null,
     ].filter(Boolean));
 
     els.profilePanel.classList.remove('hidden');
@@ -1159,16 +1190,23 @@ function renderResourceNotice(resourceResult, totalSources, onRetry) {
     const canRetry = failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
         || (Number(meta.attemptedPages) || 0) < (Number(meta.selectedPages) || 0) || notes.length === 0;
 
+    // With links in hand, an incomplete scan is a footnote, not a warning.
+    const hasLinks = Array.isArray(resourceResult?.quarkUrls) && resourceResult.quarkUrls.length > 0;
+    const quiet = hasLinks && failedProviders.length === 0;
+    els.resourceNotice.className = `md:col-span-2 lg:col-span-3 rounded-2xl border ${quiet
+        ? 'order-last border-cinema-700 bg-cinema-800/30 px-4 py-3'
+        : 'border-accent-gold/40 bg-accent-gold/10 p-4'}`;
+
     const row = document.createElement('div');
     row.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
 
     const copy = document.createElement('div');
     copy.className = 'min-w-0';
     const heading = document.createElement('p');
-    heading.className = 'font-mono text-xs uppercase tracking-[0.2em] text-accent-gold';
-    heading.textContent = '资源扫描部分完成';
+    heading.className = `font-mono text-xs uppercase tracking-[0.2em] ${quiet ? 'text-cinema-400' : 'text-accent-gold'}`;
+    heading.textContent = quiet ? '部分来源未扫描完' : '资源扫描部分完成';
     const description = document.createElement('p');
-    description.className = 'mt-1 text-sm text-cinema-100/80';
+    description.className = quiet ? 'mt-1 text-xs text-cinema-400' : 'mt-1 text-sm text-cinema-100/80';
     description.textContent = detail;
     copy.appendChild(heading);
     copy.appendChild(description);
@@ -1259,6 +1297,17 @@ function renderLinkCards(container, items, {
         return;
     }
 
+    // Reposts share one title; number them so they do not look like one row repeated.
+    const titleCounts = new Map();
+    safeItems.forEach(item => titleCounts.set(titleText(item), (titleCounts.get(titleText(item)) || 0) + 1));
+    const titleSeen = new Map();
+    safeItems.forEach(item => {
+        const key = titleText(item);
+        const total = titleCounts.get(key);
+        titleSeen.set(key, (titleSeen.get(key) || 0) + 1);
+        item._repostLabel = total > 1 ? `同名帖 ${titleSeen.get(key)}/${total}` : '';
+    });
+
     const maxItems = safeItems.length;
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
@@ -1292,7 +1341,7 @@ function renderLinkCards(container, items, {
 
             const meta = document.createElement('div');
             meta.className = metaClass;
-            meta.textContent = metaText(item);
+            meta.textContent = [metaText(item), item._repostLabel].filter(Boolean).join(' · ');
 
             content.appendChild(title);
             content.appendChild(meta);
@@ -1305,10 +1354,11 @@ function renderLinkCards(container, items, {
                 content.appendChild(detailNode);
             }
 
-            if (sourceText) {
+            const sourceLabel = sourceText ? sourceText(item) : '';
+            if (sourceLabel) {
                 const source = document.createElement('div');
-                source.className = 'mt-2 text-xs font-mono uppercase tracking-[0.3em] text-accent-gold/80';
-                source.textContent = sourceText(item);
+                source.className = 'mt-2 text-xs text-accent-gold/80';
+                source.textContent = sourceLabel;
                 content.appendChild(source);
             }
 
@@ -1604,11 +1654,13 @@ function renderQuarkUrls(quarkUrls) {
         cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-[transform,background-color,border-color] hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
         iconName: 'cloud',
         iconClass: 'h-5 w-5 shrink-0 text-accent-red mt-1 opacity-80',
-        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400 break-all',
+        // Share tokens are case-sensitive: show the address exactly as it is.
+        metaClass: 'mt-2 text-xs font-mono text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
-        sourceText: item => item.sourceTitle ? `FROM ${item.sourceTitle}` : 'FROM RESOURCE PAGE',
+        // The source post usually has the same title as the card; repeat it only when it differs.
+        sourceText: item => (item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : ''),
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         initialLimit: 6
@@ -1970,12 +2022,16 @@ function showEmptySearchError() {
     els.input?.focus();
 }
 
+let searchRetryEdits = false;
+
 function showSearchError(error, query, searchId, onRetry = null) {
     if (!isActiveSearch(searchId)) return;
     const message = getSearchErrorMessage(error);
     setText(els.errorMsg, message);
     setText(els.errorHint, getSearchErrorHint(error));
-    setText(els.retrySearchButton, onRetry ? '重试演员作品' : '重试搜索');
+    // Searching the same words again cannot find a title that does not match.
+    searchRetryEdits = !onRetry && /^未找到/.test(message);
+    setText(els.retrySearchButton, onRetry ? '重试演员作品' : searchRetryEdits ? '修改关键词' : '重试搜索');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
@@ -1986,6 +2042,8 @@ function showSearchError(error, query, searchId, onRetry = null) {
     setSearching(false);
     lastSearchQuery = query;
     searchRetryAction = onRetry;
+    // A query that found nothing is not worth offering again.
+    if (searchRetryEdits) forgetSearch(query);
     // The control that started the load may have been hidden with its picker.
     const focused = document.activeElement;
     if (!focused || focused === document.body || !focused.isConnected || focused.closest('.hidden')) {
@@ -2435,6 +2493,68 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     await detailPromise;
 }
 
+const RECENT_SEARCH_KEY = 'iplay_recent_searches';
+const RECENT_SEARCH_LIMIT = 6;
+const EXAMPLE_SEARCHES = ['繁花', '流浪地球2', '胡歌'];
+
+function readRecentSearches() {
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(RECENT_SEARCH_KEY) || '[]');
+        return Array.isArray(stored)
+            ? stored.filter(value => typeof value === 'string' && value.trim() && value.length <= 100).slice(0, RECENT_SEARCH_LIMIT)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeRecentSearches(values) {
+    try {
+        if (values.length) window.localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(values.slice(0, RECENT_SEARCH_LIMIT)));
+        else window.localStorage.removeItem(RECENT_SEARCH_KEY);
+    } catch {
+        // Recent searches are a convenience; the page works without storage.
+    }
+    renderQuickSearches();
+}
+
+function rememberSearch(query) {
+    writeRecentSearches([query, ...readRecentSearches().filter(value => value !== query)]);
+}
+
+function forgetSearch(query) {
+    writeRecentSearches(readRecentSearches().filter(value => value !== query));
+}
+
+function renderQuickSearches() {
+    if (!els.quickSearches) return;
+    clearNode(els.quickSearches);
+    const recent = readRecentSearches();
+    const label = document.createElement('span');
+    label.className = 'font-mono text-xs text-cinema-400';
+    label.textContent = recent.length ? '最近搜索' : '试试';
+    els.quickSearches.appendChild(label);
+    (recent.length ? recent : EXAMPLE_SEARCHES).forEach(query => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'min-h-11 max-w-[12rem] truncate rounded-full border border-cinema-700 px-4 text-sm text-cinema-100 transition-colors hover:border-accent-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        chip.textContent = query;
+        chip.addEventListener('click', () => {
+            els.input.value = query;
+            void handleSearch();
+        });
+        els.quickSearches.appendChild(chip);
+    });
+    if (recent.length) {
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'min-h-11 px-2 font-mono text-xs text-cinema-400 underline-offset-4 hover:text-cinema-100 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        clear.textContent = '清除';
+        clear.addEventListener('click', () => writeRecentSearches([]));
+        els.quickSearches.appendChild(clear);
+    }
+}
+
 function beginSearchSession(query) {
     activeDetailState = null;
     lastSearchQuery = query;
@@ -2482,6 +2602,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
     }
 
     const { searchId, searchOptions } = beginSearchSession(query);
+    rememberSearch(query);
 
     try {
         let tmdbSearch = null;
@@ -2553,7 +2674,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         }
 
         if (tmdbResults.length === 0) {
-            throw personSearchError || tmdbSearchError || new Error(`未找到“${query}”的可靠影视或演员匹配，请补充年份、季数或更完整的名称`);
+            throw personSearchError || tmdbSearchError || new Error(`未找到“${query}”的可靠影视或演员匹配`);
         }
 
         const rankedCandidates = rankTmdbCandidates(tmdbResults);
@@ -2577,7 +2698,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             return;
         }
 
-        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配，请补充年份、季数或更完整的片名`);
+        if (!candidate) throw new Error(`未找到“${query}”的可靠影视匹配`);
         await loadCandidateDetails(candidate, query, searchId, searchOptions, {
             historyMode,
             requestedSeason,
@@ -2608,6 +2729,11 @@ if (els.retrySearchButton) {
     els.retrySearchButton.addEventListener('click', () => {
         if (!lastSearchQuery) return;
         els.input.value = lastSearchQuery;
+        if (searchRetryEdits) {
+            els.input.focus();
+            els.input.select();
+            return;
+        }
         if (searchRetryAction) void searchRetryAction();
         else void handleSearch();
     });
@@ -2740,4 +2866,18 @@ window.addEventListener('popstate', event => {
     void restoreUrlState();
 });
 
+els.jumpToResources?.addEventListener('click', () => {
+    // Entering the viewport starts the scan; the button is the keyboard and
+    // no-IntersectionObserver path to the same thing.
+    els.resourcesSection?.scrollIntoView({
+        behavior: matchesMedia('(prefers-reduced-motion: reduce)') ? 'auto' : 'smooth',
+        block: 'start'
+    });
+    Array.from(els.resourcesSection?.querySelectorAll('button') || [])
+        .find(button => button.textContent === '开始扫描资源')?.click();
+});
+
+renderQuickSearches();
 void restoreUrlState();
+// On a desktop home page the visitor's next action is typing a title.
+if (!window.location.search && matchesMedia('(hover: hover) and (pointer: fine)')) els.input?.focus({ preventScroll: true });

@@ -70,3 +70,19 @@ test('a missing entry offers no retry and a missing season offers the whole seri
     assert.match(main, /actionLabel: seasonMissing \? '查看全剧' : entryMissing \? '' : '重试详情'/);
     assert.match(main, /reload\(\{ deferEnrichments: false, requestedSeason: null \}\)/);
 });
+
+test('the detail page leads to resources before the data dossier', async () => {
+    const html = await readFile('index.html', 'utf8');
+    assert.match(html, /id="jumpToResources"/);
+    assert.match(html, /id="quickSearches"/);
+    assert.ok(html.indexOf('id="resourcesSection"') < html.indexOf('id="profilePanel"'), 'resources come first');
+    assert.ok(html.indexOf('id="tmdbOverview"') < html.indexOf('id="resourcesSection"'));
+});
+
+test('Quark cards keep the share address case and drop duplicate sources', async () => {
+    const main = await readFile('js/main.js', 'utf8');
+    const card = main.slice(main.indexOf('function renderQuarkUrls'), main.indexOf('function renderQuarkUrls') + 1400);
+    assert.doesNotMatch(card.match(/metaClass: '[^']*'/)[0], /uppercase/);
+    assert.match(card, /item\.sourceTitle !== item\.title/);
+    assert.match(main, /searchRetryEdits \? '修改关键词'/);
+});

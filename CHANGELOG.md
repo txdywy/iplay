@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.40] - 2026-11-11
+
+### Added
+
+- A **夸克资源 ↓** button under the title that jumps to the resource lists and starts the scan.
+- Recent searches under the search box, stored in this browser, with example titles before the first search and a 清除 button.
+- Posters and TMDB ratings in the candidate picker.
+
+### Changed
+
+- Show the resource lists directly below the synopsis; the data dossier moves below them, and on desktop it no longer repeats the facts shown in the sidebar.
+- Quark cards show the share address as written (it was displayed in upper case although share tokens are case-sensitive) and repeat the source post only when its title differs from the card.
+- Number reposts that share a title (`同名帖 2/4`).
+- When links were found, an incomplete scan is a small note below the lists instead of a warning above them.
+- A search that finds nothing offers 修改关键词, which returns to the search box, instead of repeating the same search; the message no longer repeats its hint.
+- Focus the search box on the desktop home page.
+- Enlarge the preference buttons to a 44px touch target.
+
 ## [1.0.39] - 2026-11-10
 
 ### Fixed
