@@ -153,7 +153,8 @@ export default {
                         personId: url.searchParams.get("id"),
                         offset: url.searchParams.get("offset"),
                         limit: url.searchParams.get("limit"),
-                        mediaType: url.searchParams.get("mediaType")
+                        mediaType: url.searchParams.get("mediaType"),
+                        sort: url.searchParams.get("sort")
                     }
                 ), request, env);
             }

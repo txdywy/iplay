@@ -86,3 +86,32 @@ test('Quark cards keep the share address case and drop duplicate sources', async
     assert.match(card, /item\.sourceTitle !== item\.title/);
     assert.match(main, /searchRetryEdits \? '修改关键词'/);
 });
+
+test('an actor\'s works can be ordered by rating, with thinly rated works last', async t => {
+    const cast = [
+        { id: 1, media_type: 'movie', title: 'New Few Votes', release_date: '2025-01-01', vote_average: 10, vote_count: 2 },
+        { id: 2, media_type: 'movie', title: 'Old Classic', release_date: '2005-01-01', vote_average: 8.9, vote_count: 900 },
+        { id: 3, media_type: 'tv', name: 'Mid Series', first_air_date: '2015-01-01', vote_average: 7.5, vote_count: 300 }
+    ];
+    mock(t, async () => Response.json({ id: 77, name: 'Sorted Actor', combined_credits: { cast } }));
+    const page = async query => {
+        const response = await worker.fetch(new Request(`https://worker.test/api/tmdb/person?id=77${query}`, {
+            headers: { 'cf-connecting-ip': `sort${query}` }
+        }), { TMDB_API_KEY: 'test' }, { waitUntil() {} });
+        return { status: response.status, body: await response.json() };
+    };
+    assert.deepEqual((await page('')).body.credits.map(credit => credit.id), [1, 3, 2], 'newest first by default');
+    assert.deepEqual((await page('&sort=rating')).body.credits.map(credit => credit.id), [2, 3, 1]);
+    assert.deepEqual((await page('&sort=rating&mediaType=movie')).body.credits.map(credit => credit.id), [2, 1]);
+    assert.equal((await page('&sort=bogus')).status, 400);
+});
+
+test('the detail page offers favorites, one synopsis and a way back to search', async () => {
+    const [html, main] = await Promise.all([readFile('index.html', 'utf8'), readFile('js/main.js', 'utf8')]);
+    for (const id of ['favoriteToggle', 'favoriteList', 'backToTop', 'actorSortToggle', 'tmdbOverviewPanel']) {
+        assert.match(html, new RegExp(`id="${id}"`));
+    }
+    assert.match(html, /<details id="tmdbOverviewPanel"/);
+    assert.match(main, /RESOURCE_AUTO_START_MS = 1500/);
+    assert.doesNotMatch(main, /createInfoCard\('(?:Runtime|Cast|Director|Genres)'/);
+});

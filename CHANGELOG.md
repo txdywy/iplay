@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.41] - 2026-11-12
+
+### Added
+
+- Favorites: **☆ 收藏** on a title saves it in this browser (up to 30) and lists it under the search box.
+- Quark links opened in this browser are marked 已打开过.
+- **按评分排序** on an actor's works (`sort=rating` on `/api/tmdb/person`); works with fewer than 20 votes stay after the rated ones.
+- A **↑ 再搜一部** button on long pages that returns to the search box.
+
+### Changed
+
+- Start the resource scan 1.5 seconds after the details are confirmed, without waiting for the lists to scroll into view.
+- Show one synopsis: the TMDB overview is folded under 查看 TMDB 概述 when Chinese Wikipedia provides the synopsis, and hidden when it is the synopsis.
+- On phones, shrink the masthead after a search and the poster on the detail page so the title and score start on the first screen.
+- Use Chinese labels for the detail facts, the subtitle (`2023 · 剧集 · TMDB 106841`) and section headings.
+
 ## [1.0.40] - 2026-11-11
 
 ### Added

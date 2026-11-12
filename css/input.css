@@ -169,3 +169,11 @@ body { background-color: #0a0a0c; color: #e0e0e0; overflow-x: hidden; }
   .cursor-blink { animation: none !important; }
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* After a search, phones shrink the masthead so results start on the first screen. */
+@media (max-width: 767px) {
+  body.has-content > header { padding-top: 1.5rem; padding-bottom: 1.25rem; }
+  body.has-content > header h1 { font-size: 2.25rem; margin-bottom: 0.75rem; }
+  body.has-content > header h1 + p { display: none; }
+  body.has-content .search-input { padding-top: 0.875rem; padding-bottom: 0.875rem; font-size: 1.125rem; }
+}
