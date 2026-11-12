@@ -168,6 +168,7 @@ GET /api/tmdb/person?q={actorName}
 | `offset` | number | 否 | 从第几条作品开始，默认 `0` |
 | `limit` | number | 否 | 本次返回数量，默认 `36`，最大 `60` |
 | `mediaType` | `movie` / `tv` | 否 | 只返回电影或电视剧；不传则返回两类作品 |
+| `sort` | `year` \| `rating` | 否 | 默认按年份从新到旧；`rating` 按 TMDB 评分从高到低，评分人数不足 20 的作品排在其后 |
 
 **Example Response：**
 

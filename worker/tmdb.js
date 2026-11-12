@@ -941,6 +941,17 @@ function normalizeTmdbPersonCredits(data) {
     ));
 }
 
+// A handful of votes says little: rank rated works with enough votes first,
+// by rating, and keep the newest-first order among the rest.
+const PERSON_RATING_MIN_VOTES = 20;
+
+function sortCreditsByRating(credits) {
+    const rated = credit => (credit.tmdbVotes >= PERSON_RATING_MIN_VOTES && credit.tmdbRating > 0 ? credit.tmdbRating : -1);
+    return credits.map((credit, index) => ({ credit, index }))
+        .sort((left, right) => rated(right.credit) - rated(left.credit) || left.index - right.index)
+        .map(entry => entry.credit);
+}
+
 function parsePersonPagination(value, label, defaultValue, maxValue) {
     const text = value === null || value === undefined || value === ""
         ? String(defaultValue)
@@ -1002,6 +1013,9 @@ export async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
     if (offsetCheck.error) return offsetCheck.error;
     const limitCheck = parsePersonPagination(options.limit, "limit", PERSON_DEFAULT_PAGE_SIZE, PERSON_MAX_PAGE_SIZE);
     if (limitCheck.error || limitCheck.value < 1) return limitCheck.error || jsonResponse({ error: "Invalid limit" }, 400);
+    if (options.sort !== null && options.sort !== undefined && options.sort !== "" && options.sort !== "year" && options.sort !== "rating") {
+        return jsonResponse({ error: "Invalid sort" }, 400);
+    }
     const mediaTypeCheck = validatePersonMediaType(options.mediaType);
     if (mediaTypeCheck.error) return mediaTypeCheck.error;
 
@@ -1010,7 +1024,8 @@ export async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
             personId: personId ? personId.value : null,
             offset: offsetCheck.value,
             limit: limitCheck.value,
-            requestedMediaType: mediaTypeCheck.value
+            requestedMediaType: mediaTypeCheck.value,
+            sort: options.sort === "rating" ? "rating" : "year"
         });
         return jsonResponse(body, 200, cacheable ? TMDB_BROWSER_CACHE_HEADERS : {});
     } catch (error) {
@@ -1021,7 +1036,7 @@ export async function handleTmdbPersonSearch(query, env, ctx, options = {}) {
 
 // Takes validated inputs. `cacheable` is false when a skipped or failed lookup
 // may have hidden a better person, so browsers must ask again.
-async function buildTmdbPersonPayload(query, env, ctx, { personId, offset, limit, requestedMediaType }) {
+async function buildTmdbPersonPayload(query, env, ctx, { personId, offset, limit, requestedMediaType, sort = "year" }) {
     const deadline = createDeadline(FALLBACK_TOTAL_TIMEOUT_MS);
     let best;
     let attempts = 0;
@@ -1130,9 +1145,10 @@ async function buildTmdbPersonPayload(query, env, ctx, { personId, offset, limit
     }, env, ctx, { deadline });
     const person = normalizeTmdbPerson(personData, query, personId ? null : best);
     const allCredits = normalizeTmdbPersonCredits(personData);
-    const filteredCredits = requestedMediaType
+    const typedCredits = requestedMediaType
         ? allCredits.filter(credit => credit.mediaType === requestedMediaType)
         : allCredits;
+    const filteredCredits = sort === "rating" ? sortCreditsByRating(typedCredits) : typedCredits;
     const credits = filteredCredits.slice(offset, offset + limit);
     const counts = {
         tv: allCredits.filter(credit => credit.mediaType === "tv").length,

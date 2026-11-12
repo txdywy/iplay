@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.40';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.41';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.40';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.40';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.40';
-import { RELEASE_VERSION } from './release.js?v=1.0.40';
+} from './scorer.js?v=1.0.41';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.41';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.41';
+import { RELEASE_VERSION } from './release.js?v=1.0.41';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.40';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.40';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.40';
+} from './match.js?v=1.0.41';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.41';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.41';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -98,6 +98,10 @@ const els = {
     preferenceFields: document.getElementById('preferenceFields'),
     preferenceReset: document.getElementById('preferenceReset'),
     quickSearches: document.getElementById('quickSearches'),
+    favoriteList: document.getElementById('favoriteList'),
+    favoriteToggle: document.getElementById('favoriteToggle'),
+    backToTop: document.getElementById('backToTop'),
+    actorSortToggle: document.getElementById('actorSortToggle'),
     jumpToResources: document.getElementById('jumpToResources'),
     resourcesSection: document.getElementById('resourcesSection'),
     toast: document.getElementById('toast')
@@ -291,6 +295,13 @@ function createActorCreditCard(credit, query, searchId, searchOptions) {
 function updateActorFilterControls() {
     const state = actorResultState;
     if (!state) return;
+    if (els.actorSortToggle) {
+        const byRating = state.sort === 'rating';
+        els.actorSortToggle.textContent = byRating ? '按评分排序 ✓' : '按评分排序';
+        els.actorSortToggle.setAttribute('aria-pressed', String(byRating));
+        els.actorSortToggle.classList.toggle('border-accent-red/60', byRating);
+        els.actorSortToggle.classList.toggle('text-cinema-100', byRating);
+    }
     const counts = state.counts || {};
     const filters = [
         [els.actorFilterAll, '', '全部', Number(counts.tv || 0) + Number(counts.movie || 0)],
@@ -409,7 +420,8 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
             personId: state.person.id,
             offset,
             limit: state.pageSize,
-            mediaType: mediaType || undefined
+            mediaType: mediaType || undefined,
+            sort: state.sort === 'rating' ? 'rating' : undefined
         });
         if (!isCurrentPage()) return;
 
@@ -714,6 +726,9 @@ const ICON_PATHS = Object.freeze({
 const RESOURCE_OBSERVER_ROOT_MARGIN = '320px 0px';
 const RESOURCE_IDLE_TIMEOUT_MS = 1400;
 const RESOURCE_TIMER_FALLBACK_MS = 1200;
+// Most visitors come for the links: scan soon after the details are on screen
+// even if the lists have not been scrolled into view.
+const RESOURCE_AUTO_START_MS = 1500;
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
 // Match Tailwind's rem breakpoints, padding and gaps, including browser font
 // preferences; only the section/card borders stay in fixed pixels.
@@ -974,7 +989,7 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
         detail,
         candidate: candidate || {},
         title: source.title || candidate?.title || '—',
-        subtitle: `${source.year || candidate?.year || '????'} // ${(source.mediaType || source.type) === 'movie' ? 'FILM' : (source.mediaType || source.type) === 'tv' ? 'SERIES' : 'TMDB'} // TMDB:${source.id || candidate?.id || '—'}`,
+        subtitle: `${source.year || candidate?.year || '????'} · ${(source.mediaType || source.type) === 'movie' ? '电影' : (source.mediaType || source.type) === 'tv' ? '剧集' : 'TMDB'} · TMDB ${source.id || candidate?.id || '—'}`,
         summary: source.summary || (wikiResult && wikiResult.extract) || candidate?.summary || '',
         genres: normalizeGenres(source.genres),
         rating: source.tmdbRating ?? candidate?.tmdbRating ?? 0,
@@ -1048,19 +1063,19 @@ function renderTmdbFacts(viewModel) {
     const seasonTotals = mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
     const seasonEpisodes = mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
-    setText(els.tmdbProfileLabel, mediaType === 'movie' ? 'Movie profile' : mediaType === 'tv' ? 'Series profile' : 'Media profile');
+    setText(els.tmdbProfileLabel, mediaType === 'movie' ? '电影档案' : mediaType === 'tv' ? '剧集档案' : '影视档案');
 
     appendInfoCards(els.tmdbFacts, [
-        createInfoCard('Title', viewModel?.title || candidate.title),
-        createInfoCard('Original', detail.originalTitle || candidate.originalTitle),
-        createInfoCard('Type', mediaType === 'movie' ? 'FILM' : mediaType === 'tv' ? 'SERIES' : mediaType),
-        createInfoCard('Year', detail.year || candidate.year),
+        createInfoCard('片名', viewModel?.title || candidate.title),
+        createInfoCard('原名', detail.originalTitle || candidate.originalTitle),
+        createInfoCard('类型', mediaType === 'movie' ? '电影' : mediaType === 'tv' ? '剧集' : mediaType),
+        createInfoCard('年份', detail.year || candidate.year),
         createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
         createInfoCard('IMDb ID', detail.imdbId || candidate.imdbId || '—'),
-        createInfoCard('Votes', formatCount(detail.tmdbVotes || candidate.tmdbVotes || candidate.votes || 0)),
-        createInfoCard('Popularity', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—'),
-        seasonTotals ? createInfoCard('Seasons / Episodes', seasonTotals) : null,
-        seasonEpisodes ? createInfoCard('Episodes / Season', seasonEpisodes, { wide: true }) : null
+        createInfoCard('评分人数', formatCount(detail.tmdbVotes || candidate.tmdbVotes || candidate.votes || 0)),
+        createInfoCard('热度', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—'),
+        seasonTotals ? createInfoCard('季 / 集', seasonTotals) : null,
+        seasonEpisodes ? createInfoCard('各季集数', seasonEpisodes, { wide: true }) : null
     ].filter(Boolean));
 
     if (els.tmdbOverview) {
@@ -1099,22 +1114,22 @@ function renderTmdbProfile(viewModel) {
     const seasonEpisodes = detail.mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
     appendInfoCards(els.profileFields, [
-        createInfoCard('Runtime', detail.runtime ? `${detail.runtime} min` : '—'),
-        seasonTotals ? sidebarDuplicate(createInfoCard('Seasons / Episodes', seasonTotals)) : null,
-        createInfoCard('Status', detail.status || '—'),
-        createInfoCard('Language', detail.originalLanguage || '—'),
+        createInfoCard('片长', detail.runtime ? `${detail.runtime} 分钟` : '—'),
+        seasonTotals ? sidebarDuplicate(createInfoCard('季 / 集', seasonTotals)) : null,
+        createInfoCard('状态', detail.status || '—'),
+        createInfoCard('语言', detail.originalLanguage || '—'),
         detail.imdbId ? sidebarDuplicate(createInfoCard('IMDb ID', detail.imdbId)) : null,
-        tmdbRating !== null && tmdbRating > 0 ? sidebarDuplicate(createInfoCard('TMDB Score', `${formatRating(tmdbRating)}/10`)) : null
+        tmdbRating !== null && tmdbRating > 0 ? sidebarDuplicate(createInfoCard('TMDB 评分', `${formatRating(tmdbRating)}/10`)) : null
     ].filter(Boolean));
 
     appendInfoCards(els.profileFields, [
-        genres.length > 0 ? createInfoCard('Genres', genres, { wide: true }) : null,
-        detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('Production Companies', detail.productionCompanies, { wide: true }) : null,
-        detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('Production Countries', detail.productionCountries, { wide: true }) : null,
-        cast.length > 0 ? createInfoCard('Cast', cast, { wide: true, interactiveValues: castDetails }) : null,
-        directors.length > 0 ? createInfoCard('Director', directors, { wide: true }) : null,
-        writers.length > 0 ? createInfoCard('Writer', writers, { wide: true }) : null,
-        seasonEpisodes ? sidebarDuplicate(createInfoCard('Episodes / Season', seasonEpisodes, { wide: true })) : null,
+        genres.length > 0 ? createInfoCard('题材', genres, { wide: true }) : null,
+        detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('制作公司', detail.productionCompanies, { wide: true }) : null,
+        detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('制作地区', detail.productionCountries, { wide: true }) : null,
+        cast.length > 0 ? createInfoCard('主演', cast, { wide: true, interactiveValues: castDetails }) : null,
+        directors.length > 0 ? createInfoCard('导演', directors, { wide: true }) : null,
+        writers.length > 0 ? createInfoCard('编剧', writers, { wide: true }) : null,
+        seasonEpisodes ? sidebarDuplicate(createInfoCard('各季集数', seasonEpisodes, { wide: true })) : null,
     ].filter(Boolean));
 
     els.profilePanel.classList.remove('hidden');
@@ -1123,12 +1138,14 @@ function renderTmdbProfile(viewModel) {
 
 function renderSynopsis(sourceLabel, text) {
     if (!els.wikiSummary) return;
+    // The TMDB overview is a second text only when the synopsis comes from elsewhere.
+    document.getElementById('tmdbOverviewPanel')?.classList.toggle('hidden', sourceLabel !== 'ZH.WIKIPEDIA');
     els.wikiSummary.setAttribute('aria-busy', 'false');
     els.wikiSummary.textContent = '';
 
     const source = document.createElement('span');
     source.className = 'text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block';
-    source.textContent = sourceLabel;
+    source.textContent = sourceLabel === 'ZH.WIKIPEDIA' ? '中文维基百科' : sourceLabel === 'NO DATA' ? '暂无数据' : sourceLabel;
     els.wikiSummary.appendChild(source);
     els.wikiSummary.appendChild(document.createElement('br'));
 
@@ -1274,9 +1291,31 @@ function pickSafeImageUrl(...values) {
     return null;
 }
 
+// Share links already opened in this browser, so a returning visitor can tell
+// which ones were tried.
+const OPENED_LINKS_KEY = 'iplay_opened_links';
+const OPENED_LINKS_LIMIT = 300;
+const openedLinks = new Set();
+try {
+    const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
+    if (Array.isArray(stored)) stored.filter(value => typeof value === 'string').slice(-OPENED_LINKS_LIMIT).forEach(value => openedLinks.add(value));
+} catch {
+    // The marks are optional.
+}
+
+function rememberOpenedLink(url) {
+    openedLinks.delete(url);
+    openedLinks.add(url);
+    try {
+        window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks].slice(-OPENED_LINKS_LIMIT)));
+    } catch {
+        // Keep the mark for this page view only.
+    }
+}
+
 function renderLinkCards(container, items, {
     emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
-    detailText, sourceText, actionLabel, onAction, initialLimit = 6
+    detailText, sourceText, actionLabel, onAction, trackOpened = false, initialLimit = 6
 }) {
     if (!container) return;
     const wasExpanded = container.dataset.expanded === 'true';
@@ -1360,6 +1399,18 @@ function renderLinkCards(container, items, {
                 source.className = 'mt-2 text-xs text-accent-gold/80';
                 source.textContent = sourceLabel;
                 content.appendChild(source);
+            }
+
+            if (trackOpened) {
+                const opened = document.createElement('div');
+                opened.className = 'mt-2 text-xs text-cinema-400';
+                opened.textContent = '已打开过';
+                opened.hidden = !openedLinks.has(item.url);
+                content.appendChild(opened);
+                link.addEventListener('click', () => {
+                    rememberOpenedLink(item.url);
+                    opened.hidden = false;
+                });
             }
 
             const icon = createIcon(iconName, iconClass);
@@ -1661,6 +1712,7 @@ function renderQuarkUrls(quarkUrls) {
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
         // The source post usually has the same title as the card; repeat it only when it differs.
         sourceText: item => (item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : ''),
+        trackOpened: true,
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         initialLimit: 6
@@ -2180,6 +2232,7 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
             if (entries.some(entry => entry.isIntersecting)) start();
         }, { rootMargin: RESOURCE_OBSERVER_ROOT_MARGIN });
         observer.observe(els.resourceSection);
+        timeoutId = setTimeout(idleStart, RESOURCE_AUTO_START_MS);
     } else {
         if (typeof globalThis.requestIdleCallback === 'function') {
             idleId = globalThis.requestIdleCallback(idleStart, { timeout: RESOURCE_IDLE_TIMEOUT_MS });
@@ -2379,6 +2432,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         if (viewModel.failedPosterUrls.has(viewModel.posterUrl)) viewModel.posterUrl = null;
     }
     activeDetailState = { searchId, candidate: selectedCandidate, viewModel };
+    renderFavoriteToggle();
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
     renderViewModel(viewModel, posterContext);
@@ -2493,6 +2547,92 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     await detailPromise;
 }
 
+const FAVORITES_KEY = 'iplay_favorites';
+const FAVORITES_LIMIT = 30;
+
+function readFavorites() {
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(FAVORITES_KEY) || '[]');
+        return Array.isArray(stored)
+            ? stored.filter(item => item && Number.isSafeInteger(item.id) && item.id > 0
+                && (item.mediaType === 'movie' || item.mediaType === 'tv') && typeof item.title === 'string' && item.title)
+                .slice(0, FAVORITES_LIMIT)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function isFavorite(candidate) {
+    return readFavorites().some(item => item.id === Number(candidate?.id) && item.mediaType === candidate?.mediaType);
+}
+
+function renderFavoriteToggle() {
+    if (!els.favoriteToggle) return;
+    const saved = Boolean(activeDetailState && isFavorite(activeDetailState.candidate));
+    els.favoriteToggle.textContent = saved ? '★ 已收藏' : '☆ 收藏';
+    els.favoriteToggle.setAttribute('aria-pressed', String(saved));
+    els.favoriteToggle.classList.toggle('border-accent-gold', saved);
+    els.favoriteToggle.classList.toggle('text-accent-gold', saved);
+}
+
+function renderFavorites() {
+    renderFavoriteToggle();
+    if (!els.favoriteList) return;
+    clearNode(els.favoriteList);
+    const favorites = readFavorites();
+    els.favoriteList.classList.toggle('hidden', favorites.length === 0);
+    els.favoriteList.classList.toggle('flex', favorites.length > 0);
+    if (favorites.length === 0) return;
+    const label = document.createElement('span');
+    label.className = 'font-mono text-xs text-cinema-400';
+    label.textContent = '我的收藏';
+    els.favoriteList.appendChild(label);
+    favorites.forEach(item => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'min-h-11 max-w-[14rem] truncate rounded-full border border-accent-gold/40 px-4 text-sm text-cinema-100 transition-colors hover:border-accent-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        chip.textContent = `★ ${item.title}${item.year ? ` (${item.year})` : ''}`;
+        chip.addEventListener('click', () => {
+            // Open through the same validated path as a shared link.
+            const url = new URL(window.location.href);
+            url.search = '';
+            url.hash = '';
+            url.searchParams.set('id', String(item.id));
+            url.searchParams.set('type', item.mediaType);
+            url.searchParams.set('title', item.title);
+            window.history.pushState(null, '', url);
+            void restoreUrlState();
+        });
+        els.favoriteList.appendChild(chip);
+    });
+}
+
+function toggleFavorite() {
+    const candidate = activeDetailState?.candidate;
+    if (!candidate?.id || (candidate.mediaType !== 'movie' && candidate.mediaType !== 'tv')) return;
+    const id = Number(candidate.id);
+    const existing = readFavorites();
+    const saved = existing.some(item => item.id === id && item.mediaType === candidate.mediaType);
+    const next = saved
+        ? existing.filter(item => !(item.id === id && item.mediaType === candidate.mediaType))
+        : [{
+            id,
+            mediaType: candidate.mediaType,
+            title: String(candidate.title || candidate.originalTitle || '未命名').slice(0, 120),
+            year: candidate.year ? String(candidate.year).slice(0, 4) : ''
+        }, ...existing].slice(0, FAVORITES_LIMIT);
+    try {
+        if (next.length) window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+        else window.localStorage.removeItem(FAVORITES_KEY);
+    } catch {
+        showToast('无法保存收藏：浏览器禁止本地存储');
+        return;
+    }
+    renderFavorites();
+    showToast(saved ? '已取消收藏' : '已收藏，可在搜索框下方找到');
+}
+
 const RECENT_SEARCH_KEY = 'iplay_recent_searches';
 const RECENT_SEARCH_LIMIT = 6;
 const EXAMPLE_SEARCHES = ['繁花', '流浪地球2', '胡歌'];
@@ -2556,6 +2696,8 @@ function renderQuickSearches() {
 }
 
 function beginSearchSession(query) {
+    // Once there is content, phones give the screen to it rather than the logo.
+    document.body.classList.add('has-content');
     activeDetailState = null;
     lastSearchQuery = query;
     searchRetryAction = null;
@@ -2762,6 +2904,7 @@ if (els.actorLoadMore) {
 }
 
 function resetInitialView() {
+    document.body.classList.remove('has-content');
     activeDetailState = null;
     currentSearchId += 1;
     currentAbortController?.abort();
@@ -2877,7 +3020,32 @@ els.jumpToResources?.addEventListener('click', () => {
         .find(button => button.textContent === '开始扫描资源')?.click();
 });
 
+els.favoriteToggle?.addEventListener('click', toggleFavorite);
+
+if (els.backToTop) {
+    let backToTopFrame = 0;
+    const updateBackToTop = () => {
+        backToTopFrame = 0;
+        els.backToTop.classList.toggle('hidden', window.scrollY < window.innerHeight * 1.2);
+    };
+    window.addEventListener('scroll', () => {
+        if (!backToTopFrame) backToTopFrame = requestAnimationFrame(updateBackToTop);
+    }, { passive: true });
+    els.backToTop.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: matchesMedia('(prefers-reduced-motion: reduce)') ? 'auto' : 'smooth' });
+        els.input?.focus({ preventScroll: true });
+        els.input?.select();
+    });
+}
+
+els.actorSortToggle?.addEventListener('click', () => {
+    if (!actorResultState || actorResultState.loading) return;
+    actorResultState.sort = actorResultState.sort === 'rating' ? 'year' : 'rating';
+    void loadActorPage({ reset: true });
+});
+
 renderQuickSearches();
+renderFavorites();
 void restoreUrlState();
 // On a desktop home page the visitor's next action is typing a title.
 if (!window.location.search && matchesMedia('(hover: hover) and (pointer: fine)')) els.input?.focus({ preventScroll: true });

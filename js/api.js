@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.40';
+import { RELEASE_VERSION } from './release.js?v=1.0.41';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -25,12 +25,13 @@ function tmdbDetailUrl(id, type, season) {
     return `${url}&${RELEASE_PARAM}`;
 }
 
-function tmdbPersonUrl(query, { personId, offset, limit, mediaType } = {}) {
+function tmdbPersonUrl(query, { personId, offset, limit, mediaType, sort } = {}) {
     const params = [`q=${encodeURIComponent(query)}`];
     if (personId !== undefined && personId !== null) params.push(`id=${encodeURIComponent(personId)}`);
     if (offset !== undefined && offset !== null) params.push(`offset=${encodeURIComponent(offset)}`);
     if (limit !== undefined && limit !== null) params.push(`limit=${encodeURIComponent(limit)}`);
     if (mediaType) params.push(`mediaType=${encodeURIComponent(mediaType)}`);
+    if (sort === 'rating') params.push('sort=rating');
     params.push(RELEASE_PARAM);
     return `${API_BASE}/api/tmdb/person?${params.join('&')}`;
 }
@@ -169,9 +170,10 @@ export const TmdbAPI = {
             offset,
             limit,
             mediaType,
+            sort,
             ...requestOptions
         } = options;
-        const url = tmdbPersonUrl(query, { personId, offset, limit, mediaType });
+        const url = tmdbPersonUrl(query, { personId, offset, limit, mediaType, sort });
         return readPrefetched(url, requestOptions) || fetchWithTimeout(url, requestOptions);
     },
     async getDetail(id, type, options = {}) {
