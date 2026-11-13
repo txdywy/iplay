@@ -6,13 +6,6 @@ const [html, main, css] = await Promise.all([
     readFile('index.html', 'utf8'), readFile('js/main.js', 'utf8'), readFile('css/input.css', 'utf8')
 ]);
 
-test('the detail hero is lit by the work\'s still through CSS variables, not inline HTML styles', () => {
-    assert.match(html, /<div id="heroBackdrop" class="hero-backdrop" aria-hidden="true"><\/div>/);
-    assert.match(main, /heroBackdrop\.style\.setProperty\('--hero-image', `url\("\$\{image\}"\)`\)/);
-    assert.match(main, /const still = toSafeHttpUrl\(viewModel\?\.detail\?\.backdrop\)/, 'only http(s) URLs reach the stylesheet');
-    assert.doesNotMatch(html, /\sstyle="/, 'the CSP forbids inline style attributes');
-});
-
 test('the score ring keeps the existing score elements and adds a tier', () => {
     assert.match(html, /id="scoreRing" class="score-ring">\s*<span id="recScore"/);
     assert.match(html, /id="recBar"/);

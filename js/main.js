@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.50';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.51';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.50';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.50';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.50';
-import { RELEASE_VERSION } from './release.js?v=1.0.50';
+} from './scorer.js?v=1.0.51';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.51';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.51';
+import { RELEASE_VERSION } from './release.js?v=1.0.51';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.50';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.50';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.50';
+} from './match.js?v=1.0.51';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.51';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.51';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -25,6 +25,7 @@ document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 for (const link of document.querySelectorAll('link[data-deferred-style]')) link.media = 'all';
 
 const els = {
+    header: document.querySelector('.site-header'),
     input: document.getElementById('searchInput'),
     searchForm: document.getElementById('searchForm'),
     searchButton: document.getElementById('searchButton'),
@@ -98,6 +99,8 @@ const els = {
     quickSearches: document.getElementById('quickSearches'),
     favoriteList: document.getElementById('favoriteList'),
     favoritesPanel: document.getElementById('favoritesPanel'),
+    favoritesTrigger: document.getElementById('favoritesTrigger'),
+    favoritesClose: document.getElementById('favoritesClose'),
     favoritesEmpty: document.getElementById('favoritesEmpty'),
     favoriteCount: document.getElementById('favoriteCount'),
     favoriteToggle: document.getElementById('favoriteToggle'),
@@ -684,11 +687,23 @@ function matchesMedia(query) {
     return typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
 }
 
+const stickyHeaderMedia = window.matchMedia('(min-width: 64rem)');
+
+function updateHeaderHeight() {
+    document.documentElement.style.setProperty('--header-height', `${els.header.offsetHeight}px`);
+}
+
+new window.ResizeObserver(updateHeaderHeight).observe(els.header);
+
 function scrollToVisible(element) {
-    if (!element || !matchesMedia('(max-width: 767px)')) return;
+    if (!element) return;
     requestAnimationFrame(() => {
-        const rect = element.getBoundingClientRect();
-        if (rect.top < 0 || rect.top > window.innerHeight * 0.85) {
+        if (!element.getClientRects().length) return;
+        const sticky = stickyHeaderMedia.matches && document.body.classList.contains('has-content');
+        const inset = sticky ? els.header.getBoundingClientRect().bottom : 0;
+        const { top } = element.getBoundingClientRect();
+        if (top < inset || top > window.innerHeight * 0.85) {
+            if (sticky) updateHeaderHeight();
             element.scrollIntoView({
                 behavior: matchesMedia('(prefers-reduced-motion: reduce)') ? 'auto' : 'smooth',
                 block: 'start'
@@ -788,6 +803,7 @@ function handlePosterLoadError() {
     if (!context || context.token !== token || context.source !== failedSource) return;
     // A repaint can cause browsers to emit another error for the same broken
     // primary image while its replacement request is still in flight.
+    syncHeroArtwork(false);
     if (context.viewModel?.posterFallbackPending) return;
     context.viewModel?.failedPosterUrls.add(failedSource);
 
@@ -842,7 +858,10 @@ function handlePosterLoadError() {
 
 if (els.cover) {
     els.cover.addEventListener('error', handlePosterLoadError);
-    els.cover.addEventListener('load', () => els.cover.setAttribute('aria-busy', 'false'));
+    els.cover.addEventListener('load', () => {
+        els.cover.setAttribute('aria-busy', 'false');
+        syncHeroArtwork(true);
+    });
 }
 
 function loadPoster(posterUrl, title = '', context = {}) {
@@ -873,15 +892,17 @@ function loadPoster(posterUrl, title = '', context = {}) {
     els.cover.dataset.posterToken = String(token);
     els.cover.alt = title ? `${title} 海报` : '影视海报';
     const sourceSet = getTmdbPosterSourceSet(safePosterUrl);
-    const sizes = safePosterUrl ? '(min-width: 64rem) 15rem, (min-width: 40rem) 12rem, clamp(6.5rem, 30vw, 8rem)' : '';
+    const sizes = safePosterUrl ? '(min-width: 64rem) 15rem, (min-width: 40rem) 12rem, (max-width: 30rem) min(24vw, 6rem), clamp(6.5rem, 30vw, 8rem)' : '';
     if (els.cover.getAttribute('srcset') !== sourceSet) els.cover.setAttribute('srcset', sourceSet);
     if (els.cover.getAttribute('sizes') !== sizes) els.cover.setAttribute('sizes', sizes);
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
     if (els.cover.getAttribute('src') === nextSource) {
         if (els.cover.complete) els.cover.setAttribute('aria-busy', 'false');
+        syncHeroArtwork(els.cover.complete);
         return;
     }
     els.cover.setAttribute('src', nextSource);
+    syncHeroArtwork(false);
 }
 
 function setText(el, value) {
@@ -1796,22 +1817,50 @@ function createPosterContext(candidate, enrichmentQuery, viewModel, searchId, se
     };
 }
 
-// The detail hero is lit by the work's own still: TMDB's backdrop, or the
-// poster when there is none. Phones load the smaller rendition.
-function renderHeroBackdrop(viewModel) {
-    if (!els.heroBackdrop) return;
-    const still = toSafeHttpUrl(viewModel?.detail?.backdrop) || toSafeHttpUrl(viewModel?.candidate?.backdrop);
-    const image = still || toSafeHttpUrl(viewModel?.posterUrl);
-    if (!image) {
-        els.heroBackdrop.style.removeProperty('--hero-image');
-        els.heroBackdrop.style.removeProperty('--hero-image-lg');
-        els.heroBackdrop.dataset.source = 'none';
-        return;
+let heroStill = null;
+
+function syncHeroArtwork(posterSettled) {
+    const context = activePosterContext;
+    if (!context || !isActiveSearch(context.searchId, context.loadId)) return;
+
+    const { viewModel, loadKey } = context;
+    const still = viewModel?.detail && (toSafeHttpUrl(viewModel.detail.backdrop) || toSafeHttpUrl(viewModel.candidate?.backdrop));
+    const url = still && stickyHeaderMedia.matches ? still.replace('/t/p/w780/', '/t/p/w1280/') : still;
+    if (heroStill && (heroStill.loadKey !== loadKey || heroStill.url !== url)) {
+        heroStill.image.remove();
+        heroStill = null;
     }
-    els.heroBackdrop.style.setProperty('--hero-image', `url("${image}")`);
-    els.heroBackdrop.style.setProperty('--hero-image-lg', `url("${still ? image.replace('/t/p/w780/', '/t/p/w1280/') : image}")`);
-    els.heroBackdrop.dataset.source = still ? 'backdrop' : 'poster';
+
+    // Let the foreground image finish before requesting decorative artwork.
+    if (posterSettled && url && !heroStill) {
+        const image = document.createElement('img');
+        const request = { url, loadKey, image, ready: false };
+        heroStill = request;
+        image.className = 'hero-still';
+        image.alt = '';
+        image.decoding = 'async';
+        image.fetchPriority = 'low';
+        image.addEventListener('load', () => {
+            if (heroStill !== request || !isActiveSearch(context.searchId, context.loadId)) return;
+            request.ready = true;
+            els.heroBackdrop.appendChild(image);
+            syncHeroArtwork(els.cover.complete);
+        }, { once: true });
+        image.src = url;
+    }
+
+    const poster = posterSettled && context.posterUrl && els.cover.naturalWidth
+        ? toSafeImageUrl(els.cover.currentSrc)
+        : null;
+    if (poster && !heroStill?.ready) {
+        els.heroBackdrop.style.setProperty('--hero-image', `url(${JSON.stringify(poster)})`);
+    } else {
+        els.heroBackdrop.style.removeProperty('--hero-image');
+    }
+    els.heroBackdrop.dataset.source = heroStill?.ready ? 'backdrop' : poster ? 'poster' : 'none';
 }
+
+stickyHeaderMedia.addEventListener('change', () => syncHeroArtwork(els.cover.complete));
 
 function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
     if (!isUpdate && els.profilePanel) els.profilePanel.open = false;
@@ -1820,7 +1869,6 @@ function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
     renderGenres(viewModel.genres);
     renderSynopsis(viewModel.overviewSource, viewModel.summary);
     loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
-    renderHeroBackdrop(viewModel);
     renderTmdbProfile(viewModel);
     renderScore({
         rating: viewModel.rating,
@@ -2026,6 +2074,7 @@ function showSearchError(error, query, searchId, onRetry = null) {
     hideCandidatePicker();
     hideActorCandidatePicker();
     hideActorResults();
+    scrollToVisible(els.error);
     setSearchStatus(`搜索失败：${message}`);
     setSearching(false);
     lastSearchQuery = query;
@@ -2504,6 +2553,50 @@ function renderFavoriteToggle() {
     els.favoriteToggle.disabled = !activeDetailState?.detailConfirmed;
 }
 
+const nativeFavoritesPopover = typeof els.favoritesPanel.hidePopover === 'function';
+
+function closeFavorites({ restoreFocus = false } = {}) {
+    if (nativeFavoritesPopover) {
+        els.favoritesPanel.hidePopover();
+        return;
+    }
+    els.favoritesPanel.classList.remove('is-open');
+    els.favoritesTrigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) els.favoritesTrigger.focus({ preventScroll: true });
+}
+
+function favoritesAreOpen() {
+    return nativeFavoritesPopover
+        ? els.favoritesPanel.matches(':popover-open')
+        : els.favoritesPanel.classList.contains('is-open');
+}
+
+if (!nativeFavoritesPopover) {
+    els.favoritesPanel.removeAttribute('popover');
+    els.favoritesPanel.classList.add('favorites-fallback');
+    els.favoritesTrigger.setAttribute('aria-expanded', 'false');
+    els.favoritesTrigger.addEventListener('click', () => {
+        if (favoritesAreOpen()) {
+            closeFavorites();
+            return;
+        }
+        els.favoritesPanel.classList.add('is-open');
+        els.favoritesTrigger.setAttribute('aria-expanded', 'true');
+        els.favoritesClose.focus({ preventScroll: true });
+    });
+    els.favoritesClose.addEventListener('click', () => closeFavorites({ restoreFocus: true }));
+    document.addEventListener('click', event => {
+        if (favoritesAreOpen() && !els.favoritesPanel.contains(event.target) && !els.favoritesTrigger.contains(event.target)) {
+            closeFavorites();
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape' || !favoritesAreOpen()) return;
+        event.preventDefault();
+        closeFavorites({ restoreFocus: true });
+    });
+}
+
 function renderFavorites() {
     renderFavoriteToggle();
     if (!els.favoriteList) return;
@@ -2525,7 +2618,7 @@ function renderFavorites() {
         meta.textContent = [item.mediaType === 'movie' ? '电影' : '剧集', item.year].filter(Boolean).join(' · ');
         chip.append(title, meta, createIcon('external', 'h-4 w-4 shrink-0 text-cinema-400'));
         chip.addEventListener('click', () => {
-            els.favoritesPanel.hidePopover();
+            closeFavorites({ restoreFocus: true });
             // Open through the same validated path as a shared link.
             const url = new URL(window.location.href);
             url.search = '';
@@ -2818,7 +2911,7 @@ document.addEventListener('keydown', event => {
     if (event.key !== '/' || event.defaultPrevented || event.repeat || event.isComposing
         || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.target.isContentEditable || event.target.closest('input, textarea, select, [role="textbox"]')
-        || els.favoritesPanel.matches(':popover-open')) return;
+        || favoritesAreOpen()) return;
     event.preventDefault();
     els.input.focus();
     els.input.select();

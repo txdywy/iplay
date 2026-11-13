@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.51] - 2026-11-13
+
+### Fixed
+
+- Bring newly opened titles into view below the desktop search bar and use the measured header height for scroll offsets.
+- Keep ratings and actions readable on narrow screens and provide a favorites panel for browsers without native Popover.
+- Reuse the displayed poster for the detail background. Load decorative stills after the poster and retain the poster background if the still fails.
+
 ## [1.0.50] - 2026-11-13
 
 ### Changed

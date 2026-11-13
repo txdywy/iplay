@@ -5,6 +5,10 @@ const browserWs = process.env.BROWSER_WS;
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173/';
 const canonicalPoster = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const fallbackPoster = 'data:image/gif;base64,R0lGODlhAQABAIAAAP8AAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const heroPoster = 'https://image.tmdb.org/t/p/w500/audit-actor-hero-poster.jpg';
+const brokenHeroStill = 'https://image.tmdb.org/t/p/w780/audit-actor-broken-still.jpg';
+const heroStill = 'https://image.tmdb.org/t/p/w780/audit-actor-hero-still.jpg';
+
 
 if (!browserWs) {
     throw new Error('BROWSER_WS is required; connect this script to an isolated Chrome page.');
@@ -98,6 +102,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
         const poster = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
         const canonicalPoster = ${JSON.stringify(canonicalPoster)};
         const fallbackPoster = ${JSON.stringify(fallbackPoster)};
+        const heroPoster = ${JSON.stringify(heroPoster)};
+        const brokenHeroStill = ${JSON.stringify(brokenHeroStill)};
+        const heroStill = ${JSON.stringify(heroStill)};
         const candidate = (title, id) => ({
             id,
             mediaType: 'movie',
@@ -425,10 +432,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     if (window.__smoke.detailAttempts[id] === 1) return json({ error: 'temporary detail outage' }, 503);
                 }
                 if (id === 108) await new Promise(resolve => setTimeout(resolve, 200));
+                const artwork = id === 100 && window.__smoke.heroArtwork;
                 const response = json({
                     ...candidate(title, id),
                     year: id === 111 || (id === 116 && window.__smoke.retentionRecovery === 'canonical') ? '2025' : '2024',
-                    poster: (id >= 117 && id <= 119) || (id === 116 && window.__smoke.retentionPosterMode) ? null : id === 113 ? 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg' : id === 112 ? canonicalPoster : poster,
+                    poster: (id >= 117 && id <= 119) || (id === 116 && window.__smoke.retentionPosterMode) ? null : id === 113 ? 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg' : id === 112 ? canonicalPoster : artwork ? heroPoster : poster,
+                    backdrop: artwork === 'broken' ? brokenHeroStill : artwork === 'still' ? heroStill : null,
                     genres: ['Drama'],
                     runtime: 120,
                     status: 'Released',
@@ -565,7 +574,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     : json({ tmdb: true, tmdbId: 116, mediaType: 'movie', poster: window.__smoke.retentionPosterMode ? fallbackPoster : poster });
                 if (url.searchParams.get('title') === 'Slow Broken Poster Movie') {
                     await new Promise(resolve => setTimeout(resolve, 650));
-                    return json({ tmdb: true, tmdbId: 113, mediaType: 'movie', poster: fallbackPoster });
+                    return json({ tmdb: true, tmdbId: 113, mediaType: 'movie', poster: window.__smoke.heroArtwork ? heroPoster : fallbackPoster });
                 }
                 if (url.searchParams.get('title') === 'Identity Movie') return json({
                     tmdb: true, tmdbId: new URL(location.href).searchParams.get('poster-mismatch') === 'imdb' ? 110 : 202,
@@ -596,7 +605,10 @@ async function assertSearchReady(title) {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
 }
 
-async function runSearchAndFavoritesControlsFlow() {
+async function runSearchAndFavoritesControlsFlow({ fallback = false } = {}) {
+    const setup = fallback ? await command('Page.addScriptToEvaluateOnNewDocument', {
+        source: 'delete HTMLElement.prototype.hidePopover'
+    }) : null;
     await command('Page.navigate', { url: baseUrl });
     await waitFor("history.state?.kind === 'home'");
     await evaluate("localStorage.removeItem('iplay_favorites')");
@@ -605,7 +617,9 @@ async function runSearchAndFavoritesControlsFlow() {
 
     const input = "document.querySelector('#searchInput')";
     const panel = "document.querySelector('#favoritesPanel')";
-    const trigger = "document.querySelector('[popovertarget=favoritesPanel]')";
+    const trigger = "document.querySelector('#favoritesTrigger')";
+    const open = fallback ? `${panel}.classList.contains('is-open')` : `${panel}.matches(':popover-open')`;
+    assert.equal(await evaluate(`getComputedStyle(${panel}).display`), 'none');
     const press = (key, code, windowsVirtualKeyCode, text) => command('Input.dispatchKeyEvent', {
         type: 'keyDown', key, code, windowsVirtualKeyCode, ...(text ? { text, unmodifiedText: text } : {})
     });
@@ -618,9 +632,9 @@ async function runSearchAndFavoritesControlsFlow() {
     assert.equal(await evaluate(`document.activeElement === ${input} && ${input}.value === ''`), true);
 
     await evaluate(`${trigger}.focus(); ${trigger}.click()`);
-    assert.equal(await evaluate(`${panel}.matches(':popover-open') && !document.querySelector('#favoritesEmpty').hidden`), true);
+    assert.equal(await evaluate(`(${open}) && !document.querySelector('#favoritesEmpty').hidden`), true);
     await press('Escape', 'Escape', 27);
-    assert.equal(await evaluate(`!${panel}.matches(':popover-open') && document.activeElement === ${trigger}`), true);
+    assert.equal(await evaluate(`!(${open}) && document.activeElement === ${trigger}`), true);
 
     await search('Test Movie');
     await assertSearchReady('Test Movie');
@@ -633,10 +647,85 @@ async function runSearchAndFavoritesControlsFlow() {
     await waitFor("history.state?.kind === 'home' && document.querySelector('#favoriteCount').textContent === '1'");
     await evaluate(`${trigger}.click(); document.querySelector('#favoriteList button').click()`);
     await assertSearchReady('Test Movie');
-    assert.equal(await evaluate(`${panel}.matches(':popover-open')`), false);
+    assert.equal(await evaluate(open), false);
     await waitFor("!document.querySelector('#favoriteToggle').disabled");
     await evaluate("document.querySelector('#favoriteToggle').click()");
     assert.equal(await evaluate("document.querySelector('#favoriteCount').hidden"), true);
+    if (setup) await command('Page.removeScriptToEvaluateOnNewDocument', { identifier: setup.identifier });
+}
+
+async function runFavoriteFromStickyHeaderFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await evaluate(`localStorage.setItem('iplay_favorites', JSON.stringify([
+        { id: 109, mediaType: 'movie', title: 'Canonical Movie', year: '2024' }
+    ]))`);
+    await command('Page.reload');
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'long-titles'");
+    await search('Test Movie');
+    await waitFor("!document.querySelector('#favoriteToggle').disabled");
+    await evaluate("document.querySelector('#jumpToResources').click()");
+    await waitFor("document.querySelectorAll('#quarkUrlList a').length === 6");
+    await evaluate("scrollTo(0, document.body.scrollHeight)");
+    assert.ok(await evaluate('scrollY > 500'));
+    await evaluate("document.querySelector('#favoritesTrigger').click(); document.querySelector('#favoriteList button').click()");
+    await waitFor("document.querySelector('#showTitle').textContent === 'Canonical Movie' && !document.querySelector('#favoriteToggle').disabled");
+    const result = await evaluate(`(() => {
+        const title = document.querySelector('#showTitle').getBoundingClientRect();
+        const header = document.querySelector('.site-header').getBoundingClientRect();
+        return { visible: title.top >= header.bottom && title.bottom <= innerHeight, focus: document.activeElement.id };
+    })()`);
+    assert.deepEqual(result, { visible: true, focus: 'showTitle' });
+}
+
+async function runHeroArtworkFlow() {
+    await command('Network.setCacheDisabled', { cacheDisabled: true });
+    for (const scenario of ['poster', 'broken', 'still', 'recovered']) {
+        await command('Page.navigate', { url: baseUrl });
+        await waitFor("history.state?.kind === 'home'");
+        await evaluate(`window.__smoke.heroArtwork = ${JSON.stringify(scenario)}`);
+        const before = actorPosterRequests.length;
+        await search(scenario === 'recovered' ? 'Slow Broken Poster Movie' : 'Test Movie');
+        const source = scenario === 'still' ? 'backdrop' : 'poster';
+        await waitFor(`document.getElementById('heroBackdrop').dataset.source === '${source}'`);
+        if (scenario === 'still') {
+            assert.equal(await evaluate("document.querySelector('.hero-still').complete"), true);
+        } else {
+            if (scenario === 'broken') {
+                await waitFor(`performance.getEntriesByName(${JSON.stringify(brokenHeroStill)}).length > 0`);
+            }
+            assert.equal(await evaluate(`(() => {
+                const cover = document.getElementById('showCover');
+                const hero = document.getElementById('heroBackdrop');
+                return cover.currentSrc.includes('audit-actor-hero-poster')
+                    && getComputedStyle(hero, '::before').backgroundImage.includes(cover.currentSrc);
+            })()`), true);
+        }
+        const requests = actorPosterRequests.slice(before);
+        assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg')).length, 1);
+        if (scenario === 'still') {
+            assert.ok(requests.findIndex(url => url.includes('hero-still')) > requests.findIndex(url => url.includes('hero-poster')));
+        }
+    }
+}
+
+async function runNarrowDetailFlow() {
+    await command('Page.setFontSizes', { fontSizes: { standard: 20 } });
+    await command('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 1, mobile: true });
+    await command('Page.navigate', { url: baseUrl });
+    await search('Test Movie');
+    await waitFor("!document.querySelector('#favoriteToggle').disabled");
+    await evaluate("document.querySelector('#favoriteToggle').click()");
+    assert.equal(await evaluate(`(() => {
+        const hero = document.querySelector('.work-hero').getBoundingClientRect();
+        return ['#tmdbRatingBox', '#jumpToResources', '#favoriteToggle', '#resultsArea [data-share-current]'].every(selector => {
+            const element = document.querySelector(selector);
+            const rect = element.getBoundingClientRect();
+            return rect.right <= hero.right && rect.left >= hero.left && element.scrollWidth <= element.clientWidth + 1;
+        });
+    })()`), true, 'rating and actions must fit inside the card at 320px with a larger default font');
+    await command('Page.setFontSizes', { fontSizes: { standard: 16 } });
 }
 
 async function runPreferencePanelFlow() {
@@ -1622,8 +1711,12 @@ try {
     await runActorFilterRaceFlow();
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
+    await runFavoriteFromStickyHeaderFlow();
     await runPreferencePanelFlow();
     await runSearchAndFavoritesControlsFlow();
+    await runSearchAndFavoritesControlsFlow({ fallback: true });
+    await runNarrowDetailFlow();
+    await runHeroArtworkFlow();
     assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
     console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites'] }));
