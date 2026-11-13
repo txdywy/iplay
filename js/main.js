@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.45';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.46';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.45';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.45';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.45';
-import { RELEASE_VERSION } from './release.js?v=1.0.45';
+} from './scorer.js?v=1.0.46';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.46';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.46';
+import { RELEASE_VERSION } from './release.js?v=1.0.46';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.45';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.45';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.45';
+} from './match.js?v=1.0.46';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.46';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.46';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -135,7 +135,7 @@ function hideDataNotice() {
 function showDataNotice({ title, detail, actionLabel = '', onAction = null, tone = 'warning' }) {
     if (!els.dataNotice) return;
     clearNode(els.dataNotice);
-    els.dataNotice.className = `rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
+    els.dataNotice.className = `max-lg:col-span-2 rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
     els.dataNotice.setAttribute('role', tone === 'error' ? 'alert' : 'status');
     els.dataNotice.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
 
@@ -1010,7 +1010,7 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
 
 function createInfoCard(label, value, { wide = false, muted = false, interactiveValues = null } = {}) {
     const card = document.createElement('div');
-    card.className = `${wide ? 'md:col-span-2' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
+    card.className = `${wide ? 'col-span-full' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
 
     const meta = document.createElement('div');
     meta.className = 'text-xs uppercase tracking-[0.35em] text-cinema-400';

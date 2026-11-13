@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.45" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.46" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap">
@@ -131,11 +131,12 @@
                  Poster: fixed 300px on lg+
                  Content: fills remaining space
                  ═══════════════════════════════════════════════ -->
-            <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6 lg:gap-10 xl:gap-14 items-start fade-up">
+            <!-- Below lg the poster sits beside the title; the content column's children become grid items. -->
+            <div class="grid grid-cols-[7rem_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] lg:grid-cols-[300px_1fr] gap-x-4 gap-y-6 sm:gap-x-6 lg:gap-10 xl:gap-14 items-start fade-up">
 
                 <!-- ── LEFT SIDEBAR: Poster + TMDB Facts ── -->
-                <div class="space-y-5 lg:sticky lg:top-8">
-                    <div class="poster-glow transition-transform duration-700 max-w-[150px] sm:max-w-[220px] mx-auto lg:max-w-none" id="posterWrapper">
+                <div class="max-lg:col-start-1 max-lg:row-start-1 space-y-5 lg:sticky lg:top-8">
+                    <div class="poster-glow transition-transform duration-700 w-full" id="posterWrapper">
                         <img id="showCover" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="影视海报" width="400" height="600" loading="eager" decoding="async" fetchpriority="high" class="block w-full rounded-[1.75rem] shadow-2xl object-cover aspect-[2/3] border border-cinema-700 bg-cinema-800">
                     </div>
 
@@ -159,21 +160,25 @@
                 </div>
 
                 <!-- ── RIGHT CONTENT AREA ── -->
-                <div class="flex flex-col gap-6 min-w-0">
+                <div class="max-lg:contents lg:flex lg:flex-col lg:gap-6 min-w-0">
 
-                    <div id="dataNotice" class="hidden" aria-live="polite"></div>
+                    <div id="dataNotice" class="hidden max-lg:col-span-2" aria-live="polite"></div>
 
                     <!-- Title + Subtitle -->
-                    <div>
-                        <h2 id="showTitle" tabindex="-1" class="break-words text-4xl md:text-5xl xl:text-6xl font-black leading-[0.92] tracking-tight focus:outline-none"></h2>
-                        <p id="showSubTitle" class="text-cinema-400 font-mono text-xs md:text-sm uppercase tracking-[0.32em] mt-3"></p>
-                        <button type="button" id="jumpToResources" class="mt-3 mr-2 min-h-11 rounded-full border border-accent-red/60 bg-accent-red/10 px-5 py-2 text-sm font-bold text-cinema-100 hover:border-accent-red hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">夸克资源 ↓</button>
-                        <button type="button" id="favoriteToggle" aria-pressed="false" class="mt-3 mr-2 min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs text-cinema-100 hover:border-accent-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">☆ 收藏</button>
-                        <button type="button" data-share-current class="mt-3 min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs text-cinema-100 hover:border-accent-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">复制影视分享链接</button>
+                    <div class="min-w-0 max-lg:col-start-2 max-lg:row-start-1 max-lg:self-center">
+                        <h2 id="showTitle" tabindex="-1" class="break-words text-3xl sm:text-4xl md:text-5xl xl:text-6xl font-black leading-[1.05] lg:leading-[0.92] tracking-tight focus:outline-none"></h2>
+                        <p id="showSubTitle" class="text-cinema-400 font-mono text-xs md:text-sm uppercase tracking-[0.12em] sm:tracking-[0.32em] mt-3"></p>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex flex-wrap gap-2 max-lg:col-span-2 lg:-mt-3">
+                        <button type="button" id="jumpToResources" class="min-h-11 rounded-full border border-accent-red/60 bg-accent-red/10 px-4 py-2 text-xs font-bold text-cinema-100 hover:border-accent-red hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">夸克资源 ↓</button>
+                        <button type="button" id="favoriteToggle" aria-pressed="false" class="min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs text-cinema-100 hover:border-accent-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">☆ 收藏</button>
+                        <button type="button" data-share-current class="min-h-11 rounded-full border border-cinema-700 px-4 py-2 text-xs text-cinema-100 hover:border-accent-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red">复制影视分享链接</button>
                     </div>
 
                     <!-- Rating boxes row -->
-                    <div class="flex flex-wrap gap-3">
+                    <div class="flex flex-wrap gap-3 max-lg:col-span-2">
                         <div id="tmdbRatingBox" class="rating-box min-w-[92px] md:min-w-[108px] px-4 py-3">
                             <div class="flex items-baseline gap-1">
                                 <span id="tmdbRatingValueMobile" class="text-2xl font-mono font-bold text-accent-gold">-.-</span>
@@ -192,10 +197,10 @@
                     </div>
 
                     <!-- Tags -->
-                    <div id="showTags" class="flex flex-wrap gap-3"></div>
+                    <div id="showTags" class="flex flex-wrap gap-3 max-lg:col-span-2"></div>
 
                     <!-- ── AI Score + Synopsis — side-by-side on xl ── -->
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start max-lg:col-span-2">
                         <!-- AI Recommendation Score -->
                         <div class="bg-cinema-800/50 border border-cinema-700 rounded-3xl p-5 md:p-6 relative overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.3)]">
                             <div class="absolute top-0 right-0 p-4 opacity-10">
@@ -249,7 +254,7 @@
                     </div>
 
                     <!-- TMDB Overview -->
-                    <details id="tmdbOverviewPanel" class="bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
+                    <details id="tmdbOverviewPanel" class="max-lg:col-span-2 bg-cinema-800/40 border border-cinema-700 rounded-3xl p-5 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
                         <summary class="cursor-pointer font-mono text-xs uppercase tracking-[0.3em] text-cinema-400 hover:text-cinema-100">查看 TMDB 概述</summary>
                         <div id="tmdbOverview" class="mt-4 text-cinema-100 leading-relaxed text-sm md:text-base opacity-90 font-light"></div>
                     </details>
@@ -319,6 +324,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-6 right-6 max-w-[min(90vw,28rem)] translate-y-20 opacity-0 transition-[translate,opacity] duration-300 bg-cinema-800 border border-cinema-700 text-white px-6 py-3 rounded-lg shadow-2xl font-mono text-sm z-50"></div>
 
     <footer id="releaseVersion" class="relative z-10 pb-8 font-mono text-xs text-cinema-400" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.45"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.46"></script>
 </body>
 </html>
