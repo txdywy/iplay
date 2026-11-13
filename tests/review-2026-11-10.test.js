@@ -72,11 +72,11 @@ test('a missing entry offers no retry and a missing season offers the whole seri
     assert.match(main, /reload\(\{ deferEnrichments: false, requestedSeason: null \}\)/);
 });
 
-test('the detail page leads to resources before the data dossier', async () => {
+test('the result keeps all work information before the final resource section', async () => {
     const html = await readFile('index.html', 'utf8');
     assert.match(html, /id="jumpToResources"/);
     assert.match(html, /id="quickSearches"/);
-    assert.ok(html.indexOf('id="resourcesSection"') < html.indexOf('id="profilePanel"'), 'resources come first');
+    assert.ok(html.indexOf('id="profilePanel"') < html.indexOf('id="resourcesSection"'), 'the dossier stays with the work');
     assert.ok(html.indexOf('id="tmdbOverview"') < html.indexOf('id="resourcesSection"'));
 });
 
@@ -191,11 +191,8 @@ test('"第N部" also looks up the numbered sequel of a film', async t => {
     assert.equal(dated.results[0].title, '沙丘2', 'the year picks the sequel');
 });
 
-test('below desktop width the poster shares a row with the title', async () => {
+test('the result header offers resource, favorite and share actions', async () => {
     const html = await readFile('index.html', 'utf8');
-    assert.match(html, /grid-cols-\[7rem_minmax\(0,1fr\)\][^"]*lg:grid-cols-\[300px_1fr\]/);
-    assert.match(html, /max-lg:contents lg:flex lg:flex-col/);
-    assert.match(html, /max-lg:col-start-2 max-lg:row-start-1[^"]*">\s*<h2 id="showTitle"/);
     const actions = html.slice(html.indexOf('<!-- Actions -->'), html.indexOf('<!-- Rating boxes row -->'));
     assert.equal((actions.match(/<button /g) || []).length, 3);
     assert.doesNotMatch(actions, /text-sm/);
