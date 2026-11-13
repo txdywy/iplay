@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.49] - 2026-11-13
+
+### Changed
+
+- Give the search page a warm cinema treatment with responsive artwork. Keep search compact after results arrive, with a keyboard shortcut, a clear button and a dedicated favorites panel.
+- Refine film, actor and resource views around the most-used actions. Improve loading feedback, disclosures, reading contrast and reduced-motion behavior.
+
 ## [1.0.48] - 2026-11-13
 
 ### Fixed

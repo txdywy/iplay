@@ -596,6 +596,49 @@ async function assertSearchReady(title) {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true);
 }
 
+async function runSearchAndFavoritesControlsFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await evaluate("localStorage.removeItem('iplay_favorites')");
+    await command('Page.reload');
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+
+    const input = "document.querySelector('#searchInput')";
+    const panel = "document.querySelector('#favoritesPanel')";
+    const trigger = "document.querySelector('[popovertarget=favoritesPanel]')";
+    const press = (key, code, windowsVirtualKeyCode, text) => command('Input.dispatchKeyEvent', {
+        type: 'keyDown', key, code, windowsVirtualKeyCode, ...(text ? { text, unmodifiedText: text } : {})
+    });
+
+    await press('/', 'Slash', 191, '/');
+    assert.equal(await evaluate(`document.activeElement === ${input} && ${input}.value === ''`), true);
+    await press('/', 'Slash', 191, '/');
+    assert.equal(await evaluate(`${input}.value`), '/');
+    await evaluate("document.querySelector('#clearSearch').click()");
+    assert.equal(await evaluate(`document.activeElement === ${input} && ${input}.value === ''`), true);
+
+    await evaluate(`${trigger}.focus(); ${trigger}.click()`);
+    assert.equal(await evaluate(`${panel}.matches(':popover-open') && !document.querySelector('#favoritesEmpty').hidden`), true);
+    await press('Escape', 'Escape', 27);
+    assert.equal(await evaluate(`!${panel}.matches(':popover-open') && document.activeElement === ${trigger}`), true);
+
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await waitFor("!document.querySelector('#favoriteToggle').disabled");
+    await evaluate("document.querySelector('#favoriteToggle').click()");
+    assert.equal(await evaluate("document.querySelector('#favoriteToggle').getAttribute('aria-pressed')"), 'true');
+    assert.equal(await evaluate("document.querySelector('#favoriteCount').textContent"), '1');
+
+    await evaluate("document.querySelector('.site-brand').click()");
+    await waitFor("history.state?.kind === 'home' && document.querySelector('#favoriteCount').textContent === '1'");
+    await evaluate(`${trigger}.click(); document.querySelector('#favoriteList button').click()`);
+    await assertSearchReady('Test Movie');
+    assert.equal(await evaluate(`${panel}.matches(':popover-open')`), false);
+    await waitFor("!document.querySelector('#favoriteToggle').disabled");
+    await evaluate("document.querySelector('#favoriteToggle').click()");
+    assert.equal(await evaluate("document.querySelector('#favoriteCount').hidden"), true);
+}
+
 async function runPreferencePanelFlow() {
     await command('Page.navigate', { url: baseUrl });
     await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
@@ -794,7 +837,7 @@ async function runActorResponsivePosterFlow() {
     try {
         for (const [width, deviceScaleFactor, expectedSourceWidth, standardFontSize = 16, scrollbarWidth = 0] of [
             [390, 1, 185], [390, 2, 342], [640, 1, 185], [768, 1, 185],
-            [1024, 1, 185], [1280, 1, 185], [1472, 1, 342], [1472, 2, 500],
+            [1024, 1, 185], [1280, 1, 342], [1472, 1, 342], [1472, 2, 500],
             [640, 1, 342, 20], [900, 1, 342, 20], [768, 1, 185, 16, 16]
         ]) {
             // Resize an empty document so the previous page cannot start an
@@ -825,7 +868,17 @@ async function runActorResponsivePosterFlow() {
                 const image = document.querySelector('#actorCreditList button[data-media-id="320"] img');
                 const external = document.querySelector('#actorCreditList button[data-media-id="321"] img');
                 const comma = document.querySelector('#actorCreditList button[data-media-id="323"] img');
-                return { currentSrc: image.currentSrc, width: image.getBoundingClientRect().width,
+                const declaredSize = image.sizes.split(/, (?=\\(min-width|calc)/).find(size => {
+                    const media = size.match(/^\\(min-width: [^)]*\\)/)?.[0];
+                    return !media || matchMedia(media).matches;
+                }).replace(/^\\(min-width: [^)]*\\) /, '');
+                const probe = document.createElement('div');
+                probe.style.position = 'absolute';
+                probe.style.width = declaredSize;
+                document.body.append(probe);
+                const declaredWidth = probe.getBoundingClientRect().width;
+                probe.remove();
+                return { currentSrc: image.currentSrc, width: image.getBoundingClientRect().width, declaredWidth,
                     viewportGutter: innerWidth - document.documentElement.clientWidth,
                     rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), rootInlineFontSize: document.documentElement.style.fontSize,
                     threeColumnBreakpoint: matchMedia('(min-width: 40rem)').matches,
@@ -840,21 +893,14 @@ async function runActorResponsivePosterFlow() {
             assert.equal(image.externalSizes, null);
             assert.equal(image.commaSrcset, null, 'a standalone URL containing srcset separators must not introduce extra candidates');
             assert.equal(image.commaSizes, null);
-            const declaredWidth = width >= 92 * standardFontSize ? (81.25 * standardFontSize - 14) / 6
-                : width >= 80 * standardFontSize ? (width - 10.75 * standardFontSize - 14) / 6
-                    : width >= 64 * standardFontSize ? (width - 10 * standardFontSize - 12) / 5
-                        : width >= 48 * standardFontSize ? (width - 9.25 * standardFontSize - 10) / 4
-                            : width >= 40 * standardFontSize ? (width - 7 * standardFontSize - 8) / 3
-                                : (width - 6.25 * standardFontSize - 6) / 2;
-            // vw includes classic scrollbar space; the grid uses the smaller
-            // layout viewport. Account for that measured gutter per column,
-            // including the point where the main container reaches its cap.
+            // vw includes classic scrollbar space, while the grid is capped
+            // at the width of the main content container.
             const columns = width >= 80 * standardFontSize ? 6 : width >= 64 * standardFontSize ? 5
                 : width >= 48 * standardFontSize ? 4 : width >= 40 * standardFontSize ? 3 : 2;
-            const mainCap = 92 * standardFontSize;
+            const mainCap = (74 + (width >= 40 * standardFontSize ? 4 : 2.25)) * standardFontSize;
             const gutterPerColumn = (Math.min(width, mainCap) - Math.min(width - image.viewportGutter, mainCap)) / columns;
-            assert.ok(declaredWidth >= image.width - 0.02 && Math.abs(declaredWidth - gutterPerColumn - image.width) < 1,
-                `the declared image size must match the actual grid after its ${image.viewportGutter}px gutter: ${declaredWidth} vs ${image.width}`);
+            assert.ok(Math.abs(image.declaredWidth - gutterPerColumn - image.width) < 1,
+                `declared image width does not match the grid after its ${image.viewportGutter}px gutter: ${image.declaredWidth} vs ${image.width}`);
             assert.equal(actorPosterRequests.slice(requestsBefore).filter(url => url.includes('/audit-actor-poster.jpg')).length, 1,
                 'setting responsive attributes before src must issue only the selected request');
             await evaluate("document.querySelector('#actorCreditList button[data-media-id=\"322\"] img').scrollIntoView({block:'center'})");
@@ -1577,9 +1623,10 @@ try {
     await runDeepLinkFlow();
     await runDesktopReducedMotionFlow();
     await runPreferencePanelFlow();
+    await runSearchAndFavoritesControlsFlow();
     assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites'] }));
 } finally {
     socket.close();
 }

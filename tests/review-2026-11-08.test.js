@@ -162,11 +162,13 @@ test('an emptied preference field keeps the default instead of saving 0', t => {
     assert.equal(settings.get('爱情'), 4);
 });
 
-test('the toast moves with the translate property Tailwind 4 uses', async () => {
-    const [html, main] = await Promise.all([readFile('index.html', 'utf8'), readFile('js/main.js', 'utf8')]);
-    assert.match(html, /id="toast"[^>]*translate-y-20[^>]*transition-\[translate,opacity\]/);
-    assert.doesNotMatch(main, /toast\.style\.transform/);
-    assert.match(main, /toast\.style\.translate = '0 0'/);
+test('the toast preserves horizontal centering when it moves into view', async () => {
+    const [html, css, main] = await Promise.all([
+        readFile('index.html', 'utf8'), readFile('css/input.css', 'utf8'), readFile('js/main.js', 'utf8')
+    ]);
+    assert.match(html, /id="toast"[^>]*-translate-x-1\/2 translate-y-20[^>]*transition-\[translate,opacity\]/);
+    assert.match(css, /\.toast-visible\s*\{\s*translate: -50% 0;/);
+    assert.match(main, /toast\.classList\.add\('toast-visible'\)/);
 });
 
 test('the search button stays enabled so Enter can replace a running search', async () => {

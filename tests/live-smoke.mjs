@@ -37,6 +37,16 @@ for (const path of ['index.html', 'assets/app.min.js', ...frontendModules, 'css/
     results.push({ check: path, status: 'exact-release-match' });
 }
 
+for (const path of ['assets/cinema.webp', 'assets/cinema-small.webp']) {
+    const response = await fetchLive(new URL(path, site));
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('content-type') || '', /^image\/webp\b/i, path);
+    const deployed = new Uint8Array(await response.arrayBuffer());
+    const local = await readFile(new URL(`../${path}`, import.meta.url));
+    assert.ok(deployed.length === local.length && local.equals(deployed), `${path}: deployed artwork differs from local release`);
+    results.push({ check: path, status: 'exact-release-match' });
+}
+
 for (const query of ['流浪地球', 'The Matrix', 'The Truman Show', 'The Truman Show 1998', 'The Truman Show 1998 movie']) {
     const { data } = await getApi(`/api/tmdb/search?q=${encodeURIComponent(query)}`);
     assert.ok(data.results?.length > 0, `${query}: no results`);
