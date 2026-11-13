@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.49';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.50';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.49';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.49';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.49';
-import { RELEASE_VERSION } from './release.js?v=1.0.49';
+} from './scorer.js?v=1.0.50';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.50';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.50';
+import { RELEASE_VERSION } from './release.js?v=1.0.50';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.49';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.49';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.49';
+} from './match.js?v=1.0.50';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.50';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.50';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -79,6 +79,8 @@ const els = {
     recScore: document.getElementById('recScore'),
     recLabel: document.getElementById('recLabel'),
     recBar: document.getElementById('recBar'),
+    scoreRing: document.getElementById('scoreRing'),
+    heroBackdrop: document.getElementById('heroBackdrop'),
     scoreDetails: document.getElementById('scoreDetails'),
 
     reportArea: document.getElementById('reportArea'),
@@ -621,10 +623,10 @@ function renderCandidatePicker(candidates, query, onSelect) {
     ranked.forEach(candidate => {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'group rounded-xl border border-cinema-600/70 bg-cinema-900 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-cinema-500 hover:bg-cinema-700/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        button.className = 'candidate-card group text-left';
 
         const title = document.createElement('span');
-        title.className = 'block text-base font-bold leading-snug text-cinema-100 group-hover:text-white';
+        title.className = 'block text-base font-bold leading-snug text-cinema-100';
         title.textContent = candidate.title || candidate.originalTitle || '未命名条目';
 
         const originalTitle = candidate.originalTitle && candidate.originalTitle !== candidate.title
@@ -636,7 +638,7 @@ function renderCandidatePicker(candidates, query, onSelect) {
         }
 
         const meta = document.createElement('span');
-        meta.className = 'mt-3 block text-xs font-mono uppercase tracking-[0.18em] text-cinema-400';
+        meta.className = 'mt-2 block text-xs text-cinema-400';
         const rating = toFiniteNumber(candidate.tmdbRating);
         meta.textContent = [candidate.year || '年份未知', candidateTypeLabel(candidate),
             rating !== null && rating > 0 ? `TMDB ${formatRating(rating)}` : null].filter(Boolean).join(' · ');
@@ -644,14 +646,13 @@ function renderCandidatePicker(candidates, query, onSelect) {
         const score = Number(candidate.matchScore);
         const scoreText = Number.isFinite(score) ? `匹配度 ${Math.round(score * 100)}%` : candidateMatchLabel(candidate);
         const scoreNode = document.createElement('span');
-        scoreNode.className = 'mt-2 block text-xs font-mono text-accent-gold';
+        scoreNode.className = 'candidate-match';
         scoreNode.textContent = scoreText;
 
         // A poster tells same-name works apart faster than year and type.
-        button.classList.add('flex', 'items-start', 'gap-4');
         const posterUrl = toSafeHttpUrl(candidate.poster);
         const poster = document.createElement(posterUrl ? 'img' : 'span');
-        poster.className = 'h-24 w-16 shrink-0 rounded-lg border border-cinema-700 bg-cinema-800 object-cover';
+        poster.className = 'candidate-poster';
         if (posterUrl) {
             poster.src = posterUrl.replace('/t/p/w500/', '/t/p/w185/');
             poster.alt = '';
@@ -664,7 +665,7 @@ function renderCandidatePicker(candidates, query, onSelect) {
             poster.setAttribute('aria-hidden', 'true');
         }
         const text = document.createElement('span');
-        text.className = 'block min-w-0 flex-1';
+        text.className = 'candidate-body';
         text.appendChild(title);
         if (originalTitle) text.appendChild(originalTitle);
         text.appendChild(meta);
@@ -872,7 +873,7 @@ function loadPoster(posterUrl, title = '', context = {}) {
     els.cover.dataset.posterToken = String(token);
     els.cover.alt = title ? `${title} 海报` : '影视海报';
     const sourceSet = getTmdbPosterSourceSet(safePosterUrl);
-    const sizes = safePosterUrl ? '(min-width: 64rem) 10.5rem, (min-width: 40rem) 9rem, clamp(4.5rem, 22vw, 6rem)' : '';
+    const sizes = safePosterUrl ? '(min-width: 64rem) 15rem, (min-width: 40rem) 12rem, clamp(6.5rem, 30vw, 8rem)' : '';
     if (els.cover.getAttribute('srcset') !== sourceSet) els.cover.setAttribute('srcset', sourceSet);
     if (els.cover.getAttribute('sizes') !== sizes) els.cover.setAttribute('sizes', sizes);
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
@@ -901,7 +902,7 @@ function appendBadgeList(container, values) {
     const frag = document.createDocumentFragment();
     values.forEach(value => {
         const span = document.createElement('span');
-        span.className = 'rounded-md bg-cinema-700/60 px-2 py-1 text-xs text-cinema-300';
+        span.className = 'genre-pill';
         span.textContent = value;
         frag.appendChild(span);
     });
@@ -1581,8 +1582,8 @@ function renderResourcesAwaitingDetails() {
 function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: '暂未发现资源页面',
-        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
-        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
+        itemClass: 'link-item',
+        cardClass: 'link-row',
         iconName: 'external',
         iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
         metaClass: 'mt-1 text-xs text-cinema-400',
@@ -1605,8 +1606,8 @@ function renderWpzysResourceList(resources, meta = {}) {
     }
     renderLinkCards(els.wpzysResourceList, resources, {
         emptyLabel: '暂未匹配到 WPZY 夸克资源',
-        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
-        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
+        itemClass: 'link-item',
+        cardClass: 'link-row',
         iconName: 'comments',
         iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
         metaClass: 'mt-1 text-xs text-cinema-400',
@@ -1619,8 +1620,8 @@ function renderWpzysResourceList(resources, meta = {}) {
 function renderQuarkUrls(quarkUrls) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
         emptyLabel: '暂未提取到夸克链接',
-        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
-        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
+        itemClass: 'link-item',
+        cardClass: 'link-row',
         iconName: 'external',
         iconClass: 'h-4 w-4 shrink-0 text-accent-gold mt-1',
         // Share tokens are case-sensitive: show the address exactly as it is.
@@ -1717,6 +1718,10 @@ function renderScore(data, sourceLabel) {
         els.recBar.className = `score-fill ${barColor}`;
         els.recBar.style.setProperty('--score', String(scoreData.score / 100));
     }
+    if (els.scoreRing) {
+        els.scoreRing.style.setProperty('--score', String(scoreData.score / 100));
+        els.scoreRing.dataset.tier = scoreData.score >= 85 ? 'top' : scoreData.score >= 70 ? 'good' : scoreData.score >= 50 ? 'fair' : 'low';
+    }
 
     clearNode(els.scoreDetails);
     const detailFrag = document.createDocumentFragment();
@@ -1791,6 +1796,23 @@ function createPosterContext(candidate, enrichmentQuery, viewModel, searchId, se
     };
 }
 
+// The detail hero is lit by the work's own still: TMDB's backdrop, or the
+// poster when there is none. Phones load the smaller rendition.
+function renderHeroBackdrop(viewModel) {
+    if (!els.heroBackdrop) return;
+    const still = toSafeHttpUrl(viewModel?.detail?.backdrop) || toSafeHttpUrl(viewModel?.candidate?.backdrop);
+    const image = still || toSafeHttpUrl(viewModel?.posterUrl);
+    if (!image) {
+        els.heroBackdrop.style.removeProperty('--hero-image');
+        els.heroBackdrop.style.removeProperty('--hero-image-lg');
+        els.heroBackdrop.dataset.source = 'none';
+        return;
+    }
+    els.heroBackdrop.style.setProperty('--hero-image', `url("${image}")`);
+    els.heroBackdrop.style.setProperty('--hero-image-lg', `url("${still ? image.replace('/t/p/w780/', '/t/p/w1280/') : image}")`);
+    els.heroBackdrop.dataset.source = still ? 'backdrop' : 'poster';
+}
+
 function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
     if (!isUpdate && els.profilePanel) els.profilePanel.open = false;
     setText(els.title, viewModel.title);
@@ -1798,6 +1820,7 @@ function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
     renderGenres(viewModel.genres);
     renderSynopsis(viewModel.overviewSource, viewModel.summary);
     loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
+    renderHeroBackdrop(viewModel);
     renderTmdbProfile(viewModel);
     renderScore({
         rating: viewModel.rating,
