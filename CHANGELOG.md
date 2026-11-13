@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.50] - 2026-11-13
+
+### Changed
+
+- A cinematic visual refresh. The detail hero is lit by the work's own TMDB still (or its blurred poster), with a larger poster, a 4rem title and glass rating and genre pills. On phones the poster sits beside the title, score and genres, with the three actions on one row.
+- The recommendation score is a conic ring gauge coloured by tier.
+- Panels, buttons, chips and the favorites popover are frosted glass over an ambient warm stage with film grain; primary actions use an amber gradient.
+- On desktop the search bar becomes a full-width frosted bar that stays at the top while a result is open.
+- Candidates are poster-forward cards with a match badge; resource rows are spaced cards with a hover lift.
+- Loading previews shimmer, and panels rise in as they scroll into view where the browser supports scroll-driven animation (not with reduced motion).
+
 ## [1.0.49] - 2026-11-13
 
 ### Changed
