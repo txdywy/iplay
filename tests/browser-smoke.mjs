@@ -951,6 +951,7 @@ async function runActorFlow() {
     await waitFor("document.querySelector('#showTitle')?.textContent === 'Actor Movie'");
     assert.equal(await evaluate("location.search.includes('id=200') && location.search.includes('type=movie')"), true);
     await waitFor("document.querySelector('#profileFields button[data-actor-name=\\\"Clickable Actor\\\"]')");
+    await evaluate("document.querySelector('#profilePanel summary').click()");
 
     await evaluate("document.querySelector('#profileFields button[data-actor-name=\\\"Clickable Actor\\\"]')?.click()");
     await waitFor("document.querySelector('#actorResultsTitle')?.textContent === 'Clickable Actor'");
@@ -965,14 +966,14 @@ async function runActorFlow() {
     await evaluate('history.back()');
     await waitFor("history.state?.kind === 'detail' && new URL(location.href).searchParams.get('id') === '200' && document.querySelector('#resultsArea:not(.hidden) #showTitle')?.textContent === 'Actor Movie' && document.querySelector('#searchStatus').textContent.includes('详情已加载')");
     // Fragment navigation fires popstate too; it must not reload the view.
-    const callsBeforeSkipLink = await evaluate('window.__smoke.calls.length');
+    const callsBeforeSkipLink = await evaluate('window.__smoke.detailCalls');
     await evaluate("document.querySelector('a[href=\"#mainContent\"]').click()");
     assert.equal(await evaluate('location.hash'), '#mainContent');
     await evaluate('new Promise(resolve => setTimeout(resolve, 300))', { awaitPromise: true });
     await evaluate('history.back()');
     await waitFor("location.hash === ''");
     await evaluate('new Promise(resolve => setTimeout(resolve, 300))', { awaitPromise: true });
-    assert.equal(await evaluate('window.__smoke.calls.length'), callsBeforeSkipLink, 'the skip link must not refetch the current detail');
+    assert.equal(await evaluate('window.__smoke.detailCalls'), callsBeforeSkipLink, 'the skip link must not refetch the current detail');
     assert.equal(await evaluate("document.querySelector('#resultsArea:not(.hidden) #showTitle')?.textContent"), 'Actor Movie');
     await evaluate('history.back()');
     await waitFor("history.state?.kind === 'actor' && new URL(location.href).searchParams.get('actor') === 'Smoke Actor' && document.querySelector('#actorResultsArea:not(.hidden) #actorResultsTitle')?.textContent === 'Smoke Actor' && document.querySelectorAll('#actorCreditList button[data-media-id]').length === 2");
@@ -1087,6 +1088,7 @@ async function runDesktopReducedMotionFlow() {
     await search('Test Movie');
     await assertSearchReady('Test Movie');
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#resultsArea .fade-up')).animationName"), 'none');
+    await assertResultLayout(true);
 }
 
 async function runActorCandidateRaceFlow() {
@@ -1393,6 +1395,32 @@ async function runUnscannedResourceStatusFlow() {
         'sources beyond the detail-page scan limit must remain available as original links');
 }
 
+async function assertResultLayout(wide) {
+    const state = await evaluate(`(() => {
+        const find = id => document.getElementById(id);
+        const details = find('workDetails');
+        const resources = find('resourcesSection');
+        const profile = find('profilePanel');
+        const title = find('showTitle').getBoundingClientRect();
+        const poster = find('showCover').getBoundingClientRect();
+        const direct = find('quarkUrlList').closest('section').getBoundingClientRect();
+        const posts = find('resourceList').closest('section').getBoundingClientRect();
+        return {
+            titleBesidePoster: title.left >= poster.right && title.top >= poster.top - 1 && title.top < poster.bottom,
+            resourcesLast: details.nextElementSibling === resources && resources === resources.parentElement.lastElementChild,
+            detailsAboveResources: details.getBoundingClientRect().bottom <= resources.getBoundingClientRect().top,
+            profileWithSynopsis: details.contains(profile) && !profile.open,
+            directBeforePosts: ${wide} ? direct.right <= posts.left && Math.abs(direct.top - posts.top) < 2 : direct.bottom <= posts.top,
+            naturalScroll: ['quarkUrlList', 'resourceList', 'wpzysResourceList'].every(id => getComputedStyle(find(id)).overflowY === 'visible'),
+            pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+        };
+    })()`);
+    assert.deepEqual(state, {
+        titleBesidePoster: true, resourcesLast: true, detailsAboveResources: true, profileWithSynopsis: true,
+        directBeforePosts: true, naturalScroll: true, pageFits: true
+    });
+}
+
 async function runResourceKeyboardAndLongTitleFlow() {
     await command('Page.navigate', { url: baseUrl });
     // This is the first cold document/module navigation; later business-state
@@ -1403,6 +1431,7 @@ async function runResourceKeyboardAndLongTitleFlow() {
     await assertSearchReady('Test Movie');
     await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
     await waitFor("document.querySelectorAll('#quarkUrlList a').length === 6");
+    await assertResultLayout(false);
     const layout = await evaluate(`(() => {
         const lists = ['#resourceList', '#wpzysResourceList', '#quarkUrlList'];
         return {
@@ -1550,7 +1579,7 @@ try {
     await runPreferencePanelFlow();
     assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'preference-panel-and-csp'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp'] }));
 } finally {
     socket.close();
 }

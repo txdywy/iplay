@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.47';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.48';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.47';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.47';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.47';
-import { RELEASE_VERSION } from './release.js?v=1.0.47';
+} from './scorer.js?v=1.0.48';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.48';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.48';
+import { RELEASE_VERSION } from './release.js?v=1.0.48';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.47';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.47';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.47';
+} from './match.js?v=1.0.48';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.48';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.48';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -66,14 +66,10 @@ const els = {
     subTitle: document.getElementById('showSubTitle'),
 
     primaryRating: document.getElementById('tmdbRatingValue'),
-    primaryRatingMobile: document.getElementById('tmdbRatingValueMobile'),
     primaryRatingLabel: document.getElementById('tmdbRatingLabel'),
-    primaryRatingLabelMobile: document.getElementById('tmdbRatingLabelMobile'),
     doubanBackupBox: document.getElementById('doubanBackupBox'),
     doubanBackupRating: document.getElementById('doubanBackupRating'),
 
-    tmdbFacts: document.getElementById('tmdbFacts'),
-    tmdbProfileLabel: document.getElementById('tmdbProfileLabel'),
     tmdbOverview: document.getElementById('tmdbOverview'),
     profilePanel: document.getElementById('profilePanel'),
     profileFields: document.getElementById('profileFields'),
@@ -135,7 +131,7 @@ function hideDataNotice() {
 function showDataNotice({ title, detail, actionLabel = '', onAction = null, tone = 'warning' }) {
     if (!els.dataNotice) return;
     clearNode(els.dataNotice);
-    els.dataNotice.className = `max-lg:col-span-2 rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
+    els.dataNotice.className = `rounded-2xl border p-4 text-sm ${tone === 'error' ? 'border-accent-red/40 bg-accent-red/10' : 'border-accent-gold/40 bg-accent-gold/10'}`;
     els.dataNotice.setAttribute('role', tone === 'error' ? 'alert' : 'status');
     els.dataNotice.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
 
@@ -937,19 +933,7 @@ function renderPrimaryRating(value, sourceLabel) {
         els.primaryRating.textContent = text;
         els.primaryRating.className = `text-2xl font-mono font-bold ${colorClass}`;
     }
-
-    if (els.primaryRatingMobile) {
-        els.primaryRatingMobile.textContent = text;
-        els.primaryRatingMobile.className = `text-2xl font-mono font-bold ${colorClass}`;
-    }
-
-    if (els.primaryRatingLabel) {
-        els.primaryRatingLabel.textContent = sourceLabel;
-    }
-
-    if (els.primaryRatingLabelMobile) {
-        els.primaryRatingLabelMobile.textContent = sourceLabel;
-    }
+    setText(els.primaryRatingLabel, sourceLabel);
 }
 
 function renderBackupDoubanRating(value) {
@@ -1010,10 +994,10 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
 
 function createInfoCard(label, value, { wide = false, muted = false, interactiveValues = null } = {}) {
     const card = document.createElement('div');
-    card.className = `${wide ? 'col-span-full' : ''} rounded-2xl border border-cinema-700 bg-cinema-900/35 p-3 md:p-4`;
+    card.className = `${wide ? 'col-span-full' : ''} min-w-0 border-b border-cinema-700/60 py-3`;
 
     const meta = document.createElement('div');
-    meta.className = 'text-xs uppercase tracking-[0.35em] text-cinema-400';
+    meta.className = 'text-xs text-cinema-400';
     meta.textContent = label;
 
     const body = document.createElement('div');
@@ -1054,46 +1038,6 @@ function renderGenres(genres) {
     appendBadgeList(els.tags, genres, 'UNKNOWN CLASS');
 }
 
-function renderTmdbFacts(viewModel) {
-    if (!els.tmdbFacts) return;
-
-    clearNode(els.tmdbFacts);
-
-    const candidate = viewModel?.candidate || {};
-    const detail = viewModel?.detail || {};
-    const mediaType = detail.mediaType || candidate.mediaType || candidate.type || '—';
-    const seasonTotals = mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
-    const seasonEpisodes = mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
-
-    setText(els.tmdbProfileLabel, mediaType === 'movie' ? '电影档案' : mediaType === 'tv' ? '剧集档案' : '影视档案');
-
-    appendInfoCards(els.tmdbFacts, [
-        createInfoCard('片名', viewModel?.title || candidate.title),
-        createInfoCard('原名', detail.originalTitle || candidate.originalTitle),
-        createInfoCard('类型', mediaType === 'movie' ? '电影' : mediaType === 'tv' ? '剧集' : mediaType),
-        createInfoCard('年份', detail.year || candidate.year),
-        createInfoCard('TMDB ID', detail.id ? `#${detail.id}` : candidate.id ? `#${candidate.id}` : '—'),
-        createInfoCard('IMDb ID', detail.imdbId || candidate.imdbId || '—'),
-        createInfoCard('评分人数', formatCount(detail.tmdbVotes || candidate.tmdbVotes || candidate.votes || 0)),
-        createInfoCard('热度', typeof detail.popularity === 'number' ? detail.popularity.toFixed(1) : typeof candidate.popularity === 'number' ? candidate.popularity.toFixed(1) : '—'),
-        seasonTotals ? createInfoCard('季 / 集', seasonTotals) : null,
-        seasonEpisodes ? createInfoCard('各季集数', seasonEpisodes, { wide: true }) : null
-    ].filter(Boolean));
-
-    if (els.tmdbOverview) {
-        const summary = detail.summary || candidate.summary || '';
-        els.tmdbOverview.textContent = summary.trim() ? summary : '暂无 TMDB 概述';
-        els.tmdbOverview.classList.toggle('italic', !summary.trim());
-        els.tmdbOverview.classList.toggle('text-cinema-400', !summary.trim());
-    }
-}
-
-// The desktop sidebar already shows these facts; phones have no sidebar.
-function sidebarDuplicate(card) {
-    card?.classList.add('lg:hidden');
-    return card;
-}
-
 function renderTmdbProfile(viewModel) {
     if (!els.profilePanel || !els.profileFields) return;
 
@@ -1106,34 +1050,33 @@ function renderTmdbProfile(viewModel) {
     }
 
     const detail = vm.detail || {};
-    const genres = Array.isArray(vm.genres) ? vm.genres : [];
+    const candidate = vm.candidate || {};
     const cast = Array.isArray(detail.cast) ? detail.cast : [];
     const castDetails = Array.isArray(detail.castDetails) && detail.castDetails.length > 0 ? detail.castDetails : cast;
     const directors = Array.isArray(detail.director) ? detail.director : [];
     const writers = Array.isArray(detail.writer) ? detail.writer : [];
-    const tmdbRating = toFiniteNumber(detail.tmdbRating);
     const seasonTotals = detail.mediaType === 'tv' ? formatSeasonTotals(detail.totalSeasons, detail.totalEpisodes) : '';
     const seasonEpisodes = detail.mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
+    const originalTitle = detail.originalTitle || candidate.originalTitle;
     appendInfoCards(els.profileFields, [
-        createInfoCard('片长', detail.runtime ? `${detail.runtime} 分钟` : '—'),
-        seasonTotals ? sidebarDuplicate(createInfoCard('季 / 集', seasonTotals)) : null,
-        createInfoCard('状态', detail.status || '—'),
-        createInfoCard('语言', detail.originalLanguage || '—'),
-        detail.imdbId ? sidebarDuplicate(createInfoCard('IMDb ID', detail.imdbId)) : null,
-        tmdbRating !== null && tmdbRating > 0 ? sidebarDuplicate(createInfoCard('TMDB 评分', `${formatRating(tmdbRating)}/10`)) : null
-    ].filter(Boolean));
-
-    appendInfoCards(els.profileFields, [
-        genres.length > 0 ? createInfoCard('题材', genres, { wide: true }) : null,
-        detail.productionCompanies && detail.productionCompanies.length > 0 ? createInfoCard('制作公司', detail.productionCompanies, { wide: true }) : null,
-        detail.productionCountries && detail.productionCountries.length > 0 ? createInfoCard('制作地区', detail.productionCountries, { wide: true }) : null,
         cast.length > 0 ? createInfoCard('主演', cast, { wide: true, interactiveValues: castDetails }) : null,
-        directors.length > 0 ? createInfoCard('导演', directors, { wide: true }) : null,
-        writers.length > 0 ? createInfoCard('编剧', writers, { wide: true }) : null,
-        seasonEpisodes ? sidebarDuplicate(createInfoCard('各季集数', seasonEpisodes, { wide: true })) : null,
+        directors.length > 0 ? createInfoCard('导演', directors) : null,
+        writers.length > 0 ? createInfoCard('编剧', writers) : null,
+        originalTitle && originalTitle !== vm.title ? createInfoCard('原名', originalTitle, { wide: true }) : null,
+        seasonTotals ? createInfoCard('季 / 集', seasonTotals) : null,
+        seasonEpisodes ? createInfoCard('各季集数', seasonEpisodes, { wide: true }) : null,
+        detail.runtime ? createInfoCard('片长', `${detail.runtime} 分钟`) : null,
+        detail.status ? createInfoCard('状态', detail.status) : null,
+        detail.originalLanguage ? createInfoCard('语言', detail.originalLanguage) : null,
+        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
+        createInfoCard('评分人数', formatCount(vm.votes || 0)),
+        Number.isFinite(detail.popularity) ? createInfoCard('热度', detail.popularity.toFixed(1)) : null,
+        detail.productionCompanies?.length ? createInfoCard('制作公司', detail.productionCompanies, { wide: true }) : null,
+        detail.productionCountries?.length ? createInfoCard('制作地区', detail.productionCountries, { wide: true }) : null
     ].filter(Boolean));
 
+    setText(els.tmdbOverview, (detail.summary || candidate.summary || '').trim() || '暂无 TMDB 概述');
     els.profilePanel.classList.remove('hidden');
     renderPrimaryRating(vm.rating, 'TMDB');
 }
@@ -1212,8 +1155,8 @@ function renderResourceNotice(resourceResult, totalSources, onRetry) {
     // With links in hand, an incomplete scan is a footnote, not a warning.
     const hasLinks = Array.isArray(resourceResult?.quarkUrls) && resourceResult.quarkUrls.length > 0;
     const quiet = hasLinks && failedProviders.length === 0;
-    els.resourceNotice.className = `md:col-span-2 lg:col-span-3 rounded-2xl border ${quiet
-        ? 'order-last border-cinema-700 bg-cinema-800/30 px-4 py-3'
+    els.resourceNotice.className = `col-span-full rounded-xl border ${quiet
+        ? 'border-cinema-700 bg-cinema-800/30 px-4 py-3'
         : 'border-accent-gold/40 bg-accent-gold/10 p-4'}`;
 
     const row = document.createElement('div');
@@ -1665,8 +1608,8 @@ function renderResourcesAwaitingDetails() {
 function renderResourceList(resources) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: '暂未发现资源页面',
-        itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/30 p-4 transition-[transform,background-color,border-color] hover:border-cinema-400/70 hover:bg-cinema-800/50 hover:-translate-y-0.5',
+        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
+        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
         iconName: 'external',
         iconClass: 'h-5 w-5 shrink-0 text-[#0099ff] mt-1 opacity-70',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
@@ -1689,8 +1632,8 @@ function renderWpzysResourceList(resources, meta = {}) {
     }
     renderLinkCards(els.wpzysResourceList, resources, {
         emptyLabel: '暂未匹配到 WPZY 夸克资源',
-        itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/35 p-4 transition-[transform,background-color,border-color] hover:border-accent-gold/60 hover:bg-cinema-800/50 hover:-translate-y-0.5',
+        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
+        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
         iconName: 'comments',
         iconClass: 'h-5 w-5 shrink-0 text-accent-gold mt-1 opacity-80',
         metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
@@ -1703,8 +1646,8 @@ function renderWpzysResourceList(resources, meta = {}) {
 function renderQuarkUrls(quarkUrls) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
         emptyLabel: '暂未提取到夸克链接',
-        itemClass: 'p-3',
-        cardClass: 'block rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4 transition-[transform,background-color,border-color] hover:border-accent-red/60 hover:bg-cinema-800/60 hover:-translate-y-0.5',
+        itemClass: 'border-b border-cinema-700/50 last:border-b-0',
+        cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
         iconName: 'cloud',
         iconClass: 'h-5 w-5 shrink-0 text-accent-red mt-1 opacity-80',
         // Share tokens are case-sensitive: show the address exactly as it is.
@@ -1789,9 +1732,9 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     els.recScore.textContent = scoreData.score;
     els.recLabel.textContent = labelInfo.label;
 
-    const scoreClass = `text-5xl md:text-7xl font-black font-mono ${labelInfo.color}`;
+    const scoreClass = `text-4xl font-black font-mono ${labelInfo.color}`;
     els.recScore.className = scoreClass;
-    els.recLabel.className = `text-lg font-bold tracking-wider ${labelInfo.color}`;
+    els.recLabel.className = `text-base font-bold ${labelInfo.color}`;
 
     if (els.recBar) {
         els.recBar.style.width = `${scoreData.score}%`;
@@ -1888,12 +1831,12 @@ function createPosterContext(candidate, enrichmentQuery, viewModel, searchId, se
 }
 
 function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
+    if (!isUpdate && els.profilePanel) els.profilePanel.open = false;
     setText(els.title, viewModel.title);
     setText(els.subTitle, viewModel.subtitle);
     renderGenres(viewModel.genres);
     renderSynopsis(viewModel.overviewSource, viewModel.summary);
     loadPoster(viewModel.posterUrl, viewModel.title, posterContext);
-    renderTmdbFacts(viewModel);
     renderTmdbProfile(viewModel);
     renderScore({
         rating: viewModel.rating,

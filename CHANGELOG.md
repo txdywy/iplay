@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.48] - 2026-11-13
+
+### Fixed
+
+- Keep synopsis, recommendations and expandable cast and credits together before a dedicated resource section. Prioritize direct Quark links, group source posts separately, and use one page scroll on every screen size.
+
 ## [1.0.47] - 2026-11-13
 
 ### Changed
