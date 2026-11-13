@@ -926,7 +926,7 @@ function selectResourceDetails(...groups) {
     return selected;
 }
 
-export async function handleResourceSearch(query, env, ctx, { refresh = false, id = null, mediaType = null, year = null } = {}) {
+export async function handleResourceSearch(query, env, ctx, { refresh = false, cacheOnly = false, id = null, mediaType = null, year = null } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
@@ -948,11 +948,14 @@ export async function handleResourceSearch(query, env, ctx, { refresh = false, i
 
     const wpzySession = await getWpzySession(env);
 
-    const response = await withInFlight(
-        ctx,
-        `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
-        () => handleResourceSearchUncoalesced(query, ctx, { refresh, wpzySession, identity, env })
-    );
+    const options = { refresh, cacheOnly, wpzySession, identity, env };
+    const response = cacheOnly
+        ? await handleResourceSearchUncoalesced(query, ctx, options)
+        : await withInFlight(
+            ctx,
+            `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
+            () => handleResourceSearchUncoalesced(query, ctx, options)
+        );
     const clientResponse = response.clone();
     // The internal cache is keyed by the server's login state. Browser caches
     // cannot observe that scope, so never let them retain account-derived data.
@@ -1005,7 +1008,7 @@ async function getResourceTitleAliases(query, identity, env, ctx) {
     return aliases;
 }
 
-async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wpzySession, identity = {}, env = {} } = {}) {
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, cacheOnly = false, wpzySession, identity = {}, env = {} } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
@@ -1013,6 +1016,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, wp
     const cacheKey = new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
     const cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) return cached;
+    if (cacheOnly) return jsonResponse({ error: "资源结果已过期或暂不可读，请重新扫描。" }, 410);
 
     let previousComplete = null;
     if (refresh && cached) {

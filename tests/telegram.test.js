@@ -110,13 +110,22 @@ test('the webhook is disabled without a bot token and rejects a wrong secret', a
     assert.equal(wrong.status, 401);
 });
 
-test('the setup route proves ownership with the bot token and registers the webhook', async t => {
+test('setup requires POST and an independent operator secret', async t => {
     const { telegram } = setup(t);
-    const denied = await worker.fetch(new Request('https://worker.test/telegram/setup?token=wrong', { headers: { 'cf-connecting-ip': 'setup-1' } }), ENV, { waitUntil() {} });
-    assert.equal(denied.status, 401);
+    const secret = 'independent-operator-secret';
+    const env = { ...ENV, TELEGRAM_SETUP_SECRET: secret };
+    const ctx = { waitUntil() {} };
+    const url = 'https://worker.test/telegram/setup';
+    const post = credential => new Request(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${credential}`, 'cf-connecting-ip': 'setup-test' }
+    });
+    assert.equal((await worker.fetch(new Request(`${url}?token=${encodeURIComponent(TOKEN)}`), env, ctx)).status, 405);
+    assert.equal((await worker.fetch(post(secret), ENV, ctx)).status, 503);
+    assert.equal((await worker.fetch(post(TOKEN), env, ctx)).status, 401);
     assert.equal(telegram.length, 0);
 
-    const response = await worker.fetch(new Request(`https://worker.test/telegram/setup?token=${encodeURIComponent(TOKEN)}`, { headers: { 'cf-connecting-ip': 'setup-2' } }), ENV, { waitUntil() {} });
+    const response = await worker.fetch(post(secret), env, ctx);
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.bot, '@iplay_test_bot');
@@ -306,6 +315,7 @@ test('posts and Quark links switch inside one message', async t => {
         return Response.json([]);
     } });
     const resourceMessage = { message_id: 70, text: '繁花 · 夸克资源' };
+    await deliver(callback('ro|tv|106841'));
     await deliver(callback('rp|tv|106841|0', { message: resourceMessage }));
     const posts = sent().at(-1);
     assert.equal(posts.method, 'editMessageText');
@@ -393,4 +403,21 @@ test('the card score counts a Chinese Wikipedia article and follow-ups lead back
     globalThis.caches.default.match = async () => null;
     await deliver(callback('d|tv|106841|'));
     assert.equal(withWiki - score(sent().at(-1).body.caption), 5, 'the article is worth the same 5 points as on the page');
+});
+
+test('resource pagination on a cold cache offers a rescan without contacting providers', async t => {
+    let providerCalls = 0;
+    const { sent } = setup(t, { resources: () => {
+        providerCalls += 1;
+        return Response.json([]);
+    } });
+    const message = { message_id: 70, text: '资源' };
+    for (const action of ['r', 'rp']) {
+        await deliver(callback(`${action}|tv|106841|0`, { message }));
+        const page = sent().at(-1);
+        assert.equal(page.method, 'editMessageText');
+        assert.match(page.body.text, /请重新扫描/);
+        assert.deepEqual(allCallbackData(page.body.reply_markup), ['rf|tv|106841']);
+    }
+    assert.equal(providerCalls, 0);
 });

@@ -725,9 +725,19 @@ function rankTmdbCandidates(entries, intent, scoreText = scoreSearchText) {
         sourceIndex += 1;
     }
 
-    return [...unique.values()]
-        .filter(entry => entry.match)
-        .sort((left, right) => (
+    const ranked = [...unique.values()].filter(entry => entry.match);
+    const sequelTitle = intent.season && intent.sequelQuery ? compactSearchText(intent.sequelQuery) : null;
+    const isNumberedSequel = entry => entry.mediaType === "movie"
+        && [getTmdbTitle(entry.item), getTmdbOriginalTitle(entry.item)].some(title => compactSearchText(title) === sequelTitle);
+    // Keep the first film selectable, while leaving the explicit sequel a clear match.
+    if (sequelTitle && ranked.some(entry => entry.match.score === 1 && isNumberedSequel(entry))) {
+        for (const entry of ranked) {
+            if (entry.mediaType === "movie" && !isNumberedSequel(entry) && entry.match.score > 0.9) {
+                entry.match = { ...entry.match, score: 0.9, confidence: getSearchConfidence(0.9) };
+            }
+        }
+    }
+    return ranked.sort((left, right) => (
             right.match.score - left.match.score
             || (toFiniteMetric(right.item.vote_count, 0) - toFiniteMetric(left.item.vote_count, 0))
             || (toFiniteMetric(right.item.popularity, 0) - toFiniteMetric(left.item.popularity, 0))
