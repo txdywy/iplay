@@ -190,3 +190,13 @@ test('"第N部" also looks up the numbered sequel of a film', async t => {
     const dated = await search('沙丘 第二部 2024', 'sequel-2');
     assert.equal(dated.results[0].title, '沙丘2', 'the year picks the sequel');
 });
+
+test('below desktop width the poster shares a row with the title', async () => {
+    const html = await readFile('index.html', 'utf8');
+    assert.match(html, /grid-cols-\[7rem_minmax\(0,1fr\)\][^"]*lg:grid-cols-\[300px_1fr\]/);
+    assert.match(html, /max-lg:contents lg:flex lg:flex-col/);
+    assert.match(html, /max-lg:col-start-2 max-lg:row-start-1[^"]*">\s*<h2 id="showTitle"/);
+    const actions = html.slice(html.indexOf('<!-- Actions -->'), html.indexOf('<!-- Rating boxes row -->'));
+    assert.equal((actions.match(/<button /g) || []).length, 3);
+    assert.doesNotMatch(actions, /text-sm/);
+});

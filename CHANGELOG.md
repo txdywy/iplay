@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.47] - 2026-11-13
+
+### Changed
+
+- On phones and tablets the poster sits beside the title instead of alone above it, so the title, year and actions share the first screen.
+- The three title actions (夸克资源, 收藏, 复制影视分享链接) are one row of equal-sized buttons.
+- Wide cards in the data dossier span the full width; they used to leave the right third empty on desktop.
+
 ## [1.0.46] - 2026-11-13
 
 ### Fixed
