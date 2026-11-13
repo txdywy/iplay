@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.45';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.46';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.45';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.45';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.45';
-import { RELEASE_VERSION } from './release.js?v=1.0.45';
+} from './scorer.js?v=1.0.46';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.46';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.46';
+import { RELEASE_VERSION } from './release.js?v=1.0.46';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.45';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.45';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.45';
+} from './match.js?v=1.0.46';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.46';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.46';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -3038,6 +3038,7 @@ window.addEventListener('popstate', event => {
 els.jumpToResources?.addEventListener('click', () => {
     // Entering the viewport starts the scan; the button is the keyboard and
     // no-IntersectionObserver path to the same thing.
+    els.resourcesSection?.focus({ preventScroll: true });
     els.resourcesSection?.scrollIntoView({
         behavior: matchesMedia('(prefers-reduced-motion: reduce)') ? 'auto' : 'smooth',
         block: 'start'

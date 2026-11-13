@@ -651,7 +651,8 @@ async function runObserverFlow() {
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#doubanBackupBox')).display"), 'none');
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'resources should stay deferred before entering the viewport');
 
-    await evaluate("document.querySelector('#resourcesSection')?.scrollIntoView({ block: 'start' })");
+    await evaluate("document.querySelector('#jumpToResources').click()");
+    assert.equal(await evaluate("document.activeElement.id"), 'resourcesSection');
     await waitFor('window.__smoke.resourceCalls === 1');
     await waitFor("document.querySelector('#resourcesSection button')?.textContent.includes('重试资源扫描')");
     assert.match(await evaluate('document.querySelector("#resourcesStatus")?.textContent || ""'), /失败/);

@@ -134,17 +134,23 @@ export async function handleTelegramWebhook(request, env, ctx) {
 }
 
 /**
- * GET /telegram/setup?token=<bot token> registers the webhook and the command
- * menu. The caller proves ownership with the bot token itself.
+ * POST /telegram/setup registers the webhook and command menu.
+ * Authenticate with a separate operator secret so the bot token stays server-side.
  */
 export async function handleTelegramSetup(request, env) {
+    if (request.method !== "POST") return jsonResponse({ error: "Method Not Allowed" }, 405, { Allow: "POST" });
     const token = getTelegramToken(env);
-    if (!token) return jsonResponse({ error: "TELEGRAM_BOT_TOKEN is not configured" }, 503);
+    const adminSecret = typeof env?.TELEGRAM_SETUP_SECRET === "string" ? env.TELEGRAM_SETUP_SECRET.trim() : "";
+    if (!token || !adminSecret || adminSecret === token) {
+        return jsonResponse({ error: "Telegram setup is not configured" }, 503);
+    }
 
-    const url = new URL(request.url);
-    if (!timingSafeEqual(url.searchParams.get("token") || "", token)) {
+    const authorization = request.headers.get("Authorization") || "";
+    if (!timingSafeEqual(authorization, `Bearer ${adminSecret}`)) {
         return jsonResponse({ error: "Unauthorized" }, 401);
     }
+
+    const url = new URL(request.url);
 
     const webhookUrl = `${url.origin}${TELEGRAM_WEBHOOK_PATH}`;
     try {
@@ -323,13 +329,13 @@ function getDetail(env, ctx, mediaType, id, season = null) {
     return readHandler(handleTmdbDetail(String(id), mediaType, season === null ? null : String(season), env, ctx));
 }
 
-function getResources(env, ctx, detail, refresh = false) {
-    return readHandler(handleResourceSearch(detail.title || detail.originalTitle, env, ctx, {
-        refresh,
+function getResources(env, ctx, detail, options) {
+    return handleResourceSearch(detailTitle(detail), env, ctx, {
+        ...options,
         id: String(detail.id),
         mediaType: detail.mediaType,
         year: detail.year ? String(detail.year) : null
-    }));
+    });
 }
 
 function getPersonPage(env, ctx, personId, offset, mediaType) {
@@ -541,7 +547,7 @@ async function handleCallbackQuery(query, env, ctx) {
                 return await showQuarkPage(chat, env, ctx, args[0], args[1], 0, { messageId: editableId, refresh: true });
             case "r":
                 await answer();
-                return await showQuarkPage(chat, env, ctx, args[0], args[1], Number(args[2]) || 0, { messageId: editableId });
+                return await showQuarkPage(chat, env, ctx, args[0], args[1], Number(args[2]) || 0, { messageId: editableId, cacheOnly: true });
             case "rp":
                 await answer();
                 return await showPostPage(chat, env, ctx, editableId, args);
@@ -871,13 +877,17 @@ export function buildQuarkPage(detail, result, page, { stale = false } = {}) {
  * `messageId` null posts a new resource message (opened from a detail card);
  * otherwise that message is edited in place (paging, rescans, back from posts).
  */
-async function showQuarkPage(chat, env, ctx, mediaType, id, page, { messageId = null, refresh = false } = {}) {
+function resourceRetryKeyboard(detail) {
+    return keyboard([[button("🔄 重新扫描", "rf", detail.mediaType, detail.id)]]);
+}
+
+async function showQuarkPage(chat, env, ctx, mediaType, id, page, { messageId = null, refresh = false, cacheOnly = false } = {}) {
     const detail = await getDetail(env, ctx, mediaType, id);
     // Every state of the message keeps a rescan button: if the Worker is cut
     // off mid-scan, the placeholder must not become a dead end.
-    const retryMarkup = keyboard([[button("🔄 重新扫描", "rf", detail.mediaType, detail.id)]]);
+    const retryMarkup = resourceRetryKeyboard(detail);
     let targetId = messageId;
-    if (!targetId) {
+    if (!targetId && !cacheOnly) {
         const placeholder = await chat.send(`${resourceHeader(detail, "夸克资源")}\n\n⏳ 正在扫描资源索引和论坛帖子…`, retryMarkup);
         targetId = placeholder?.message_id ?? null;
     } else if (refresh) {
@@ -886,12 +896,11 @@ async function showQuarkPage(chat, env, ctx, mediaType, id, page, { messageId = 
     const show = (text, markup) => (targetId ? chat.edit(targetId, text, markup) : chat.send(text, markup));
 
     try {
-        const response = await handleResourceSearch(detailTitle(detail), env, ctx, {
-            refresh,
-            id: String(detail.id),
-            mediaType: detail.mediaType,
-            year: detail.year ? String(detail.year) : null
-        });
+        const response = await getResources(env, ctx, detail, { refresh, cacheOnly });
+        if (response.status === 410) {
+            const { error } = await response.json();
+            return await show(`${resourceHeader(detail, "夸克资源")}\n\n${escapeHtml(error)}`, retryMarkup);
+        }
         const stale = response.headers.get("X-iPlay-Stale") === "1";
         const { text, markup } = buildQuarkPage(detail, await readHandler(response), page, { stale });
         return await show(text, markup);
@@ -922,8 +931,14 @@ export function buildPostPage(detail, result, page) {
 async function showPostPage(chat, env, ctx, messageId, args) {
     const [mediaType, id, pageText] = args;
     const detail = await getDetail(env, ctx, mediaType, id);
-    const { text, markup } = buildPostPage(detail, await getResources(env, ctx, detail), Number(pageText) || 0);
-    return messageId ? chat.edit(messageId, text, markup) : chat.send(text, markup);
+    const response = await getResources(env, ctx, detail, { cacheOnly: true });
+    const show = (text, markup) => messageId ? chat.edit(messageId, text, markup) : chat.send(text, markup);
+    if (response.status === 410) {
+        const { error } = await response.json();
+        return show(`${resourceHeader(detail, "资源帖")}\n\n${escapeHtml(error)}`, resourceRetryKeyboard(detail));
+    }
+    const { text, markup } = buildPostPage(detail, await readHandler(response), Number(pageText) || 0);
+    return show(text, markup);
 }
 
 // ---------------------------------------------------------------------------

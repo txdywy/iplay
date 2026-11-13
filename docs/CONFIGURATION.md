@@ -19,6 +19,7 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
 | `TELEGRAM_BOT_TOKEN` | Optional | — | Enables the Telegram bot. See [TELEGRAM.md](TELEGRAM.md) for setup. |
 | `TELEGRAM_ALLOWED_USERS` | Optional | — | Comma-separated Telegram user IDs allowed to use the bot. Empty means public, rate-limited per user. |
+| `TELEGRAM_SETUP_SECRET` | Required for setup | — | Independent bearer secret for registering the Telegram webhook. |
 | `TELEGRAM_WEBHOOK_SECRET` | Optional | Derived from the token | Overrides the webhook secret Telegram must send. Re-run `/telegram/setup` after changing it. |
 
 ### Setting Secrets via Wrangler CLI

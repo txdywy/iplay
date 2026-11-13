@@ -6,6 +6,7 @@ TMDB_ACCESS_TOKEN=your_tmdb_v4_read_access_token
 
 # Optional Telegram bot (docs/TELEGRAM.md). Local webhooks need a public tunnel.
 # TELEGRAM_BOT_TOKEN=123456789:your_bot_token
+# TELEGRAM_SETUP_SECRET=your_independent_random_setup_secret
 # TELEGRAM_ALLOWED_USERS=12345678
 
 # Optional comma-separated frontend origins beyond the built-in local origins.

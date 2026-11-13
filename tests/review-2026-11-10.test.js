@@ -181,10 +181,12 @@ test('"第N部" also looks up the numbered sequel of a film', async t => {
         const query = parsed.searchParams.get('query');
         return Response.json({ results: query === '沙丘2'
             ? [{ id: 693134, media_type: 'movie', title: '沙丘2', release_date: '2024-02-27' }]
-            : query.startsWith('沙丘') ? [{ id: 438631, media_type: 'movie', title: '沙丘', release_date: '2021-09-15' }] : [] });
+            : query.startsWith('沙丘') ? [{ id: 438631, media_type: 'movie', title: '沙丘', release_date: '2021-09-15', vote_count: 12000 }] : [] });
     });
     const plain = await search('沙丘 第二部', 'sequel-1');
     assert.deepEqual(plain.results.map(item => item.title).sort(), ['沙丘', '沙丘2']);
+    assert.equal(plain.results[0].title, '沙丘2', 'an exact numbered sequel outranks a more popular first film');
+    assert.ok(plain.results[0].matchScore - plain.results[1].matchScore >= 0.08);
     const dated = await search('沙丘 第二部 2024', 'sequel-2');
     assert.equal(dated.results[0].title, '沙丘2', 'the year picks the sequel');
 });

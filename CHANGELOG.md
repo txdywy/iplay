@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.46] - 2026-11-13
+
+### Fixed
+
+- Telegram webhook registration uses POST with an independent operator secret. Resource pagination reads cached results and offers a rescan when the cache is unavailable.
+- Explicit movie sequel numbers rank ahead of the first film. The Quark shortcut moves keyboard focus to the resources, and resource labels describe links as extracted shares.
+
 ## [1.0.45] - 2026-11-12
 
 ### Fixed

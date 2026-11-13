@@ -118,7 +118,7 @@ export default {
             }
         }
 
-        if (request.method !== "GET") {
+        if (request.method !== "GET" && requestPath !== TELEGRAM_SETUP_PATH) {
             return withCors(jsonResponse({ error: "Method Not Allowed" }, 405, {
                 Allow: "GET, OPTIONS"
             }), request, env);

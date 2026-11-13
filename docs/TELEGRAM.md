@@ -37,11 +37,14 @@ iPlay 的 Telegram bot 运行在同一个 Cloudflare Worker 里，提供和网�
 
 ### 3. 注册 webhook
 
-在浏览器中打开（把 `<TOKEN>` 换成你的 bot token）：
+生成独立的高强度管理密钥（例如使用 `openssl rand -hex 32`），通过 `npm run wrangler -- secret put TELEGRAM_SETUP_SECRET` 配置为 Worker Secret。将同一密钥载入本地环境变量 `TELEGRAM_SETUP_SECRET`，然后执行：
 
-```text
-https://iplayw.hackx64.eu.org/telegram/setup?token=<TOKEN>
+```sh
+printf 'Authorization: Bearer %s\n' "$TELEGRAM_SETUP_SECRET" |
+  curl --fail-with-body -X POST -H @- https://iplayw.hackx64.eu.org/telegram/setup
 ```
+
+已注册的 webhook 会继续接收更新。曾将 Bot Token 放进浏览器 URL 的管理员可以在 BotFather 轮换 Token，更新 Worker Secret 并重新注册。
 
 成功时返回：
 
@@ -49,7 +52,7 @@ https://iplayw.hackx64.eu.org/telegram/setup?token=<TOKEN>
 { "ok": true, "bot": "@your_bot", "webhook": "https://iplayw.hackx64.eu.org/telegram/webhook", "pendingUpdates": 0, "access": "public" }
 ```
 
-该地址会调用 Telegram 的 `setWebhook`（附带校验密钥）并设置命令菜单；加上 `&drop=1` 会丢弃注册前积压的消息。只需执行一次；更换 token 或 Worker 域名后再执行一次即可。完成后在 Telegram 中给 bot 发送 `/start`。
+该地址会调用 Telegram 的 `setWebhook`（附带校验密钥）并设置命令菜单；在 URL 加上 `?drop=1` 会丢弃注册前积压的消息。只需执行一次；更换 token 或 Worker 域名后再执行一次即可。完成后在 Telegram 中给 bot 发送 `/start`。
 
 ### 4. （可选）限制可用用户
 
@@ -63,6 +66,7 @@ https://iplayw.hackx64.eu.org/telegram/setup?token=<TOKEN>
 |------|------|------|
 | `TELEGRAM_BOT_TOKEN` | 启用 bot 时必需 | BotFather 提供的 token。未配置时 `/telegram/*` 路由返回 `404` / `503`，网页功能不受影响 |
 | `TELEGRAM_ALLOWED_USERS` | 可选 | 逗号分隔的用户 ID 白名单；为空时公开使用 |
+| `TELEGRAM_SETUP_SECRET` | 注册时必需 | 独立管理密钥，用于注册 webhook |
 | `TELEGRAM_WEBHOOK_SECRET` | 可选 | 自定义 webhook 校验密钥（16–256 位字母、数字、`_`、`-`）。默认由 token 派生，修改后需重新执行第 3 步 |
 
 ## 路由
@@ -70,7 +74,7 @@ https://iplayw.hackx64.eu.org/telegram/setup?token=<TOKEN>
 | 路由 | 说明 |
 |------|------|
 | `POST /telegram/webhook` | Telegram 推送更新。必须带正确的 `X-Telegram-Bot-Api-Secret-Token`，否则返回 `401`。Worker 立即返回 `200`，在 `waitUntil` 中处理并回复，避免 Telegram 因超时重发 |
-| `GET /telegram/setup?token=<TOKEN>` | 校验 token 后注册 webhook 和命令菜单。token 错误返回 `401` |
+| `POST /telegram/setup` | 通过 `Authorization: Bearer …` 校验独立管理密钥并注册 webhook。密钥错误返回 `401` |
 
 ## 安全说明
 
