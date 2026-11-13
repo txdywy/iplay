@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.50" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.51" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
@@ -43,7 +43,7 @@
             <span>iPlay</span>
         </a>
         <div class="header-actions">
-            <button type="button" class="ui-button" popovertarget="favoritesPanel">
+            <button type="button" id="favoritesTrigger" class="ui-button" popovertarget="favoritesPanel" aria-controls="favoritesPanel">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
                     <path d="M6 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4-6 4V5Z"></path>
                 </svg>
@@ -52,7 +52,7 @@
             <section id="favoritesPanel" class="favorites-panel" popover aria-labelledby="favoritesHeading">
                 <div class="favorites-heading">
                     <h2 id="favoritesHeading">我的收藏</h2>
-                    <button type="button" class="icon-button" popovertarget="favoritesPanel" popovertargetaction="hide" aria-label="关闭收藏">
+                    <button type="button" id="favoritesClose" class="icon-button" popovertarget="favoritesPanel" popovertargetaction="hide" aria-label="关闭收藏">
                         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"></path></svg>
                     </button>
                 </div>
@@ -285,6 +285,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-5 left-1/2 w-max max-w-[min(90vw,28rem)] -translate-x-1/2 translate-y-20 opacity-0 transition-[translate,opacity] duration-200 bg-cinema-800 border border-cinema-600 text-cinema-100 px-5 py-3 rounded-xl shadow-xl text-sm z-50"></div>
 
     <footer id="releaseVersion" class="site-footer page-width" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.50"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.51"></script>
 </body>
 </html>
