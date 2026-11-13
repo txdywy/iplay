@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.48';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.49';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.48';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.48';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.48';
-import { RELEASE_VERSION } from './release.js?v=1.0.48';
+} from './scorer.js?v=1.0.49';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.49';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.49';
+import { RELEASE_VERSION } from './release.js?v=1.0.49';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.48';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.48';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.48';
+} from './match.js?v=1.0.49';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.49';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.49';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -95,7 +95,11 @@ const els = {
     preferenceReset: document.getElementById('preferenceReset'),
     quickSearches: document.getElementById('quickSearches'),
     favoriteList: document.getElementById('favoriteList'),
+    favoritesPanel: document.getElementById('favoritesPanel'),
+    favoritesEmpty: document.getElementById('favoritesEmpty'),
+    favoriteCount: document.getElementById('favoriteCount'),
     favoriteToggle: document.getElementById('favoriteToggle'),
+    favoriteToggleLabel: document.querySelector('#favoriteToggle span'),
     backToTop: document.getElementById('backToTop'),
     actorSortToggle: document.getElementById('actorSortToggle'),
     jumpToResources: document.getElementById('jumpToResources'),
@@ -108,14 +112,8 @@ function showToast(msg) {
     if (!els.toast) return;
     clearTimeout(toastTimer);
     els.toast.textContent = msg;
-    // Tailwind 4 positions with the `translate` property; `transform` would
-    // stack on top of it and leave the toast below the viewport.
-    els.toast.style.translate = '0 0';
-    els.toast.style.opacity = '1';
-    toastTimer = setTimeout(() => {
-        els.toast.style.translate = '';
-        els.toast.style.opacity = '0';
-    }, 3000);
+    els.toast.classList.add('toast-visible');
+    toastTimer = setTimeout(() => els.toast.classList.remove('toast-visible'), 3000);
 }
 
 function setSearchStatus(message) {
@@ -227,7 +225,7 @@ function createActorCreditCard(credit, query, searchId, searchOptions) {
     button.type = 'button';
     button.dataset.mediaId = String(credit.id);
     button.dataset.mediaType = credit.mediaType || '';
-    button.className = 'group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-cinema-700 bg-cinema-900/55 text-left transition-[transform,background-color,border-color] hover:-translate-y-1 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+    button.className = 'group flex min-w-0 flex-col overflow-hidden rounded-xl border border-cinema-700 bg-cinema-800 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-cinema-500 hover:bg-cinema-700/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
     button.setAttribute('aria-label', `查看${credit.mediaType === 'tv' ? '剧集' : '电影'} ${credit.title || '详情'}`);
 
     const image = document.createElement('img');
@@ -295,10 +293,6 @@ function updateActorFilterControls() {
         const byRating = state.sort === 'rating';
         els.actorSortToggle.textContent = byRating ? '按评分排序 ✓' : '按评分排序';
         els.actorSortToggle.setAttribute('aria-pressed', String(byRating));
-        els.actorSortToggle.classList.toggle('border-accent-red/60', byRating);
-        els.actorSortToggle.classList.toggle('text-cinema-100', byRating);
-        els.actorSortToggle.classList.toggle('border-cinema-700', !byRating);
-        els.actorSortToggle.classList.toggle('text-cinema-300', !byRating);
     }
     const counts = state.counts || {};
     const filters = [
@@ -310,11 +304,6 @@ function updateActorFilterControls() {
         if (!button) return;
         const active = state.mediaType === mediaType;
         button.setAttribute('aria-pressed', String(active));
-        button.classList.toggle('border-accent-red/60', active);
-        button.classList.toggle('bg-accent-red/10', active);
-        button.classList.toggle('border-cinema-700', !active);
-        button.classList.toggle('text-cinema-100', active);
-        button.classList.toggle('text-cinema-300', !active);
         const countNode = button.querySelector('span');
         if (countNode) countNode.textContent = `(${Number(count || 0)})`;
         button.setAttribute('aria-label', `${label} ${Number(count || 0)} 部`);
@@ -436,7 +425,7 @@ async function loadActorPage({ reset = false, mediaType = actorResultState?.medi
         renderActorCreditList(reset ? null : credits);
         updateActorFilterControls();
         updateActorPaginationControls();
-        setText(els.actorMeta, `已显示 ${state.loadedCredits.length} / 共 ${state.totalResults} 部出演作品，点击作品查看完整详情`);
+        setText(els.actorMeta, `已显示 ${state.loadedCredits.length} / ${state.totalResults} 部作品`);
         setSearchStatus(`已找到演员“${state.person.name || state.query}”，已加载 ${state.loadedCredits.length} / ${state.totalResults} 部作品`);
     } catch (error) {
         if (error?.name === 'AbortError') return;
@@ -484,7 +473,7 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
 
     hideActorCandidatePicker();
     setText(els.actorTitle, person.name || query);
-    setText(els.actorMeta, `已显示 ${credits.length} / 共 ${actorResultState.totalResults} 部出演作品，点击作品查看完整详情`);
+    setText(els.actorMeta, `已显示 ${credits.length} / ${actorResultState.totalResults} 部作品`);
 
     const profileUrl = toSafeImageUrl(person.profile);
     if (els.actorProfile && els.actorProfileWrapper && profileUrl) {
@@ -512,8 +501,8 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
 function renderActorCandidatePicker(candidates, query, searchId, searchOptions) {
     if (!els.actorCandidatePicker || !els.actorCandidateList) return false;
     clearNode(els.actorCandidateList);
-    setText(els.actorCandidatePickerQuery, `“${query}”`);
-    setText(els.actorCandidatePickerTitle, candidates.length > 1 ? '搜索到多个同名演员，请选择' : '请确认演员身份');
+    setText(els.actorCandidatePickerQuery, query);
+    setText(els.actorCandidatePickerTitle, candidates.length > 1 ? '选择演员' : '确认演员');
 
     const ranked = [...candidates]
         .filter(candidate => candidate?.id)
@@ -524,7 +513,7 @@ function renderActorCandidatePicker(candidates, query, searchId, searchOptions) 
         const button = document.createElement('button');
         button.type = 'button';
         button.dataset.personId = String(candidate.id);
-        button.className = 'group flex min-h-20 items-center gap-4 rounded-2xl border border-cinema-700 bg-cinema-900/60 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        button.className = 'group flex min-h-20 items-center gap-4 rounded-xl border border-cinema-600/70 bg-cinema-900 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-cinema-500 hover:bg-cinema-700/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
         const profile = document.createElement('img');
         profile.className = 'h-14 w-14 shrink-0 rounded-xl object-cover bg-cinema-800';
         profile.src = toSafeImageUrl(candidate.profile) || POSTER_PLACEHOLDER;
@@ -624,15 +613,15 @@ function candidateMatchLabel(candidate) {
 function renderCandidatePicker(candidates, query, onSelect) {
     if (!els.candidatePicker || !els.candidateList) return;
     clearNode(els.candidateList);
-    setText(els.candidatePickerQuery, `“${query}”`);
+    setText(els.candidatePickerQuery, query);
 
     const ranked = rankTmdbCandidates(candidates).filter(candidate => candidate?.id).slice(0, 6);
-    setText(els.candidatePickerTitle, ranked.length > 1 ? '搜索到多个可能的影视条目' : '请确认这个影视条目');
+    setText(els.candidatePickerTitle, ranked.length > 1 ? '选择影视条目' : '确认影视条目');
     const fragment = document.createDocumentFragment();
     ranked.forEach(candidate => {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'group rounded-2xl border border-cinema-700 bg-cinema-900/60 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-accent-red/70 hover:bg-cinema-800/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        button.className = 'group rounded-xl border border-cinema-600/70 bg-cinema-900 p-4 text-left transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-cinema-500 hover:bg-cinema-700/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
 
         const title = document.createElement('span');
         title.className = 'block text-base font-bold leading-snug text-cinema-100 group-hover:text-white';
@@ -728,9 +717,9 @@ const RESOURCE_TIMER_FALLBACK_MS = 1200;
 // even if the lists have not been scrolled into view.
 const RESOURCE_AUTO_START_MS = 1500;
 const POSTER_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Crect width='400' height='600' fill='%23141417'/%3E%3Ctext x='50%25' y='50%25' fill='%23333333' font-family='monospace' font-size='28' text-anchor='middle' dominant-baseline='middle'%3ENO POSTER%3C/text%3E%3C/svg%3E";
-// Match Tailwind's rem breakpoints, padding and gaps, including browser font
-// preferences; only the section/card borders stay in fixed pixels.
-const ACTOR_POSTER_SIZES = '(min-width: 92rem) calc((81.25rem - 14px) / 6), (min-width: 80rem) calc((100vw - 10.75rem - 14px) / 6), (min-width: 64rem) calc((100vw - 10rem - 12px) / 5), (min-width: 48rem) calc((100vw - 9.25rem - 10px) / 4), (min-width: 40rem) calc((100vw - 7rem - 8px) / 3), calc((100vw - 6.25rem - 6px) / 2)';
+// Match .page-width and the actor grid’s rem breakpoints and gaps. Each card
+// adds a fixed 1px border on each side of its image.
+const ACTOR_POSTER_SIZES = '(min-width: 80rem) calc(70.25rem / 6 - 2px), (min-width: 64rem) calc((min(74rem, 100vw - 4rem) - 3rem) / 5 - 2px), (min-width: 48rem) calc((100vw - 6.25rem) / 4 - 2px), (min-width: 40rem) calc((100vw - 5.5rem) / 3 - 2px), calc((100vw - 3rem) / 2 - 2px)';
 
 let posterLoadToken = 0;
 let activePosterContext = null;
@@ -883,7 +872,7 @@ function loadPoster(posterUrl, title = '', context = {}) {
     els.cover.dataset.posterToken = String(token);
     els.cover.alt = title ? `${title} 海报` : '影视海报';
     const sourceSet = getTmdbPosterSourceSet(safePosterUrl);
-    const sizes = safePosterUrl ? '(min-width: 1024px) 300px, min(100vw - 3rem, 260px)' : '';
+    const sizes = safePosterUrl ? '(min-width: 64rem) 10.5rem, (min-width: 40rem) 9rem, clamp(4.5rem, 22vw, 6rem)' : '';
     if (els.cover.getAttribute('srcset') !== sourceSet) els.cover.setAttribute('srcset', sourceSet);
     if (els.cover.getAttribute('sizes') !== sizes) els.cover.setAttribute('sizes', sizes);
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
@@ -904,21 +893,15 @@ function clearNode(node) {
     node.textContent = '';
 }
 
-function appendBadgeList(container, values, emptyLabel) {
+function appendBadgeList(container, values) {
     if (!container) return;
     clearNode(container);
-    if (!values || values.length === 0) {
-        const span = document.createElement('span');
-        span.className = 'px-3 py-1 border border-cinema-700 text-cinema-400 text-xs font-mono uppercase tracking-widest rounded-full';
-        span.textContent = emptyLabel;
-        container.appendChild(span);
-        return;
-    }
+    if (!values?.length) return;
 
     const frag = document.createDocumentFragment();
     values.forEach(value => {
         const span = document.createElement('span');
-        span.className = 'px-3 py-1 border border-cinema-700 text-cinema-100 text-xs font-mono uppercase tracking-widest rounded-full';
+        span.className = 'rounded-md bg-cinema-700/60 px-2 py-1 text-xs text-cinema-300';
         span.textContent = value;
         frag.appendChild(span);
     });
@@ -1035,7 +1018,7 @@ function createInfoCard(label, value, { wide = false, muted = false, interactive
 }
 
 function renderGenres(genres) {
-    appendBadgeList(els.tags, genres, 'UNKNOWN CLASS');
+    appendBadgeList(els.tags, genres);
 }
 
 function renderTmdbProfile(viewModel) {
@@ -1089,14 +1072,13 @@ function renderSynopsis(sourceLabel, text) {
     els.wikiSummary.textContent = '';
 
     const source = document.createElement('span');
-    source.className = 'text-xs border border-cinema-700 px-2 py-1 rounded text-cinema-400 mb-2 inline-block';
+    source.className = 'mb-3 inline-block rounded-md bg-cinema-800 px-2 py-1 text-xs text-cinema-400';
     source.textContent = sourceLabel === 'ZH.WIKIPEDIA' ? '中文维基百科' : sourceLabel === 'NO DATA' ? '暂无数据' : sourceLabel;
     els.wikiSummary.appendChild(source);
-    els.wikiSummary.appendChild(document.createElement('br'));
 
     if (text && text.trim()) {
         const body = document.createElement('div');
-        body.className = 'whitespace-pre-wrap';
+        body.className = 'whitespace-pre-wrap leading-[1.8] text-cinema-300';
         body.textContent = text;
         els.wikiSummary.appendChild(body);
     } else {
@@ -1306,13 +1288,13 @@ function renderLinkCards(container, items, {
             const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
             const hasAction = Boolean(resolvedActionLabel && typeof onAction === 'function');
             const card = document.createElement(hasAction ? 'div' : 'a');
-            card.className = `${cardClass} ${hasAction ? '' : 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red'}`;
+            card.className = cardClass;
 
             const link = hasAction ? document.createElement('a') : card;
             link.href = item.url;
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
-            if (hasAction) link.className = 'block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            if (hasAction) link.className = 'block rounded-sm';
 
             const row = document.createElement('div');
             row.className = 'flex items-start justify-between gap-3';
@@ -1320,7 +1302,7 @@ function renderLinkCards(container, items, {
             const content = document.createElement('div');
             content.className = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
             const title = document.createElement('div');
-            title.className = 'text-sm font-medium leading-snug text-cinema-100';
+            title.className = 'text-sm font-semibold leading-snug text-cinema-100';
             title.textContent = titleText(item);
 
             const meta = document.createElement('div');
@@ -1369,7 +1351,7 @@ function renderLinkCards(container, items, {
 
                 const button = document.createElement('button');
                 button.type = 'button';
-                button.className = 'mt-3 min-h-11 w-full rounded-xl border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-xs font-mono tracking-wider text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-70';
+                button.className = 'ui-button mt-3 text-xs';
                 button.textContent = resolvedActionLabel;
                 button.setAttribute('aria-live', 'polite');
                 button.addEventListener('click', async () => {
@@ -1397,7 +1379,7 @@ function renderLinkCards(container, items, {
             li.className = 'p-3';
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.className = 'ui-button w-full text-xs';
             button.textContent = `显示更多（剩余 ${maxItems - visibleLimit} 条）`;
             button.setAttribute('aria-expanded', 'false');
             if (container.id) button.setAttribute('aria-controls', container.id);
@@ -1412,7 +1394,7 @@ function renderLinkCards(container, items, {
             li.className = 'p-3';
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'min-h-11 w-full rounded-xl border border-cinema-700 px-3 py-3 text-xs font-mono tracking-wider text-cinema-400 transition-colors hover:border-cinema-400 hover:text-cinema-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+            button.className = 'ui-button w-full text-xs';
             button.textContent = '收起列表';
             button.setAttribute('aria-expanded', 'true');
             if (container.id) button.setAttribute('aria-controls', container.id);
@@ -1439,7 +1421,7 @@ function renderLinkCards(container, items, {
     renderVisibleItems(wasExpanded ? maxItems : firstPageSize);
 }
 
-function renderResourceStatus(container, { title, detail, iconName, iconClass, progressClass, isLoading = true, actionLabel = '', onAction = null }) {
+function renderResourceStatus(container, { title, detail, iconName, iconClass, isLoading = true, actionLabel = '', onAction = null }) {
     if (!container) return;
     clearNode(container);
 
@@ -1447,7 +1429,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, p
     li.className = 'p-3';
 
     const panel = document.createElement('div');
-    panel.className = 'rounded-2xl border border-cinema-700 bg-cinema-900/45 p-4';
+    panel.className = 'rounded-lg bg-cinema-900/55 p-3';
     panel.setAttribute('aria-live', 'polite');
     panel.setAttribute('aria-busy', String(isLoading));
 
@@ -1464,7 +1446,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, p
     heading.textContent = title;
 
     const copy = document.createElement('div');
-    copy.className = 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400 leading-relaxed';
+    copy.className = 'mt-1 text-xs text-cinema-400 leading-relaxed';
     copy.textContent = detail;
 
     content.appendChild(heading);
@@ -1475,7 +1457,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, p
 
     if (isLoading) {
         const progress = document.createElement('div');
-        progress.className = `resource-progress-track ${progressClass} mt-4`;
+        progress.className = 'resource-progress-track mt-4';
         progress.setAttribute('role', 'progressbar');
         progress.setAttribute('aria-label', title);
         panel.appendChild(progress);
@@ -1484,7 +1466,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, p
     if (!isLoading && actionLabel && typeof onAction === 'function') {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'mt-4 min-h-11 rounded-full border border-cinema-400/60 px-4 py-2 text-xs font-mono text-cinema-100 transition-colors hover:border-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
+        button.className = 'ui-button mt-3 text-xs';
         button.textContent = actionLabel;
         button.addEventListener('click', async () => {
             button.disabled = true;
@@ -1509,21 +1491,18 @@ function renderResourceLoadingStates(title) {
         detail: `正在扫描“${title}”的资源页面`,
         iconName: 'cloud',
         iconClass: 'text-accent-red',
-        progressClass: 'resource-progress-red'
     });
     renderResourceStatus(els.resourceList, {
         title: '正在收集资源页面',
         detail: '正在检查资源索引和论坛帖子',
         iconName: 'link',
-        iconClass: 'text-[#0099ff]',
-        progressClass: 'resource-progress-blue'
+        iconClass: 'text-blue-500',
     });
     renderResourceStatus(els.wpzysResourceList, {
         title: '正在搜索 WPZY 论坛',
         detail: '正在筛选包含夸克资源的匹配帖子',
         iconName: 'comments',
         iconClass: 'text-accent-gold',
-        progressClass: 'resource-progress-gold'
     });
 }
 
@@ -1535,7 +1514,6 @@ function renderResourceDeferredStates(title, onStart) {
         detail: `滚动到这里或点击按钮，开始扫描“${title}”`,
         iconName: 'cloud',
         iconClass: 'text-accent-red',
-        progressClass: 'resource-progress-red',
         isLoading: false,
         actionLabel: '开始扫描资源',
         onAction: onStart
@@ -1544,8 +1522,7 @@ function renderResourceDeferredStates(title, onStart) {
         title: '资源页面待加载',
         detail: '资源扫描会在影视详情先显示后开始',
         iconName: 'link',
-        iconClass: 'text-[#0099ff]',
-        progressClass: 'resource-progress-blue',
+        iconClass: 'text-blue-500',
         isLoading: false,
         actionLabel: '开始扫描资源',
         onAction: onStart
@@ -1555,7 +1532,6 @@ function renderResourceDeferredStates(title, onStart) {
         detail: '需要时再扫描论坛，减少首屏等待和无效请求',
         iconName: 'comments',
         iconClass: 'text-accent-gold',
-        progressClass: 'resource-progress-gold',
         isLoading: false,
         actionLabel: '开始扫描资源',
         onAction: onStart
@@ -1570,7 +1546,6 @@ function renderResourceErrorStates(onRetry) {
         detail: '资源扫描没有完成，其他影视信息仍可正常使用',
         iconName: 'cloud',
         iconClass: 'text-accent-red',
-        progressClass: 'resource-progress-red',
         isLoading: false,
         actionLabel: '重试资源扫描',
         onAction: onRetry
@@ -1579,8 +1554,7 @@ function renderResourceErrorStates(onRetry) {
         title: '资源来源暂时没有响应',
         detail: '上方影视详情仍可使用，你可以重新扫描资源',
         iconName: 'link',
-        iconClass: 'text-[#0099ff]',
-        progressClass: 'resource-progress-blue',
+        iconClass: 'text-blue-500',
         isLoading: false,
         actionLabel: '重试资源扫描',
         onAction: onRetry
@@ -1590,7 +1564,6 @@ function renderResourceErrorStates(onRetry) {
         detail: '论坛结果可能暂时不可用，你可以稍后重试',
         iconName: 'comments',
         iconClass: 'text-accent-gold',
-        progressClass: 'resource-progress-gold',
         isLoading: false,
         actionLabel: '重试资源扫描',
         onAction: onRetry
@@ -1601,7 +1574,7 @@ function renderResourceErrorStates(onRetry) {
 function renderResourcesAwaitingDetails() {
     const waiting = { title: '等待详情确认', detail: '确认作品后开始扫描资源', isLoading: false };
     renderResourceStatus(els.quarkUrlList, { ...waiting, iconName: 'cloud', iconClass: 'text-accent-red' });
-    renderResourceStatus(els.resourceList, { ...waiting, iconName: 'link', iconClass: 'text-[#0099ff]' });
+    renderResourceStatus(els.resourceList, { ...waiting, iconName: 'link', iconClass: 'text-blue-500' });
     renderResourceStatus(els.wpzysResourceList, { ...waiting, iconName: 'comments', iconClass: 'text-accent-gold' });
 }
 
@@ -1611,8 +1584,8 @@ function renderResourceList(resources) {
         itemClass: 'border-b border-cinema-700/50 last:border-b-0',
         cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
         iconName: 'external',
-        iconClass: 'h-5 w-5 shrink-0 text-[#0099ff] mt-1 opacity-70',
-        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
+        iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
+        metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
         initialLimit: 6
@@ -1635,8 +1608,8 @@ function renderWpzysResourceList(resources, meta = {}) {
         itemClass: 'border-b border-cinema-700/50 last:border-b-0',
         cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
         iconName: 'comments',
-        iconClass: 'h-5 w-5 shrink-0 text-accent-gold mt-1 opacity-80',
-        metaClass: 'mt-2 text-xs font-mono uppercase tracking-[0.28em] text-cinema-400',
+        iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
+        metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
         initialLimit: 6
@@ -1648,8 +1621,8 @@ function renderQuarkUrls(quarkUrls) {
         emptyLabel: '暂未提取到夸克链接',
         itemClass: 'border-b border-cinema-700/50 last:border-b-0',
         cardClass: 'block rounded-lg px-2 py-3 transition-colors hover:bg-cinema-700/40',
-        iconName: 'cloud',
-        iconClass: 'h-5 w-5 shrink-0 text-accent-red mt-1 opacity-80',
+        iconName: 'external',
+        iconClass: 'h-4 w-4 shrink-0 text-accent-gold mt-1',
         // Share tokens are case-sensitive: show the address exactly as it is.
         metaClass: 'mt-2 text-xs font-mono text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),
@@ -1690,7 +1663,7 @@ function renderPreferenceFields() {
 }
 
 function rerenderScoreWithPreferences() {
-    if (lastScoreRender) renderScore(...lastScoreRender, true);
+    if (lastScoreRender) renderScore(...lastScoreRender);
 }
 
 els.preferenceForm?.addEventListener('submit', event => {
@@ -1717,7 +1690,7 @@ els.preferenceReset?.addEventListener('click', () => {
 
 renderPreferenceFields();
 
-function renderScore(data, sourceLabel, isUpdate = false) {
+function renderScore(data, sourceLabel) {
     lastScoreRender = [data, sourceLabel];
     const scoreData = calculateRecommendationScore({
         rating: data.rating,
@@ -1732,38 +1705,26 @@ function renderScore(data, sourceLabel, isUpdate = false) {
     els.recScore.textContent = scoreData.score;
     els.recLabel.textContent = labelInfo.label;
 
-    const scoreClass = `text-4xl font-black font-mono ${labelInfo.color}`;
+    const scoreClass = `text-4xl font-bold tabular-nums ${labelInfo.color}`;
     els.recScore.className = scoreClass;
     els.recLabel.className = `text-base font-bold ${labelInfo.color}`;
 
     if (els.recBar) {
-        els.recBar.style.width = `${scoreData.score}%`;
-
-        const barColor = scoreData.score >= 85 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]'
-            : scoreData.score >= 70 ? 'bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]'
-            : scoreData.score >= 50 ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.5)]'
-            : 'bg-accent-red shadow-[0_0_15px_rgba(229,9,20,0.5)]';
-
-        if (!isUpdate) {
-            els.recBar.className = `h-full progress-bar ${barColor}`;
-            els.recBar.style.animation = 'none';
-            requestAnimationFrame(() => {
-                els.recBar.style.animation = '';
-            });
-        } else {
-            els.recBar.classList.remove('progress-bar');
-            els.recBar.className = `h-full ${barColor}`;
-            els.recBar.style.transition = 'width 0.5s ease-out, background-color 0.5s ease-out, box-shadow 0.5s ease-out';
-        }
+        const barColor = scoreData.score >= 85 ? 'bg-green-500'
+            : scoreData.score >= 70 ? 'bg-blue-500'
+            : scoreData.score >= 50 ? 'bg-accent-gold'
+            : 'bg-accent-red';
+        els.recBar.className = `score-fill ${barColor}`;
+        els.recBar.style.setProperty('--score', String(scoreData.score / 100));
     }
 
     clearNode(els.scoreDetails);
     const detailFrag = document.createDocumentFragment();
     [
-        `SRC: ${sourceLabel}`,
-        `BAS: ${scoreData.details.base}`,
-        `POP: ${scoreData.details.heat}`,
-        `PRF: ${scoreData.details.preference}`
+        `来源 ${sourceLabel}`,
+        `基础 ${scoreData.details.base}`,
+        `热度 ${scoreData.details.heat}`,
+        `偏好 ${scoreData.details.preference}`
     ].forEach(text => {
         const span = document.createElement('span');
         span.textContent = text;
@@ -1845,7 +1806,7 @@ function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
         hasWiki: viewModel.overviewSource === 'ZH.WIKIPEDIA',
         summary: viewModel.summary,
         source: 'tmdb'
-    }, 'TMDB', isUpdate);
+    }, 'TMDB');
 }
 
 function focusResultHeading() {
@@ -2053,17 +2014,6 @@ function showSearchError(error, query, searchId, onRetry = null) {
     if (!focused || focused === document.body || !focused.isConnected || focused.closest('.hidden')) {
         els.retrySearchButton?.focus();
     }
-}
-
-function resetResultAnimation() {
-    els.results.querySelectorAll('.fade-up').forEach(element => {
-        element.style.animation = 'none';
-    });
-    requestAnimationFrame(() => {
-        const fadeElements = els.results.querySelectorAll('.fade-up');
-        fadeElements.forEach(element => void element.offsetHeight);
-        fadeElements.forEach(element => { element.style.animation = ''; });
-    });
 }
 
 let resourceScheduleCleanup = null;
@@ -2290,7 +2240,7 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
                     hasWiki: viewModel.overviewSource === 'ZH.WIKIPEDIA',
                     summary: viewModel.summary,
                     source: 'tmdb'
-                }, 'TMDB', true);
+                }, 'TMDB');
             }
         }
     }).catch(error => { if (error?.name !== 'AbortError') console.debug('Douban enrichment skipped:', error); });
@@ -2311,7 +2261,7 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
                 hasWiki: true,
                 summary: viewModel.summary,
                 source: 'tmdb'
-            }, 'TMDB', true);
+            }, 'TMDB');
         }
         setEnrichmentStatus(els.wikiStatus, hasWiki ? '已补充中文 Wikipedia 简介'
             : viewModel.overviewSource === 'ZH.WIKIPEDIA' ? '本次未能更新，已保留已有中文 Wikipedia 简介' : '暂无中文 Wikipedia 补充');
@@ -2372,7 +2322,6 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     } else {
         els.results.classList.add('hidden');
         els.loading.classList.remove('hidden');
-        showToast('正在加载影视详情…');
     }
 
     const viewModel = retained?.viewModel || buildTmdbViewModel(selectedCandidate, null, null, null);
@@ -2526,17 +2475,10 @@ function isFavorite(candidate) {
 function renderFavoriteToggle() {
     if (!els.favoriteToggle) return;
     const saved = Boolean(activeDetailState && isFavorite(activeDetailState.candidate));
-    els.favoriteToggle.textContent = saved ? '★ 已收藏' : '☆ 收藏';
+    setText(els.favoriteToggleLabel, saved ? '已收藏' : '收藏');
     els.favoriteToggle.setAttribute('aria-pressed', String(saved));
-    // Swap, not add: the stylesheet emits the gold utilities before the
-    // neutral ones, so both together would leave the neutral style.
-    els.favoriteToggle.classList.toggle('border-accent-gold', saved);
-    els.favoriteToggle.classList.toggle('text-accent-gold', saved);
-    els.favoriteToggle.classList.toggle('border-cinema-700', !saved);
-    els.favoriteToggle.classList.toggle('text-cinema-100', !saved);
     // Only a work TMDB confirmed can be saved: a share link's title is unverified.
     els.favoriteToggle.disabled = !activeDetailState?.detailConfirmed;
-    els.favoriteToggle.classList.toggle('opacity-50', !activeDetailState?.detailConfirmed);
 }
 
 function renderFavorites() {
@@ -2544,19 +2486,23 @@ function renderFavorites() {
     if (!els.favoriteList) return;
     clearNode(els.favoriteList);
     const favorites = readFavorites();
-    els.favoriteList.classList.toggle('hidden', favorites.length === 0);
-    els.favoriteList.classList.toggle('flex', favorites.length > 0);
-    if (favorites.length === 0) return;
-    const label = document.createElement('span');
-    label.className = 'font-mono text-xs text-cinema-400';
-    label.textContent = '我的收藏';
-    els.favoriteList.appendChild(label);
+    els.favoritesEmpty.hidden = favorites.length > 0;
+    els.favoriteCount.hidden = favorites.length === 0;
+    setText(els.favoriteCount, favorites.length);
     favorites.forEach(item => {
+        const row = document.createElement('li');
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'min-h-11 max-w-[14rem] truncate rounded-full border border-accent-gold/40 px-4 text-sm text-cinema-100 transition-colors hover:border-accent-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
-        chip.textContent = `★ ${item.title}${item.year ? ` (${item.year})` : ''}`;
+        chip.className = 'favorite-row';
+        const title = document.createElement('span');
+        title.className = 'min-w-0 wrap-anywhere text-sm font-semibold';
+        title.textContent = item.title;
+        const meta = document.createElement('span');
+        meta.className = 'shrink-0 text-xs text-cinema-400';
+        meta.textContent = [item.mediaType === 'movie' ? '电影' : '剧集', item.year].filter(Boolean).join(' · ');
+        chip.append(title, meta, createIcon('external', 'h-4 w-4 shrink-0 text-cinema-400'));
         chip.addEventListener('click', () => {
+            els.favoritesPanel.hidePopover();
             // Open through the same validated path as a shared link.
             const url = new URL(window.location.href);
             url.search = '';
@@ -2569,7 +2515,8 @@ function renderFavorites() {
             setAppHistoryState('pushState', { kind: 'detail', id: item.id, mediaType: item.mediaType, season: null, title: item.title }, getAppHistoryUrl(url));
             void restoreUrlState();
         });
-        els.favoriteList.appendChild(chip);
+        row.appendChild(chip);
+        els.favoriteList.appendChild(row);
     });
 }
 
@@ -2596,7 +2543,7 @@ function toggleFavorite() {
         return;
     }
     renderFavorites();
-    showToast(saved ? '已取消收藏' : '已收藏，可在搜索框下方找到');
+    showToast(saved ? '已取消收藏' : '已添加到「我的收藏」');
 }
 
 const RECENT_SEARCH_KEY = 'iplay_recent_searches';
@@ -2637,13 +2584,13 @@ function renderQuickSearches() {
     clearNode(els.quickSearches);
     const recent = readRecentSearches();
     const label = document.createElement('span');
-    label.className = 'font-mono text-xs text-cinema-400';
-    label.textContent = recent.length ? '最近搜索' : '试试';
+    label.className = 'quick-label';
+    label.textContent = recent.length ? '最近搜索' : '试试搜索';
     els.quickSearches.appendChild(label);
     (recent.length ? recent : EXAMPLE_SEARCHES).forEach(query => {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'min-h-11 max-w-[12rem] truncate rounded-full border border-cinema-700 px-4 text-sm text-cinema-100 transition-colors hover:border-accent-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
+        chip.className = 'quick-chip truncate';
         chip.textContent = query;
         chip.addEventListener('click', () => {
             els.input.value = query;
@@ -2656,13 +2603,17 @@ function renderQuickSearches() {
         clear.type = 'button';
         clear.className = 'min-h-11 px-2 font-mono text-xs text-cinema-400 underline-offset-4 hover:text-cinema-100 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
         clear.textContent = '清除';
-        clear.addEventListener('click', () => writeRecentSearches([]));
+        clear.setAttribute('aria-label', '清除最近搜索');
+        clear.addEventListener('click', () => {
+            const hadFocus = document.activeElement === clear;
+            writeRecentSearches([]);
+            if (hadFocus) els.input.focus();
+        });
         els.quickSearches.appendChild(clear);
     }
 }
 
 function beginSearchSession(query) {
-    // Once there is content, phones give the screen to it rather than the logo.
     document.body.classList.add('has-content');
     activeDetailState = null;
     lastSearchQuery = query;
@@ -2687,7 +2638,6 @@ function beginSearchSession(query) {
     resetRatingBoxes();
     setSearching(true);
     setSearchStatus(`正在搜索“${query}”`);
-    resetResultAnimation();
     return { searchId, searchOptions };
 }
 
@@ -2835,6 +2785,21 @@ if (els.searchForm) {
         handleSearch();
     });
 }
+
+document.getElementById('clearSearch')?.addEventListener('click', () => {
+    els.input.value = '';
+    els.input.focus();
+});
+
+document.addEventListener('keydown', event => {
+    if (event.key !== '/' || event.defaultPrevented || event.repeat || event.isComposing
+        || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.target.isContentEditable || event.target.closest('input, textarea, select, [role="textbox"]')
+        || els.favoritesPanel.matches(':popover-open')) return;
+    event.preventDefault();
+    els.input.focus();
+    els.input.select();
+});
 
 if (els.retrySearchButton) {
     els.retrySearchButton.addEventListener('click', () => {
@@ -3017,5 +2982,3 @@ els.actorSortToggle?.addEventListener('click', () => {
 renderQuickSearches();
 renderFavorites();
 void restoreUrlState();
-// On a desktop home page the visitor's next action is typing a title.
-if (!window.location.search && matchesMedia('(hover: hover) and (pointer: fine)')) els.input?.focus({ preventScroll: true });

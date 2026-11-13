@@ -193,7 +193,8 @@ test('"第N部" also looks up the numbered sequel of a film', async t => {
 
 test('the result header offers resource, favorite and share actions', async () => {
     const html = await readFile('index.html', 'utf8');
-    const actions = html.slice(html.indexOf('<!-- Actions -->'), html.indexOf('<!-- Rating boxes row -->'));
-    assert.equal((actions.match(/<button /g) || []).length, 3);
-    assert.doesNotMatch(actions, /text-sm/);
+    const actions = html.match(/<div class="work-actions">([\s\S]*?)<\/div>/)?.[1] || '';
+    assert.match(actions, /<button[^>]*id="jumpToResources"[^>]*aria-controls="resourcesSection"/);
+    assert.match(actions, /<button[^>]*id="favoriteToggle"[^>]*aria-pressed="false"/);
+    assert.match(actions, /<button[^>]*data-share-current/);
 });
