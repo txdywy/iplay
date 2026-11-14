@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.51';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.52';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.51';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.51';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.51';
-import { RELEASE_VERSION } from './release.js?v=1.0.51';
+} from './scorer.js?v=1.0.52';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.52';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.52';
+import { RELEASE_VERSION } from './release.js?v=1.0.52';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.51';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.51';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.51';
+} from './match.js?v=1.0.52';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.52';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.52';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1094,13 +1094,13 @@ function renderSynopsis(sourceLabel, text) {
     els.wikiSummary.textContent = '';
 
     const source = document.createElement('span');
-    source.className = 'mb-3 inline-block rounded-md bg-cinema-800 px-2 py-1 text-xs text-cinema-400';
+    source.className = 'source-badge';
     source.textContent = sourceLabel === 'ZH.WIKIPEDIA' ? '中文维基百科' : sourceLabel === 'NO DATA' ? '暂无数据' : sourceLabel;
     els.wikiSummary.appendChild(source);
 
     if (text && text.trim()) {
         const body = document.createElement('div');
-        body.className = 'whitespace-pre-wrap leading-[1.8] text-cinema-300';
+        body.className = 'whitespace-pre-wrap';
         body.textContent = text;
         els.wikiSummary.appendChild(body);
     } else {
