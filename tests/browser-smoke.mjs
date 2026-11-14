@@ -697,12 +697,15 @@ async function runHeroArtworkFlow() {
             if (scenario === 'broken') {
                 await waitFor(`performance.getEntriesByName(${JSON.stringify(brokenHeroStill)}).length > 0`);
             }
-            assert.equal(await evaluate(`(() => {
+            // A detail update can re-render the poster right after the source
+            // first reads "poster"; wait for the background to settle on it.
+            await waitFor(`(() => {
                 const cover = document.getElementById('showCover');
                 const hero = document.getElementById('heroBackdrop');
-                return cover.currentSrc.includes('audit-actor-hero-poster')
+                return hero.dataset.source === 'poster'
+                    && cover.currentSrc.includes('audit-actor-hero-poster')
                     && getComputedStyle(hero, '::before').backgroundImage.includes(cover.currentSrc);
-            })()`), true);
+            })()`);
         }
         const requests = actorPosterRequests.slice(before);
         assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg')).length, 1);
