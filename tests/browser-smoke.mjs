@@ -690,17 +690,22 @@ async function runHeroArtworkFlow() {
         const source = scenario === 'still' ? 'backdrop' : 'poster';
         await waitFor(`document.getElementById('heroBackdrop').dataset.source === '${source}'`);
         if (scenario === 'still') {
-            assert.equal(await evaluate("document.querySelector('.hero-still').complete"), true);
+            // The still is appended on load; allow the decode to settle instead
+            // of sampling the same instant the source flips to "backdrop".
+            await waitFor("document.querySelector('.hero-still')?.complete === true");
         } else {
             if (scenario === 'broken') {
                 await waitFor(`performance.getEntriesByName(${JSON.stringify(brokenHeroStill)}).length > 0`);
             }
-            assert.equal(await evaluate(`(() => {
+            // A detail update can re-render the poster right after the source
+            // first reads "poster"; wait for the background to settle on it.
+            await waitFor(`(() => {
                 const cover = document.getElementById('showCover');
                 const hero = document.getElementById('heroBackdrop');
-                return cover.currentSrc.includes('audit-actor-hero-poster')
+                return hero.dataset.source === 'poster'
+                    && cover.currentSrc.includes('audit-actor-hero-poster')
                     && getComputedStyle(hero, '::before').backgroundImage.includes(cover.currentSrc);
-            })()`), true);
+            })()`);
         }
         const requests = actorPosterRequests.slice(before);
         assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg')).length, 1);
@@ -1547,12 +1552,20 @@ async function assertResultLayout(wide) {
             profileWithSynopsis: details.contains(profile) && !profile.open,
             directBeforePosts: ${wide} ? direct.right <= posts.left && Math.abs(direct.top - posts.top) < 2 : direct.bottom <= posts.top,
             naturalScroll: ['quarkUrlList', 'resourceList', 'wpzysResourceList'].every(id => getComputedStyle(find(id)).overflowY === 'visible'),
-            pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+            pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
+            // Desktop grid: the poster lines up with the side card's text and
+            // the title with the main card's text.
+            gridAligned: !${wide} || (() => {
+                const textLeft = element => element.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(element).paddingLeft);
+                const side = document.querySelector('.score-panel');
+                const main = document.querySelector('.work-main');
+                return Math.abs(poster.left - textLeft(side)) < 1.5 && Math.abs(title.left - textLeft(main)) < 1.5;
+            })()
         };
     })()`);
     assert.deepEqual(state, {
         titleBesidePoster: true, resourcesLast: true, detailsAboveResources: true, profileWithSynopsis: true,
-        directBeforePosts: true, naturalScroll: true, pageFits: true
+        directBeforePosts: true, naturalScroll: true, pageFits: true, gridAligned: true
     });
 }
 

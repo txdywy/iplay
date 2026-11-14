@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.51" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.52" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
@@ -197,24 +197,28 @@
                 </div>
 
                 <div class="work-body">
-                    <div class="min-w-0 space-y-4">
+                    <div class="work-main card">
                         <section aria-labelledby="synopsisHeading">
-                            <h3 id="synopsisHeading" class="mb-3 text-xl font-bold text-cinema-100">剧情简介</h3>
-                            <div id="wikiSummary" class="max-w-[68ch] text-sm leading-relaxed text-cinema-100 md:text-base"></div>
+                            <header class="card-head">
+                                <h3 id="synopsisHeading" class="card-title">剧情简介</h3>
+                            </header>
+                            <div id="wikiSummary" class="prose-body"></div>
                             <p id="wikiStatus" class="sr-only" aria-live="polite"></p>
                         </section>
-                        <details id="tmdbOverviewPanel" class="border-t border-cinema-700 pt-2">
+                        <details id="tmdbOverviewPanel" class="card-row">
                             <summary class="disclosure">查看 TMDB 概述</summary>
-                            <div id="tmdbOverview" class="mt-2 max-w-[68ch] text-sm leading-relaxed text-cinema-100 md:text-base"></div>
+                            <div id="tmdbOverview" class="prose-body pb-4"></div>
                         </details>
-                        <details id="profilePanel" class="border-t border-cinema-700 pt-2">
+                        <details id="profilePanel" class="card-row">
                             <summary class="disclosure">演职员与作品资料</summary>
-                            <div id="profileFields" class="mt-3 grid grid-cols-1 gap-x-5 sm:grid-cols-2"></div>
+                            <div id="profileFields" class="grid grid-cols-1 gap-x-6 pb-4 sm:grid-cols-2"></div>
                         </details>
                     </div>
-                    <section aria-labelledby="recommendationHeading" class="score-panel">
-                        <h3 id="recommendationHeading" class="mb-2 text-base font-semibold text-cinema-100">个性化推荐</h3>
-                        <p class="mb-4 text-xs text-cinema-400">综合评分、热度与题材偏好。</p>
+                    <section aria-labelledby="recommendationHeading" class="score-panel card">
+                        <header class="card-head">
+                            <h3 id="recommendationHeading" class="card-title">个性化推荐</h3>
+                            <p class="card-caption">综合评分、热度与题材偏好</p>
+                        </header>
                         <div class="score-summary">
                             <div id="scoreRing" class="score-ring">
                                 <span id="recScore" class="text-4xl font-bold tabular-nums"></span>
@@ -227,11 +231,11 @@
                                 </div>
                             </div>
                         </div>
-                        <div id="scoreDetails" class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-cinema-400"></div>
+                        <div id="scoreDetails" class="score-details"></div>
 
-                        <div id="reportArea" class="mt-6 pt-4 border-t border-cinema-700/50 text-sm">
+                        <div id="reportArea" class="card-row pt-4 text-sm">
                             <h4 class="mb-3 text-sm font-semibold text-cinema-100">推荐分析</h4>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="report-grid">
                                 <div>
                                     <h5 class="text-green-500 font-bold mb-2 text-xs"><svg aria-hidden="true" class="mr-1 inline-block h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-4 9 2.5 2.5L16.5 8.5"></path></svg>推荐理由</h5>
                                     <ul id="prosList" class="space-y-1 text-cinema-100 text-xs"></ul>
@@ -242,9 +246,9 @@
                                 </div>
                             </div>
                         </div>
-                        <details id="preferencePanel" class="mt-4 pt-4 border-t border-cinema-700/50 text-sm">
+                        <details id="preferencePanel" class="card-row mt-4 text-sm">
                             <summary class="disclosure">调整推荐偏好</summary>
-                            <form id="preferenceForm" class="mt-3" novalidate>
+                            <form id="preferenceForm" class="pb-2" novalidate>
                                 <p class="text-xs text-cinema-400 mb-3">分值范围 -5 到 5，正数加分、负数减分。偏好只保存在本浏览器。</p>
                                 <div id="preferenceFields" class="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2"></div>
                                 <div class="mt-4 flex flex-wrap gap-3">
@@ -258,22 +262,33 @@
             </section>
 
             <section id="resourcesSection" tabindex="-1" aria-labelledby="resourcesHeading" class="resources-grid">
-                <h3 id="resourcesHeading" class="col-span-full text-2xl font-bold text-cinema-100">网盘资源</h3>
+                <header class="section-head">
+                    <h3 id="resourcesHeading" class="section-title">网盘资源</h3>
+                    <p class="section-caption">夸克直链来自原帖提取，原帖可核对版本与提取码</p>
+                </header>
                 <p id="resourcesStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
                 <div id="resourcesNotice" class="hidden" role="status" aria-live="polite" aria-atomic="true"></div>
-                <section aria-labelledby="quarkHeading" class="quark-panel">
-                    <h4 id="quarkHeading" class="px-2 text-base font-semibold text-cinema-100">夸克直链</h4>
-                    <p class="mt-1 px-2 text-xs text-cinema-400">从原帖提取的分享链接</p>
-                    <ul id="quarkUrlList" class="mt-2"></ul>
+                <section aria-labelledby="quarkHeading" class="quark-panel card">
+                    <header class="card-head">
+                        <h4 id="quarkHeading" class="card-title">夸克直链</h4>
+                        <p class="card-caption">从原帖提取的分享链接</p>
+                    </header>
+                    <ul id="quarkUrlList" class="link-list"></ul>
                 </section>
-                <div class="min-w-0 space-y-4">
-                    <section aria-labelledby="sourceHeading" class="border-t border-cinema-700 pt-2">
-                        <h4 id="sourceHeading" class="px-2 text-base font-semibold text-cinema-100">资源原帖</h4>
-                        <ul id="resourceList" class="mt-2"></ul>
+                <div class="resource-stack">
+                    <section aria-labelledby="sourceHeading" class="card">
+                        <header class="card-head">
+                            <h4 id="sourceHeading" class="card-title">资源原帖</h4>
+                            <p class="card-caption">By669 与醉都音的匹配帖子</p>
+                        </header>
+                        <ul id="resourceList" class="link-list"></ul>
                     </section>
-                    <section aria-labelledby="forumHeading" class="border-t border-cinema-700 pt-2">
-                        <h4 id="forumHeading" class="px-2 text-base font-semibold text-cinema-100">WPZY 论坛</h4>
-                        <ul id="wpzysResourceList" class="mt-2"></ul>
+                    <section aria-labelledby="forumHeading" class="card">
+                        <header class="card-head">
+                            <h4 id="forumHeading" class="card-title">WPZY 论坛</h4>
+                            <p class="card-caption">含夸克资源的论坛帖子</p>
+                        </header>
+                        <ul id="wpzysResourceList" class="link-list"></ul>
                     </section>
                 </div>
             </section>
@@ -285,6 +300,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-5 left-1/2 w-max max-w-[min(90vw,28rem)] -translate-x-1/2 translate-y-20 opacity-0 transition-[translate,opacity] duration-200 bg-cinema-800 border border-cinema-600 text-cinema-100 px-5 py-3 rounded-xl shadow-xl text-sm z-50"></div>
 
     <footer id="releaseVersion" class="site-footer page-width" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.51"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.52"></script>
 </body>
 </html>

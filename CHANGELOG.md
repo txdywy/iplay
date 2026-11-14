@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.52] - 2026-11-14
+
+### Changed
+
+- A desktop layout grid. Card padding, card gap and poster width set every column, so the hero poster lines up with the text of the score card below it and the hero title with the text of the synopsis card.
+- The score card is a side column under the poster and the synopsis, TMDB overview and cast details share one main card; both columns end on one line.
+- Every content block uses one card style with the same radius, padding, title and caption sizes. Resource lists in all three cards are rows separated by hairlines, and the right resource column ends level with the Quark card.
+- The desktop search bar is a single 64px row centred on the page. Recent searches open in a panel exactly under the search field on focus.
+- Rating and genre pills share one height and sit on one line beside the title.
+
 ## [1.0.51] - 2026-11-13
 
 ### Fixed

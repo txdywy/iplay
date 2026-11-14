@@ -25,6 +25,13 @@
 
 :root {
   color-scheme: dark;
+  /* Layout grid. Card padding, card gap and poster width determine every
+     column, so hero content lines up with the card text below it. */
+  --space: 0.5rem;
+  --card-pad: 1.25rem;
+  --card-gap: 1rem;
+  --poster-w: 14rem;
+  --side-w: calc(var(--poster-w) + 2 * var(--card-pad));
   --gutter: 1.125rem;
   --page-max: 74rem;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -658,16 +665,7 @@ body.has-content .quick-searches > * { flex-shrink: 0; }
 
 details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); }
 
-.score-panel,
-.quark-panel {
-  min-width: 0;
-  padding: 1.25rem;
-  border: 1px solid var(--glass-line);
-  border-radius: var(--radius-card);
-  background: var(--glass);
-  box-shadow: var(--shadow-lift), var(--glass-highlight);
-  backdrop-filter: blur(18px) saturate(140%);
-}
+/* Score and Quark panels use the shared .card surface. */
 
 .score-summary {
   display: flex;
@@ -729,38 +727,21 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   scroll-margin-top: 1rem;
 }
 
-#resourcesHeading,
-#synopsisHeading { letter-spacing: -0.03em; }
 
-#resourcesHeading::after {
-  content: "";
-  display: block;
-  width: 2.5rem;
-  height: 3px;
-  margin-top: 0.6rem;
-  border-radius: 999px;
-  background: var(--accent-gradient);
-}
-
-.link-item + .link-item { margin-top: 0.375rem; }
+/* Lists are rows separated by hairlines, the same in every resource card. */
+.link-item + .link-item { border-top: 1px solid var(--glass-line); }
 
 .link-row {
   display: block;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid transparent;
-  border-radius: 0.9rem;
-  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+  padding: 0.875rem 0.5rem;
+  border-radius: 0.75rem;
+  transition: background-color 160ms var(--ease-out);
 }
 
 @media (hover: hover) {
-  .link-row:hover {
-    border-color: var(--glass-line-strong);
-    background: oklch(100% 0 0 / 0.045);
-    transform: translateX(2px);
-  }
+  .link-row:hover { background: oklch(100% 0 0 / 0.045); }
 }
 
-.quark-panel .link-row { background: oklch(100% 0 0 / 0.025); border-color: var(--glass-line); }
 
 /* Candidate cards: poster-forward, with the match as a badge. */
 .candidate-card {
@@ -837,6 +818,58 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   translate: -50% 0;
   opacity: 1;
 }
+
+/* ---------------------------------------------------------------------------
+   Card system: one surface, one radius, one padding for every content block. */
+.card {
+  min-width: 0;
+  padding: var(--card-pad);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-card);
+  background: var(--glass);
+  box-shadow: var(--shadow-lift), var(--glass-highlight);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.card-head { display: grid; gap: 0.25rem; margin-bottom: 1rem; }
+.card-title { color: var(--color-cinema-100); font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.4; }
+.card-caption { color: var(--color-cinema-400); font-size: 0.8125rem; line-height: 1.5; }
+.card-row { border-top: 1px solid var(--glass-line); }
+.card-row:first-of-type { margin-top: 1.25rem; }
+#reportArea { margin-top: 1.25rem; }
+
+.section-head { display: grid; gap: 0.375rem; grid-column: 1 / -1; }
+.section-title { color: var(--color-cinema-100); font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; }
+.section-caption { color: var(--color-cinema-400); font-size: 0.875rem; }
+
+.prose-body {
+  max-width: 68ch;
+  color: var(--color-cinema-300);
+  font-size: 0.9375rem;
+  line-height: 1.85;
+  text-wrap: pretty;
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.5rem;
+  margin-bottom: 0.75rem;
+  padding-inline: 0.6rem;
+  border: 1px solid var(--glass-line-strong);
+  border-radius: 999px;
+  color: var(--color-cinema-400);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.score-details { display: flex; flex-wrap: wrap; gap: 0.375rem 1rem; margin-top: 1rem; color: var(--color-cinema-400); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+.report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1rem; }
+.link-list { margin-inline: -0.5rem; }
+.resource-stack { display: grid; align-content: start; gap: var(--card-gap); min-width: 0; }
+
+/* Metadata pills share one height so rating and genres sit on one baseline. */
+.genre-pill, .rating-box { min-height: 2rem; align-items: center; }
 
 .back-to-search {
   position: fixed;
@@ -939,12 +972,95 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   body.has-content .search-stage { display: contents; }
   body.has-content .header-actions { grid-column: 3; grid-row: 1; justify-self: end; }
   body.has-content .search-form { grid-column: 2; grid-row: 1; }
-  body.has-content .quick-searches { grid-column: 2 / -1; grid-row: 2; margin-top: -0.5rem; }
-  .work-hero { grid-template-columns: 15rem minmax(0, 1fr); column-gap: 3rem; min-height: 26rem; padding: 2.75rem; }
+  /* Desktop grid: [side column = poster + card padding] [main column].
+     The hero's poster sits where the side card's text starts, and the
+     hero's title sits where the main card's text starts. */
+  :root { --card-pad: 1.75rem; --card-gap: 1.5rem; }
+  #workDetails { display: grid; gap: var(--card-gap); }
+  #workDetails > * + * { margin-top: 0; }
+  .work-hero {
+    grid-template-columns: var(--poster-w) auto minmax(0, 1fr);
+    grid-template-rows: 1fr auto auto;
+    grid-template-areas: "poster title title" "poster ratings tags" "poster actions actions";
+    column-gap: 0;
+    row-gap: 1.25rem;
+    min-height: 0;
+    padding: 2.5rem var(--card-pad);
+  }
+  /* Gap = two card paddings + the card gap: hero text aligns with card text. */
+  .work-title, .work-actions, .work-ratings { margin-inline-start: calc(2 * var(--card-pad) + var(--card-gap)); }
+  .work-tags { margin-inline-start: 0.75rem; align-self: center; }
+  .work-ratings { align-self: center; }
+  .work-title { align-self: end; }
+  .work-actions { align-self: end; }
+  #showTitle { font-size: 3.5rem; line-height: 1.05; }
+  #showSubTitle { margin-top: 0.75rem; font-size: 0.9375rem; }
+  @media (hover: hover) { .work-hero:hover #showCover { transform: translateY(-4px); } }
+
+  .work-body {
+    grid-template-columns: var(--side-w) minmax(0, 1fr);
+    grid-template-areas: "side main";
+    /* Equal-height columns keep the card bottoms on one line. */
+    align-items: stretch;
+    gap: var(--card-gap);
+  }
+  .work-main { grid-area: main; }
+  .score-panel { grid-area: side; }
+  .score-summary { flex-direction: column; align-items: flex-start; gap: 1rem; }
+  .score-summary > .min-w-0 { width: 100%; }
+  .report-grid { grid-template-columns: 1fr; }
+  #preferenceFields { grid-template-columns: 1fr; }
+
+  .resources-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: var(--card-gap);
+    padding-top: 2.5rem;
+  }
+  /* The last card in the right column grows so both columns end together. */
+  .resource-stack { grid-template-rows: auto 1fr; }
+
+  /* One-row sticky bar; recent searches open beneath the search field. */
+  /* Symmetric columns put the search field on the page's centre line. */
+  body.has-content .site-header { grid-template-columns: minmax(0, 1fr) minmax(0, 40rem) minmax(0, 1fr); padding-block: 0.75rem; row-gap: 0; }
+  body.has-content .site-brand { justify-self: start; }
+  body.has-content .search-form { justify-self: stretch; width: 100%; }
+  /* An absolutely positioned grid child uses its grid area as the
+     containing block: the panel spans exactly the search column. */
+  body.has-content .quick-searches {
+    position: absolute;
+    grid-column: 2 / 3;
+    grid-row: 1 / 2;
+    top: calc(100% + 0.5rem);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    margin: 0;
+    padding: 0.625rem;
+    flex-wrap: wrap;
+    overflow: visible;
+    border: 1px solid var(--glass-line-strong);
+    border-radius: 1rem;
+    background: var(--glass-strong);
+    box-shadow: var(--shadow-float);
+    backdrop-filter: blur(24px) saturate(160%);
+    opacity: 0;
+    visibility: hidden;
+    translate: 0 -0.25rem;
+    transition: opacity 160ms var(--ease-out), translate 160ms var(--ease-out), visibility 0s linear 160ms;
+  }
+  body.has-content .search-stage:focus-within .quick-searches:not(:empty),
+  body.has-content .quick-searches:hover {
+    opacity: 1;
+    visibility: visible;
+    translate: 0 0;
+    transition-delay: 0s;
+  }
+}
+
+@media (min-width: 80rem) {
+  :root { --poster-w: 15rem; }
   #showTitle { font-size: 4rem; }
-  @media (hover: hover) { .work-hero:hover #showCover { transform: translateY(-4px) rotate(-0.6deg); } }
-  .work-body { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 2.5rem; }
-  .resources-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1.25rem 2rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
