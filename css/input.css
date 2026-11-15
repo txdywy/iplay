@@ -48,6 +48,12 @@
   --radius-card: 1.25rem;
 }
 
+/* Full-bleed artwork may outgrow the page by a scrollbar's width for a frame
+   while its measured width catches up. Clip horizontally on <body>; setting
+   <html> too keeps body's value on body instead of moving it to the
+   viewport. clip, unlike hidden, creates no scroll container, so sticky
+   positioning is unaffected. */
+html, body { overflow-x: clip; }
 html { scroll-padding-top: 1rem; }
 /* The sticky search bar on desktop covers the top of a scrolled-to section. */
 @media (min-width: 64rem) { html:has(body.has-content) { scroll-padding-top: var(--header-height, 11rem); } }
@@ -972,53 +978,107 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   body.has-content .search-stage { display: contents; }
   body.has-content .header-actions { grid-column: 3; grid-row: 1; justify-self: end; }
   body.has-content .search-form { grid-column: 2; grid-row: 1; }
-  /* Desktop grid: [side column = poster + card padding] [main column].
-     The hero's poster sits where the side card's text starts, and the
-     hero's title sits where the main card's text starts. */
-  :root { --card-pad: 1.75rem; --card-gap: 1.5rem; }
-  #workDetails { display: grid; gap: var(--card-gap); }
+  /* -------------------------------------------------------------------------
+     Desktop result: a full-bleed cinematic band, then an editorial layout
+     without boxes. Two columns run the whole page: [poster column][content].
+     The poster, score and section headings share the left edge; the title,
+     synopsis and resource lists share the content edge. */
+  :root { --col-gap: 3.5rem; }
+  body.has-content #mainContent { padding-top: 0; }
+  #workDetails { display: grid; gap: 3.5rem; }
   #workDetails > * + * { margin-top: 0; }
+
   .work-hero {
     grid-template-columns: var(--poster-w) auto minmax(0, 1fr);
     grid-template-rows: 1fr auto auto;
     grid-template-areas: "poster title title" "poster ratings tags" "poster actions actions";
     column-gap: 0;
-    row-gap: 1.25rem;
+    row-gap: 1.5rem;
     min-height: 0;
-    padding: 2.5rem var(--card-pad);
+    overflow: visible;
+    padding: 3.5rem 0 1rem;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
   }
-  /* Gap = two card paddings + the card gap: hero text aligns with card text. */
-  .work-title, .work-actions, .work-ratings { margin-inline-start: calc(2 * var(--card-pad) + var(--card-gap)); }
+  .work-title, .work-actions, .work-ratings { margin-inline-start: var(--col-gap); }
   .work-tags { margin-inline-start: 0.75rem; align-self: center; }
   .work-ratings { align-self: center; }
   .work-title { align-self: end; }
   .work-actions { align-self: end; }
-  #showTitle { font-size: 3.5rem; line-height: 1.05; }
-  #showSubTitle { margin-top: 0.75rem; font-size: 0.9375rem; }
+  #showTitle { font-size: 3.75rem; line-height: 1.04; letter-spacing: -0.04em; }
+  #showSubTitle { margin-top: 0.875rem; font-size: 1rem; }
+  #showCover { border-radius: 0.875rem; box-shadow: 0 40px 80px -24px oklch(2% 0 0 / 0.9), 0 0 0 1px oklch(100% 0 0 / 0.08); }
   @media (hover: hover) { .work-hero:hover #showCover { transform: translateY(-4px); } }
 
+  /* The still spans the document width (measured, see --doc-w) and fades
+     into the page on the left, where the text sits, and at the bottom. */
+  .hero-backdrop {
+    inset: calc(-1 * var(--header-height, 4.5rem)) calc((100% - var(--doc-w, 100%)) / 2) -2rem;
+    /* The still is scaled up slightly; clip it to the band. */
+    overflow: hidden;
+    background: none;
+  }
+  .hero-still, .hero-backdrop::before { object-position: right 25%; background-position: right 25%; }
+  .hero-still { opacity: 0.62; }
+  .hero-backdrop::after {
+    background:
+      linear-gradient(90deg, var(--color-cinema-950) 0%, oklch(13% 0.008 40 / 0.94) 28%, oklch(13% 0.008 40 / 0.55) 55%, oklch(13% 0.008 40 / 0.15) 80%),
+      linear-gradient(0deg, var(--color-cinema-950) 0%, oklch(13% 0.008 40 / 0.6) 22%, transparent 55%),
+      linear-gradient(180deg, oklch(13% 0.008 40 / 0.65) 0%, transparent 30%);
+  }
+
+  /* Body: no boxes, so no empty card bottoms; whitespace and hairlines. */
   .work-body {
-    grid-template-columns: var(--side-w) minmax(0, 1fr);
+    grid-template-columns: var(--poster-w) minmax(0, 1fr);
     grid-template-areas: "side main";
-    /* Equal-height columns keep the card bottoms on one line. */
-    align-items: stretch;
-    gap: var(--card-gap);
+    align-items: start;
+    column-gap: var(--col-gap);
+    row-gap: 2rem;
+  }
+  .work-body > .card,
+  .resources-grid .card {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
   }
   .work-main { grid-area: main; }
-  .score-panel { grid-area: side; }
+  .score-panel { grid-area: side; position: sticky; top: calc(var(--header-height, 4.5rem) + 1.5rem); }
   .score-summary { flex-direction: column; align-items: flex-start; gap: 1rem; }
   .score-summary > .min-w-0 { width: 100%; }
+  .score-ring { width: 7.5rem; }
+  .score-ring #recScore { font-size: 2.5rem; }
   .report-grid { grid-template-columns: 1fr; }
   #preferenceFields { grid-template-columns: 1fr; }
 
+  .card-head { margin-bottom: 1.25rem; }
+  .card-title { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em; }
+  .score-panel .card-title { font-size: 1rem; }
+  .card-caption { font-size: 0.875rem; }
+  .prose-body { max-width: 46rem; font-size: 1.0625rem; line-height: 1.95; }
+  .card-row:first-of-type { margin-top: 2rem; }
+  .disclosure { min-height: 3.25rem; font-size: 0.9375rem; }
+
+  /* Resources: the same two columns. Headings and the notice sit in the
+     poster column's edge; lists run in two even columns below. */
   .resources-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: stretch;
-    gap: var(--card-gap);
-    padding-top: 2.5rem;
+    align-items: start;
+    column-gap: var(--col-gap);
+    row-gap: 2rem;
+    margin-top: 1rem;
+    padding-top: 3.5rem;
   }
-  /* The last card in the right column grows so both columns end together. */
-  .resource-stack { grid-template-rows: auto 1fr; }
+  .section-title { font-size: 1.75rem; }
+  .resource-stack { gap: 2.75rem; }
+  .resources-grid .card-head { padding-bottom: 0.875rem; margin-bottom: 0.25rem; border-bottom: 1px solid var(--glass-line-strong); }
+  .resources-grid .card-title { font-size: 1.0625rem; }
+  .link-list { margin-inline: -0.75rem; }
+  .link-row { padding: 1rem 0.75rem; }
 
   /* One-row sticky bar; recent searches open beneath the search field. */
   /* Symmetric columns put the search field on the page's centre line. */
