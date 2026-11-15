@@ -1550,7 +1550,8 @@ async function assertResultLayout(wide) {
             titleBesidePoster: title.left >= poster.right && title.top >= poster.top - 1 && title.top < poster.bottom,
             resourcesLast: details.nextElementSibling === resources && resources === resources.parentElement.lastElementChild,
             detailsAboveResources: details.getBoundingClientRect().bottom <= resources.getBoundingClientRect().top,
-            profileWithSynopsis: details.contains(profile) && !profile.open,
+            // Desktop keeps the cast and facts open; phones fold them away.
+            profileWithSynopsis: details.contains(profile) && profile.open === ${wide},
             directBeforePosts: ${wide} ? direct.right <= posts.left && Math.abs(direct.top - posts.top) < 2 : direct.bottom <= posts.top,
             naturalScroll: ['quarkUrlList', 'resourceList', 'wpzysResourceList'].every(id => getComputedStyle(find(id)).overflowY === 'visible'),
             pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
