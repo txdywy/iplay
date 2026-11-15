@@ -667,8 +667,9 @@ async function runFavoriteFromStickyHeaderFlow() {
     await waitFor("!document.querySelector('#favoriteToggle').disabled");
     await evaluate("document.querySelector('#jumpToResources').click()");
     await waitFor("document.querySelectorAll('#quarkUrlList a').length === 6");
-    await evaluate("scrollTo(0, document.body.scrollHeight)");
-    assert.ok(await evaluate('scrollY > 500'));
+    // The jump above starts a smooth scroll; an instant scroll issued while it
+    // runs can be overtaken, so repeat it until the page is at the bottom.
+    await waitFor("(scrollTo({ top: document.body.scrollHeight, behavior: 'instant' }), scrollY > 500)");
     await evaluate("document.querySelector('#favoritesTrigger').click(); document.querySelector('#favoriteList button').click()");
     await waitFor("document.querySelector('#showTitle').textContent === 'Canonical Movie' && !document.querySelector('#favoriteToggle').disabled");
     const result = await evaluate(`(() => {

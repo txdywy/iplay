@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.53] - 2026-11-15
+
+### Changed
+
+- Desktop results use a full-bleed cinematic band: the TMDB still spans the page width behind the sticky search bar and fades into the page on the left, where the title sits, and at the bottom. The poster, title, metadata and actions keep the page grid.
+- Below the band, desktop sections drop their boxes. Seven bordered cards had made the page heavy, and the equal-height cards left large empty areas. Sections now use whitespace, hairlines and one heading scale: the score column sits under the poster, and the synopsis and the resource lists share the title's edge.
+- Larger desktop reading sizes: 1.0625rem synopsis with a wider line height, larger section and list headings, a larger score ring.
+- Phones and tablets keep the card layout.
+
+### Fixed
+
+- The desktop search bar is about 80px tall, not 64px as the 1.0.52 notes said.
+
 ## [1.0.52] - 2026-11-14
 
 ### Changed
