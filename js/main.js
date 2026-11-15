@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.53';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.54';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.53';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.53';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.53';
-import { RELEASE_VERSION } from './release.js?v=1.0.53';
+} from './scorer.js?v=1.0.54';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.54';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.54';
+import { RELEASE_VERSION } from './release.js?v=1.0.54';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.53';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.53';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.53';
+} from './match.js?v=1.0.54';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.54';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.54';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1285,6 +1285,7 @@ function renderLinkCards(container, items, {
             .filter(item => item.url)
         : [];
 
+    setResourceCount(container, safeItems.length);
     if (safeItems.length === 0) {
         delete container.dataset.expanded;
         const li = document.createElement('li');
@@ -1452,9 +1453,21 @@ function renderLinkCards(container, items, {
     renderVisibleItems(wasExpanded ? maxItems : firstPageSize);
 }
 
+// Each resource column shows how many entries it lists; a status (loading,
+// waiting or failed) is not a count.
+function setResourceCount(container, count) {
+    const counter = container?.dataset.countTarget ? document.getElementById(container.dataset.countTarget) : null;
+    if (!counter) return;
+    counter.textContent = count > 0 ? String(count) : '';
+    counter.hidden = !(count > 0);
+    if (count > 0) counter.setAttribute('aria-label', `共 ${count} 条`);
+    else counter.removeAttribute('aria-label');
+}
+
 function renderResourceStatus(container, { title, detail, iconName, iconClass, isLoading = true, actionLabel = '', onAction = null }) {
     if (!container) return;
     clearNode(container);
+    setResourceCount(container, 0);
 
     const li = document.createElement('li');
     li.className = 'p-3';
@@ -1614,8 +1627,8 @@ function renderResourceList(resources) {
         emptyLabel: '暂未发现资源页面',
         itemClass: 'link-item',
         cardClass: 'link-row',
-        iconName: 'external',
-        iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
+        iconName: 'link',
+        iconClass: 'res-icon h-4 w-4 shrink-0 mt-1',
         metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
@@ -1639,7 +1652,7 @@ function renderWpzysResourceList(resources, meta = {}) {
         itemClass: 'link-item',
         cardClass: 'link-row',
         iconName: 'comments',
-        iconClass: 'h-4 w-4 shrink-0 text-cinema-400 mt-1',
+        iconClass: 'res-icon h-4 w-4 shrink-0 mt-1',
         metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
@@ -1652,8 +1665,8 @@ function renderQuarkUrls(quarkUrls) {
         emptyLabel: '暂未提取到夸克链接',
         itemClass: 'link-item',
         cardClass: 'link-row',
-        iconName: 'external',
-        iconClass: 'h-4 w-4 shrink-0 text-accent-gold mt-1',
+        iconName: 'cloud',
+        iconClass: 'res-icon h-4 w-4 shrink-0 mt-1',
         // Share tokens are case-sensitive: show the address exactly as it is.
         metaClass: 'mt-2 text-xs font-mono text-cinema-400 break-all',
         metaText: item => item.url.replace(/^https?:\/\//, ''),

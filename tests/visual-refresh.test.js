@@ -19,3 +19,15 @@ test('motion is optional and the sticky bar never overflows the page', () => {
     assert.doesNotMatch(declarations, /100vw/, '100vw includes a classic scrollbar and causes horizontal overflow');
     assert.doesNotMatch(css, /^html \{[^}]*scroll-behavior: smooth/m, 'scripted scrolls choose their own behaviour');
 });
+
+test('the three resource sources are told apart by colour, icon and count', () => {
+    const columns = [['res-quark', 'quarkUrlList', 'quarkCount'], ['res-posts', 'resourceList', 'postsCount'], ['res-forum', 'wpzysResourceList', 'forumCount']];
+    for (const [accent, list, count] of columns) {
+        assert.match(html, new RegExp(`class="[^"]*res-col ${accent}"`));
+        assert.match(html, new RegExp(`id="${list}" class="link-list" data-count-target="${count}"`));
+        assert.match(css, new RegExp(`\\.${accent} \\{ --res-accent: oklch\\(`));
+    }
+    assert.equal((html.match(/class="res-badge"/g) || []).length, 3);
+    assert.match(main, /iconName: 'cloud',\n\s+iconClass: 'res-icon/);
+    assert.match(main, /function setResourceCount\(container, count\)/);
+});
