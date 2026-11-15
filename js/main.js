@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.54';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.55';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,18 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.54';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.54';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.54';
-import { RELEASE_VERSION } from './release.js?v=1.0.54';
+} from './scorer.js?v=1.0.55';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.55';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.55';
+import { RELEASE_VERSION } from './release.js?v=1.0.55';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.54';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.54';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.54';
+} from './match.js?v=1.0.55';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.55';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.55';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -975,13 +975,6 @@ function formatCount(value) {
     return new Intl.NumberFormat('en-US').format(numericValue);
 }
 
-function appendInfoCards(container, cards) {
-    if (!container || !Array.isArray(cards)) return;
-    const frag = document.createDocumentFragment();
-    cards.forEach(card => frag.appendChild(card));
-    container.appendChild(frag);
-}
-
 function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
     const detail = tmdbDetail && typeof tmdbDetail === 'object' ? tmdbDetail : null;
     const source = detail || candidate || {};
@@ -1006,46 +999,127 @@ function buildTmdbViewModel(candidate, tmdbDetail, wikiResult, posterResult) {
     };
 }
 
-function createInfoCard(label, value, { wide = false, muted = false, interactiveValues = null } = {}) {
-    const card = document.createElement('div');
-    card.className = `${wide ? 'col-span-full' : ''} min-w-0 border-b border-cinema-700/60 py-3`;
+const TMDB_STATUS_LABELS = {
+    'Returning Series': '连载中',
+    Ended: '已完结',
+    Canceled: '已取消',
+    'In Production': '制作中',
+    'Post Production': '后期制作',
+    Planned: '已立项',
+    Pilot: '试播',
+    Released: '已上映',
+    Rumored: '传闻'
+};
 
-    const meta = document.createElement('div');
-    meta.className = 'text-xs text-cinema-400';
-    meta.textContent = label;
+function describeLanguage(code) {
+    if (typeof code !== 'string' || !/^[a-z]{2,3}$/i.test(code)) return code;
+    try {
+        return new Intl.DisplayNames(['zh-CN'], { type: 'language' }).of(code) || code;
+    } catch {
+        return code;
+    }
+}
 
-    const body = document.createElement('div');
-    body.className = `mt-2 text-sm leading-relaxed ${muted ? 'text-cinema-400 italic' : 'text-cinema-100'} break-words`;
+function createProfileGroup(title, content, className) {
+    const group = document.createElement('section');
+    group.className = `profile-group ${className}`;
+    const heading = document.createElement('h4');
+    heading.className = 'profile-label';
+    heading.textContent = title;
+    group.append(heading, content);
+    return group;
+}
+
+// Cast members are cards with a portrait (or their initial) and the role they
+// play; each opens that actor's works.
+function createCastGrid(castDetails) {
     const people = new Map();
-    for (const item of Array.isArray(interactiveValues) ? interactiveValues : []) {
+    for (const item of castDetails) {
         const name = typeof item === 'string' ? item : item?.name;
         if (typeof name !== 'string' || !name.trim()) continue;
         const id = typeof item === 'object' && /^[1-9]\d{0,11}$/.test(String(item?.id)) ? item.id : null;
-        people.set(id ? `id:${id}` : `name:${name.trim()}`, { name: name.trim(), id });
-    }
-
-    if (people.size > 0) {
-        const nameList = document.createElement('div');
-        nameList.className = 'flex flex-wrap gap-2';
-        people.forEach(({ name, id }) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.dataset.actorName = name;
-            if (id) button.dataset.personId = String(id);
-            button.className = 'min-h-11 rounded-full border border-cinema-700 px-3 py-2 text-left text-xs text-cinema-100 transition-colors hover:border-accent-red/70 hover:bg-accent-red/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red';
-            button.setAttribute('aria-label', `搜索演员 ${name}`);
-            button.textContent = name;
-            button.addEventListener('click', () => searchActorByName(name, id));
-            nameList.appendChild(button);
+        const key = id ? `id:${id}` : `name:${name.trim()}`;
+        if (people.has(key)) continue;
+        people.set(key, {
+            name: name.trim(),
+            id,
+            character: typeof item?.character === 'string' ? item.character.trim() : '',
+            profile: typeof item === 'object' ? toSafeHttpUrl(item.profile) : null
         });
-        body.appendChild(nameList);
-    } else {
-        body.textContent = formatValue(value);
     }
 
-    card.appendChild(meta);
-    card.appendChild(body);
-    return card;
+    const list = document.createElement('ul');
+    list.className = 'cast-grid';
+    people.forEach(({ name, id, character, profile }) => {
+        const entry = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'cast-card';
+        button.dataset.actorName = name;
+        if (id) button.dataset.personId = String(id);
+        button.setAttribute('aria-label', character ? `搜索演员 ${name}（饰 ${character}）` : `搜索演员 ${name}`);
+        button.addEventListener('click', () => searchActorByName(name, id));
+
+        const avatar = document.createElement('span');
+        avatar.className = 'cast-avatar';
+        avatar.setAttribute('aria-hidden', 'true');
+        avatar.textContent = Array.from(name)[0] || '?';
+        if (profile) {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            img.referrerPolicy = 'no-referrer';
+            img.addEventListener('load', () => avatar.classList.add('has-photo'), { once: true });
+            img.addEventListener('error', () => img.remove(), { once: true });
+            img.src = profile;
+            avatar.appendChild(img);
+        }
+
+        const text = document.createElement('span');
+        text.className = 'cast-text';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'cast-name';
+        nameEl.textContent = name;
+        text.appendChild(nameEl);
+        if (character) {
+            const role = document.createElement('span');
+            role.className = 'cast-role';
+            role.textContent = `饰 ${character}`;
+            text.appendChild(role);
+        }
+
+        button.append(avatar, text);
+        entry.appendChild(button);
+        list.appendChild(entry);
+    });
+    return people.size > 0 ? list : null;
+}
+
+function createFactList(facts) {
+    const list = document.createElement('dl');
+    list.className = 'fact-grid';
+    // Long values span two columns, or the whole row.
+    for (const { label, value, span = 1, href = null } of facts) {
+        const item = document.createElement('div');
+        item.className = span === 'full' ? 'fact fact-full' : span === 2 ? 'fact fact-wide' : 'fact';
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const detail = document.createElement('dd');
+        if (href) {
+            const link = document.createElement('a');
+            link.href = href;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = formatValue(value);
+            detail.appendChild(link);
+        } else {
+            detail.textContent = formatValue(value);
+        }
+        item.append(term, detail);
+        list.appendChild(item);
+    }
+    return list;
 }
 
 function renderGenres(genres) {
@@ -1073,22 +1147,26 @@ function renderTmdbProfile(viewModel) {
     const seasonEpisodes = detail.mediaType === 'tv' ? formatSeasonEpisodeCounts(detail.seasons) : '';
 
     const originalTitle = detail.originalTitle || candidate.originalTitle;
-    appendInfoCards(els.profileFields, [
-        cast.length > 0 ? createInfoCard('主演', cast, { wide: true, interactiveValues: castDetails }) : null,
-        directors.length > 0 ? createInfoCard('导演', directors) : null,
-        writers.length > 0 ? createInfoCard('编剧', writers) : null,
-        originalTitle && originalTitle !== vm.title ? createInfoCard('原名', originalTitle, { wide: true }) : null,
-        seasonTotals ? createInfoCard('季 / 集', seasonTotals) : null,
-        seasonEpisodes ? createInfoCard('各季集数', seasonEpisodes, { wide: true }) : null,
-        detail.runtime ? createInfoCard('片长', `${detail.runtime} 分钟`) : null,
-        detail.status ? createInfoCard('状态', detail.status) : null,
-        detail.originalLanguage ? createInfoCard('语言', detail.originalLanguage) : null,
-        detail.imdbId ? createInfoCard('IMDb ID', detail.imdbId) : null,
-        createInfoCard('评分人数', formatCount(vm.votes || 0)),
-        Number.isFinite(detail.popularity) ? createInfoCard('热度', detail.popularity.toFixed(1)) : null,
-        detail.productionCompanies?.length ? createInfoCard('制作公司', detail.productionCompanies, { wide: true }) : null,
-        detail.productionCountries?.length ? createInfoCard('制作地区', detail.productionCountries, { wide: true }) : null
-    ].filter(Boolean));
+    const imdbId = typeof detail.imdbId === 'string' && /^tt\d{1,10}$/.test(detail.imdbId) ? detail.imdbId : null;
+    const facts = [
+        directors.length > 0 ? { label: '导演', value: directors, span: directors.length > 2 ? 2 : 1 } : null,
+        writers.length > 0 ? { label: '编剧', value: writers, span: writers.length > 2 ? 2 : 1 } : null,
+        originalTitle && originalTitle !== vm.title ? { label: '原名', value: originalTitle, span: 2 } : null,
+        seasonTotals ? { label: '季 / 集', value: seasonTotals } : null,
+        detail.runtime ? { label: detail.mediaType === 'tv' ? '单集片长' : '片长', value: `${detail.runtime} 分钟` } : null,
+        detail.status ? { label: '状态', value: TMDB_STATUS_LABELS[detail.status] || detail.status } : null,
+        detail.originalLanguage ? { label: '语言', value: describeLanguage(detail.originalLanguage) } : null,
+        { label: '评分人数', value: formatCount(vm.votes || 0) },
+        Number.isFinite(detail.popularity) ? { label: '热度', value: detail.popularity.toFixed(1) } : null,
+        imdbId ? { label: 'IMDb', value: imdbId, href: `https://www.imdb.com/title/${imdbId}/` } : null,
+        seasonEpisodes ? { label: '各季集数', value: seasonEpisodes, span: 2 } : null,
+        detail.productionCountries?.length ? { label: '制作地区', value: detail.productionCountries, span: 2 } : null,
+        detail.productionCompanies?.length ? { label: '制作公司', value: detail.productionCompanies, span: 'full' } : null
+    ].filter(Boolean);
+
+    const castGrid = cast.length > 0 ? createCastGrid(castDetails) : null;
+    if (castGrid) els.profileFields.appendChild(createProfileGroup('主演', castGrid, 'profile-cast'));
+    els.profileFields.appendChild(createProfileGroup('幕后与资料', createFactList(facts), 'profile-facts'));
 
     setText(els.tmdbOverview, (detail.summary || candidate.summary || '').trim() || '暂无 TMDB 概述');
     els.profilePanel.classList.remove('hidden');
@@ -1884,8 +1962,25 @@ function syncHeroArtwork(posterSettled) {
 
 stickyHeaderMedia.addEventListener('change', () => syncHeroArtwork(els.cover.complete));
 
+// Desktop has room for the cast and facts, so they stay open there; phones
+// keep them behind the disclosure.
+function syncProfileDisclosure() {
+    if (!els.profilePanel) return;
+    const pinned = stickyHeaderMedia.matches;
+    els.profilePanel.classList.toggle('is-pinned', pinned);
+    const summary = els.profilePanel.querySelector('summary');
+    if (pinned) summary?.setAttribute('tabindex', '-1');
+    else summary?.removeAttribute('tabindex');
+    if (pinned) els.profilePanel.open = true;
+}
+els.profilePanel?.querySelector('summary')?.addEventListener('click', event => {
+    if (stickyHeaderMedia.matches) event.preventDefault();
+});
+stickyHeaderMedia.addEventListener('change', syncProfileDisclosure);
+syncProfileDisclosure();
+
 function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
-    if (!isUpdate && els.profilePanel) els.profilePanel.open = false;
+    if (!isUpdate && els.profilePanel) els.profilePanel.open = stickyHeaderMedia.matches;
     setText(els.title, viewModel.title);
     setText(els.subTitle, viewModel.subtitle);
     renderGenres(viewModel.genres);

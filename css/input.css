@@ -671,6 +671,87 @@ body.has-content .quick-searches > * { flex-shrink: 0; }
 
 details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); }
 
+/* Cast and facts: portrait cards for the cast, a quiet definition grid for
+   the rest. */
+.profile-body { display: grid; gap: 1.5rem; padding-bottom: 1.25rem; }
+.profile-label {
+  margin-bottom: 0.75rem;
+  color: var(--color-cinema-400);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.cast-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+}
+.cast-card {
+  display: flex;
+  width: 100%;
+  min-height: 3.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem 0.5rem 0.5rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 0.875rem;
+  background: oklch(100% 0 0 / 0.025);
+  color: var(--color-cinema-100);
+  text-align: left;
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.cast-card:hover {
+  border-color: color-mix(in oklab, var(--color-accent-red) 55%, transparent);
+  background: color-mix(in oklab, var(--color-accent-red) 9%, transparent);
+}
+.cast-card:focus-visible { outline: 2px solid var(--color-accent-red); outline-offset: 2px; }
+.cast-avatar {
+  position: relative;
+  display: grid;
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(145deg, oklch(36% 0.03 45), oklch(24% 0.015 45));
+  color: var(--color-cinema-200);
+  font-size: 1rem;
+  font-weight: 700;
+}
+.cast-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  opacity: 0;
+  transition: opacity 200ms var(--ease-out);
+}
+.cast-avatar.has-photo img { opacity: 1; }
+.cast-text { display: grid; min-width: 0; gap: 0.125rem; }
+.cast-name, .cast-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-name { font-size: 0.875rem; font-weight: 600; }
+.cast-role { color: var(--color-cinema-400); font-size: 0.75rem; }
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 1rem 1.5rem;
+}
+.fact { min-width: 0; }
+.fact-wide, .fact-full { grid-column: 1 / -1; }
+.fact dt { color: var(--color-cinema-400); font-size: 0.75rem; }
+.fact dd {
+  margin-top: 0.25rem;
+  color: var(--color-cinema-100);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.fact dd a { color: var(--color-cinema-100); text-decoration: underline; text-decoration-color: var(--glass-line-strong); text-underline-offset: 3px; }
+.fact dd a:hover { text-decoration-color: currentColor; }
+
 /* Score and Quark panels use the shared .card surface. */
 
 .score-summary {
@@ -1105,6 +1186,25 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .prose-body { max-width: 46rem; font-size: 1.0625rem; line-height: 1.95; }
   .card-row:first-of-type { margin-top: 2rem; }
   .disclosure { min-height: 3.25rem; font-size: 0.9375rem; }
+
+  /* The dossier is always open on desktop: its summary becomes a heading. */
+  .profile-panel.is-pinned { padding-top: 2rem; }
+  .profile-panel.is-pinned > .disclosure {
+    min-height: 0;
+    margin-bottom: 1.25rem;
+    color: var(--color-cinema-100);
+    cursor: default;
+    font-size: 1.25rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .profile-panel.is-pinned > .disclosure::after { display: none; }
+  .profile-body { gap: 2rem; padding-bottom: 0.5rem; }
+  .cast-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+  .cast-card { min-height: 4.25rem; padding: 0.625rem 0.875rem 0.625rem 0.625rem; }
+  .cast-avatar { width: 3rem; height: 3rem; }
+  .fact-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem 2rem; }
+  .fact-wide { grid-column: span 2; }
 
   /* Resources: the same two columns. Headings and the notice sit in the
      poster column's edge; lists run in two even columns below. */
