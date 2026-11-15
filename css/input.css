@@ -874,6 +874,49 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 .link-list { margin-inline: -0.5rem; }
 .resource-stack { display: grid; align-content: start; gap: var(--card-gap); min-width: 0; }
 
+/* Resource columns: each source has its own colour, icon badge and count,
+   so the three lists read as different kinds of results at a glance. */
+.res-quark { --res-accent: oklch(70% 0.16 255); }  /* Quark blue: direct shares */
+.res-posts { --res-accent: oklch(80% 0.14 72); }   /* amber: source posts */
+.res-forum { --res-accent: oklch(72% 0.15 305); }  /* violet: forum threads */
+
+.res-col {
+  position: relative;
+  border-top: 3px solid var(--res-accent);
+  background-image: linear-gradient(180deg, color-mix(in oklab, var(--res-accent) 10%, transparent), transparent 9rem);
+}
+
+.res-head { display: flex; align-items: center; gap: 0.875rem; }
+
+.res-badge {
+  display: grid;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--res-accent) 45%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--res-accent) 16%, transparent);
+  color: var(--res-accent);
+}
+
+.res-badge svg { width: 1.25rem; }
+.res-title-row { display: flex; align-items: center; gap: 0.5rem; }
+
+.res-count {
+  min-width: 1.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--res-accent) 18%, transparent);
+  color: var(--res-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.res-col .res-icon { color: var(--res-accent); }
+
 /* Metadata pills share one height so rating and genres sit on one baseline. */
 .genre-pill, .rating-box { min-height: 2rem; align-items: center; }
 
@@ -1065,20 +1108,26 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 
   /* Resources: the same two columns. Headings and the notice sit in the
      poster column's edge; lists run in two even columns below. */
+  /* Three equal source columns side by side, each a lightly tinted panel. */
   .resources-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: start;
-    column-gap: var(--col-gap);
-    row-gap: 2rem;
+    gap: 2rem 1.5rem;
     margin-top: 1rem;
     padding-top: 3.5rem;
   }
+  .resource-stack { display: contents; }
   .section-title { font-size: 1.75rem; }
-  .resource-stack { gap: 2.75rem; }
-  .resources-grid .card-head { padding-bottom: 0.875rem; margin-bottom: 0.25rem; border-bottom: 1px solid var(--glass-line-strong); }
+  .resources-grid .res-col {
+    padding: 1.25rem 1rem 0.75rem;
+    border-top: 3px solid var(--res-accent);
+    border-radius: 0.25rem 0.25rem 1rem 1rem;
+    background: linear-gradient(180deg, color-mix(in oklab, var(--res-accent) 10%, transparent), transparent 9rem), oklch(100% 0 0 / 0.02);
+  }
+  .resources-grid .card-head { padding-bottom: 1rem; margin-bottom: 0.25rem; border-bottom: 1px solid var(--glass-line-strong); }
   .resources-grid .card-title { font-size: 1.0625rem; }
-  .link-list { margin-inline: -0.75rem; }
-  .link-row { padding: 1rem 0.75rem; }
+  .link-list { margin-inline: -0.5rem; }
+  .link-row { padding: 0.875rem 0.5rem; }
 
   /* One-row sticky bar; recent searches open beneath the search field. */
   /* Symmetric columns put the search field on the page's centre line. */

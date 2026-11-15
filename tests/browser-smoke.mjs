@@ -1554,6 +1554,12 @@ async function assertResultLayout(wide) {
             directBeforePosts: ${wide} ? direct.right <= posts.left && Math.abs(direct.top - posts.top) < 2 : direct.bottom <= posts.top,
             naturalScroll: ['quarkUrlList', 'resourceList', 'wpzysResourceList'].every(id => getComputedStyle(find(id)).overflowY === 'visible'),
             pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
+            // Desktop shows the three sources as side-by-side columns.
+            threeColumns: !${wide} || (() => {
+                const forum = find('wpzysResourceList').closest('section').getBoundingClientRect();
+                return direct.right <= posts.left && posts.right <= forum.left
+                    && Math.abs(direct.top - forum.top) < 2;
+            })(),
             // Desktop grid: the poster lines up with the side card's text and
             // the title with the main card's text.
             gridAligned: !${wide} || (() => {
@@ -1566,7 +1572,7 @@ async function assertResultLayout(wide) {
     })()`);
     assert.deepEqual(state, {
         titleBesidePoster: true, resourcesLast: true, detailsAboveResources: true, profileWithSynopsis: true,
-        directBeforePosts: true, naturalScroll: true, pageFits: true, gridAligned: true
+        directBeforePosts: true, naturalScroll: true, pageFits: true, gridAligned: true, threeColumns: true
     });
 }
 
