@@ -23,8 +23,19 @@
   --color-blue-500: oklch(75% 0.12 245);
 }
 
+/* Ambient colour, sampled from the current poster (js/ambient.js). Registered
+   so a new work's light crossfades instead of jumping. */
+@property --ambient-h { syntax: "<number>"; inherits: true; initial-value: 55; }
+@property --ambient-c { syntax: "<number>"; inherits: true; initial-value: 0.12; }
+
 :root {
   color-scheme: dark;
+  --ambient-h: 55;
+  --ambient-c: 0.12;
+  /* Lightness is fixed per use; hue and chroma come from the poster. */
+  --ambient-text: oklch(80% calc(var(--ambient-c) * 0.85) var(--ambient-h));
+  --ambient-glow: oklch(55% var(--ambient-c) var(--ambient-h));
+  transition: --ambient-h 1.4s var(--ease-out, ease), --ambient-c 1.4s var(--ease-out, ease);
   /* Layout grid. Card padding, card gap and poster width determine every
      column, so hero content lines up with the card text below it. */
   --space: 0.5rem;
@@ -37,8 +48,9 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   /* Glass surfaces: translucent warm panes over the ambient stage. */
-  --glass: oklch(24% 0.012 50 / 0.55);
-  --glass-strong: oklch(20% 0.011 48 / 0.78);
+  /* Glass carries a trace of the ambient hue so panels sit in the same light. */
+  --glass: oklch(24% calc(var(--ambient-c) * 0.12) var(--ambient-h) / 0.55);
+  --glass-strong: oklch(20% calc(var(--ambient-c) * 0.1) var(--ambient-h) / 0.78);
   --glass-line: oklch(100% 0 0 / 0.08);
   --glass-line-strong: oklch(100% 0 0 / 0.14);
   --glass-highlight: inset 0 1px 0 oklch(100% 0 0 / 0.06);
@@ -82,8 +94,8 @@ body::after {
 
 body::before {
   background:
-    radial-gradient(60rem 40rem at 12% -10%, oklch(45% 0.11 55 / 0.28), transparent 65%),
-    radial-gradient(50rem 36rem at 95% 8%, oklch(42% 0.12 30 / 0.2), transparent 60%),
+    radial-gradient(60rem 40rem at 12% -10%, oklch(45% var(--ambient-c) var(--ambient-h) / 0.3), transparent 65%),
+    radial-gradient(50rem 36rem at 95% 8%, oklch(42% var(--ambient-c) calc(var(--ambient-h) - 25) / 0.2), transparent 60%),
     radial-gradient(70rem 50rem at 50% 120%, oklch(30% 0.06 60 / 0.35), transparent 70%);
 }
 
@@ -93,7 +105,25 @@ body::after {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 
-::selection { background: oklch(84% 0.135 75 / 0.35); color: var(--color-cinema-100); }
+::selection { background: oklch(70% var(--ambient-c) var(--ambient-h) / 0.38); color: var(--color-cinema-100); }
+
+@media (prefers-reduced-motion: reduce) { :root { transition: none; } }
+
+/* Editorial eyebrows over section headings, in the work's colour. The
+   alternative text keeps them out of the accessible name. */
+[data-eyebrow]::before {
+  content: attr(data-eyebrow);
+  content: attr(data-eyebrow) / "";
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--ambient-text);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  line-height: 1;
+}
+/* A folding summary keeps its single row on phones. */
+.disclosure[data-eyebrow]::before { display: none; }
 
 button:not(:disabled) { cursor: pointer; }
 
@@ -575,7 +605,10 @@ body.has-content .quick-searches > * { flex-shrink: 0; }
 #showCover {
   border: 1px solid var(--glass-line-strong);
   border-radius: 1rem;
-  box-shadow: 0 30px 60px -20px oklch(3% 0 0 / 0.85), 0 0 0 1px oklch(0% 0 0 / 0.3);
+  box-shadow:
+    0 30px 60px -20px oklch(3% 0 0 / 0.85),
+    0 18px 70px -24px oklch(55% var(--ambient-c) var(--ambient-h) / 0.55),
+    0 0 0 1px oklch(0% 0 0 / 0.3);
   transition: transform 400ms var(--ease-out);
 }
 .work-title { grid-area: title; align-self: center; overflow-wrap: anywhere; }
@@ -590,7 +623,12 @@ body.has-content .quick-searches > * { flex-shrink: 0; }
   line-height: 1.1;
   letter-spacing: -0.035em;
   text-wrap: balance;
-  text-shadow: 0 2px 24px oklch(5% 0 0 / 0.6);
+  /* A faint vertical sheen, tinted by the work's colour at the base. */
+  background: linear-gradient(180deg, oklch(99% 0.008 80) 30%, oklch(88% calc(var(--ambient-c) * 0.35) var(--ambient-h)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 18px oklch(5% 0 0 / 0.55));
 }
 
 #showSubTitle { color: var(--color-cinema-300); font-weight: 500; letter-spacing: 0.01em; }
@@ -1133,7 +1171,13 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .work-actions { align-self: end; }
   #showTitle { font-size: 3.75rem; line-height: 1.04; letter-spacing: -0.04em; }
   #showSubTitle { margin-top: 0.875rem; font-size: 1rem; }
-  #showCover { border-radius: 0.875rem; box-shadow: 0 40px 80px -24px oklch(2% 0 0 / 0.9), 0 0 0 1px oklch(100% 0 0 / 0.08); }
+  #showCover {
+    border-radius: 0.875rem;
+    box-shadow:
+      0 40px 80px -24px oklch(2% 0 0 / 0.9),
+      0 30px 110px -30px oklch(58% var(--ambient-c) var(--ambient-h) / 0.6),
+      0 0 0 1px oklch(100% 0 0 / 0.08);
+  }
   @media (hover: hover) { .work-hero:hover #showCover { transform: translateY(-4px); } }
 
   /* The still spans the document width (measured, see --doc-w) and fades
@@ -1148,9 +1192,12 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .hero-still { opacity: 0.62; }
   .hero-backdrop::after {
     background:
-      linear-gradient(90deg, var(--color-cinema-950) 0%, oklch(13% 0.008 40 / 0.94) 28%, oklch(13% 0.008 40 / 0.55) 55%, oklch(13% 0.008 40 / 0.15) 80%),
       linear-gradient(0deg, var(--color-cinema-950) 0%, oklch(13% 0.008 40 / 0.6) 22%, transparent 55%),
-      linear-gradient(180deg, oklch(13% 0.008 40 / 0.65) 0%, transparent 30%);
+      linear-gradient(180deg, oklch(13% 0.008 40 / 0.65) 0%, transparent 30%),
+      /* The work's colour pools under the title; the bottom fade above covers
+         its lower edge so the band melts into the page. */
+      radial-gradient(60% 70% at 25% 55%, oklch(42% var(--ambient-c) var(--ambient-h) / 0.28), transparent 75%),
+      linear-gradient(90deg, var(--color-cinema-950) 0%, oklch(13% 0.008 40 / 0.94) 28%, oklch(13% 0.008 40 / 0.55) 55%, oklch(13% 0.008 40 / 0.15) 80%);
   }
 
   /* Body: no boxes, so no empty card bottoms; whitespace and hairlines. */
@@ -1190,15 +1237,19 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   /* The dossier is always open on desktop: its summary becomes a heading. */
   .profile-panel.is-pinned { padding-top: 2rem; }
   .profile-panel.is-pinned > .disclosure {
+    display: block;
     min-height: 0;
     margin-bottom: 1.25rem;
     color: var(--color-cinema-100);
     cursor: default;
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
   }
   .profile-panel.is-pinned > .disclosure::after { display: none; }
+  .profile-panel.is-pinned > .disclosure[data-eyebrow]::before { display: block; }
+  /* One heading scale for the work's sections; the side panel stays smaller. */
+  .work-main .card-title { font-size: 1.5rem; letter-spacing: -0.025em; }
   .profile-body { gap: 2rem; padding-bottom: 0.5rem; }
   .cast-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
   .cast-card { min-height: 4.25rem; padding: 0.625rem 0.875rem 0.625rem 0.625rem; }
@@ -1217,7 +1268,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
     padding-top: 3.5rem;
   }
   .resource-stack { display: contents; }
-  .section-title { font-size: 1.75rem; }
+  .section-title { font-size: 1.5rem; letter-spacing: -0.025em; }
   .resources-grid .res-col {
     padding: 1.25rem 1rem 0.75rem;
     border-top: 3px solid var(--res-accent);
