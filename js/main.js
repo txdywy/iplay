@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.55';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.56';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,18 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.55';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.55';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.55';
-import { RELEASE_VERSION } from './release.js?v=1.0.55';
+} from './scorer.js?v=1.0.56';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.56';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.56';
+import { RELEASE_VERSION } from './release.js?v=1.0.56';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.56';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.55';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.55';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.55';
+} from './match.js?v=1.0.56';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.56';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.56';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -865,11 +866,59 @@ function handlePosterLoadError() {
         });
 }
 
+let ambientToken = 0;
+
+function setAmbient({ hue, chroma }) {
+    const root = document.documentElement;
+    // Turn the short way round the hue circle so a crossfade from amber to
+    // violet does not pass through green.
+    const previous = Number.parseFloat(root.style.getPropertyValue('--ambient-h'));
+    const from = Number.isFinite(previous) ? previous : DEFAULT_AMBIENT.hue;
+    const turn = ((hue - from) % 360 + 540) % 360 - 180;
+    root.style.setProperty('--ambient-h', String(Math.round((from + turn) * 10) / 10));
+    root.style.setProperty('--ambient-c', String(chroma));
+}
+
+// Samples a thumbnail of the poster and tints the
+// stage light with its dominant hue. Any failure keeps the house colour.
+function updateAmbientFromPoster(src) {
+    const token = ++ambientToken;
+    const url = toSafeHttpUrl(src);
+    // Only TMDB serves a tiny CORS-readable thumbnail; other hosts would mean
+    // downloading the full poster again, usually without CORS.
+    if (!url || !/^https:\/\/image\.tmdb\.org\/t\/p\/w\d+\//.test(url)) {
+        setAmbient(DEFAULT_AMBIENT);
+        return;
+    }
+    const sample = new Image();
+    sample.crossOrigin = 'anonymous';
+    sample.decoding = 'async';
+    sample.referrerPolicy = 'no-referrer';
+    sample.addEventListener('load', () => {
+        if (token !== ambientToken) return;
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 24;
+            canvas.height = 36;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            context.drawImage(sample, 0, 0, canvas.width, canvas.height);
+            setAmbient(pickAmbientColor(context.getImageData(0, 0, canvas.width, canvas.height).data));
+        } catch {
+            setAmbient(DEFAULT_AMBIENT);
+        }
+    }, { once: true });
+    sample.addEventListener('error', () => {
+        if (token === ambientToken) setAmbient(DEFAULT_AMBIENT);
+    }, { once: true });
+    sample.src = url.replace(/\/t\/p\/w\d+\//, '/t/p/w92/');
+}
+
 if (els.cover) {
     els.cover.addEventListener('error', handlePosterLoadError);
     els.cover.addEventListener('load', () => {
         els.cover.setAttribute('aria-busy', 'false');
         syncHeroArtwork(true);
+        updateAmbientFromPoster(els.cover.currentSrc || els.cover.src);
     });
 }
 
@@ -3072,6 +3121,8 @@ if (els.actorLoadMore) {
 
 function resetInitialView() {
     document.body.classList.remove('has-content');
+    ambientToken += 1;
+    setAmbient(DEFAULT_AMBIENT);
     activeDetailState = null;
     currentSearchId += 1;
     currentAbortController?.abort();

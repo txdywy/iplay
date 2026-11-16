@@ -709,7 +709,10 @@ async function runHeroArtworkFlow() {
             })()`);
         }
         const requests = actorPosterRequests.slice(before);
-        assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg')).length, 1);
+        // The full poster loads once; the ambient colour reads a separate w92
+        // thumbnail at most once.
+        assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg') && !url.includes('/w92/')).length, 1);
+        assert.ok(requests.filter(url => url.includes('/w92/audit-actor-hero-poster.jpg')).length <= 1);
         if (scenario === 'still') {
             assert.ok(requests.findIndex(url => url.includes('hero-still')) > requests.findIndex(url => url.includes('hero-poster')));
         }
