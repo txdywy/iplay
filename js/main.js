@@ -890,7 +890,7 @@ function updateAmbientFromPoster(src) {
         setAmbient(DEFAULT_AMBIENT);
         return;
     }
-    const sample = new Image();
+    const sample = document.createElement('img');
     sample.crossOrigin = 'anonymous';
     sample.decoding = 'async';
     sample.referrerPolicy = 'no-referrer';
