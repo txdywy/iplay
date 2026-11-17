@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.56" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.57" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap">
@@ -94,13 +94,13 @@
         </div>
 
         <section id="candidatePicker" class="picker-panel hidden fade-up" aria-labelledby="candidatePickerTitle">
-            <h2 id="candidatePickerTitle" class="text-2xl font-bold text-cinema-100">选择影视条目</h2>
+            <h2 id="candidatePickerTitle" tabindex="-1" class="text-2xl font-bold text-cinema-100">选择影视条目</h2>
             <p class="mt-2 text-sm text-cinema-400">「<span id="candidatePickerQuery" class="text-cinema-100"></span>」可按年份和类型确认条目。</p>
             <div id="candidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
         </section>
 
         <section id="actorCandidatePicker" class="picker-panel hidden fade-up" aria-labelledby="actorCandidatePickerTitle">
-            <h2 id="actorCandidatePickerTitle" class="text-2xl font-bold text-cinema-100">选择演员</h2>
+            <h2 id="actorCandidatePickerTitle" tabindex="-1" class="text-2xl font-bold text-cinema-100">选择演员</h2>
             <p class="mt-2 text-sm text-cinema-400">「<span id="actorCandidatePickerQuery" class="text-cinema-100"></span>」选择人物后查看作品。</p>
             <div id="actorCandidateList" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
         </section>
@@ -210,7 +210,8 @@
                             <div id="tmdbOverview" class="prose-body pb-4"></div>
                         </details>
                         <details id="profilePanel" class="card-row profile-panel">
-                            <summary class="disclosure" data-eyebrow="CAST &amp; DETAILS">演职员与作品资料</summary>
+                            <summary class="disclosure">演职员与作品资料</summary>
+                            <h3 class="profile-heading" data-eyebrow="CAST &amp; DETAILS">演职员与作品资料</h3>
                             <div id="profileFields" class="profile-body"></div>
                         </details>
                     </div>
@@ -318,6 +319,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-5 left-1/2 w-max max-w-[min(90vw,28rem)] -translate-x-1/2 translate-y-20 opacity-0 transition-[translate,opacity] duration-200 bg-cinema-800 border border-cinema-600 text-cinema-100 px-5 py-3 rounded-xl shadow-xl text-sm z-50"></div>
 
     <footer id="releaseVersion" class="site-footer page-width" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.56"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.57"></script>
 </body>
 </html>

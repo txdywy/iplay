@@ -19,6 +19,7 @@ let nextCommandId = 1;
 const pendingCommands = new Map();
 const browserExceptions = [];
 const actorPosterRequests = [];
+let holdHeroArtwork = null;
 
 socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
@@ -26,13 +27,23 @@ socket.addEventListener('message', event => {
         const { requestId, request } = message.params;
         actorPosterRequests.push(request.url);
         const width = Number(new URL(request.url).pathname.match(/\/w(\d+)\//)?.[1]) || 500;
-        const posterBody = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width * 1.5}"><rect width="100%" height="100%" fill="#141417"/></svg>`;
-        void command('Fetch.fulfillRequest', {
+        const posterBody = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width * 1.5}"><rect width="100%" height="100%" fill="#145adc"/></svg>`;
+        const respond = () => command('Fetch.fulfillRequest', {
             requestId,
             responseCode: request.url.includes('audit-actor-broken') ? 404 : 200,
-            responseHeaders: [{ name: 'Content-Type', value: 'image/svg+xml' }],
+            responseHeaders: [
+                { name: 'Content-Type', value: 'image/svg+xml' },
+                { name: 'Access-Control-Allow-Origin', value: '*' }
+            ],
             body: request.url.includes('audit-actor-broken') ? '' : Buffer.from(posterBody).toString('base64')
         }).catch(error => browserExceptions.push(error.message));
+        if (holdHeroArtwork && request.url.endsWith('/audit-actor-hero-poster.jpg')
+            && request.url.includes('/w92/') === holdHeroArtwork.thumbnail) {
+            holdHeroArtwork.request.resolve(respond);
+            holdHeroArtwork = null;
+        } else {
+            void respond();
+        }
         return;
     }
     if (message.method === 'Runtime.exceptionThrown') {
@@ -205,12 +216,13 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         searchMeta: { matchScore: 1, matchedBy: 'title-exact', exactPerson: { id: 931, name: query } }
                     });
                 }
-                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor', 'Responsive Actor'].includes(query)) {
+                if (['Smoke Actor', 'Clickable Actor', 'Paged Actor', 'Ambiguous Actor', 'Racing Actor', 'Slow Actor', 'Empty Actor', 'Medium Actor', 'Filter Race Actor', 'Responsive Actor', 'No Reliable Match'].includes(query)) {
                     return json({ results: [], searchMeta: { matchScore: 0 } });
                 }
                 const candidatePoster = query === 'Unsafe Poster Movie'
                         ? 'javascript:alert(1)'
                         : query === 'Slow Broken Poster Movie' ? 'https://image.tmdb.org/t/p/w500/audit-actor-broken.jpg'
+                        : query === 'Test Movie' && window.__smoke.heroArtwork ? heroPoster
                         : window.__smoke.posterlessMode || (query === 'Retained Enrichment Movie' && window.__smoke.retentionPosterMode) ? null : poster;
                 return json({ results: [{ ...candidate(query, ids[query] || 104), poster: candidatePoster }], searchMeta: { matchScore: 1 } });
             }
@@ -315,6 +327,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     });
                 }
                 if (query === 'Ambiguous Actor') {
+                    if (window.__smoke.holdActorCandidates) {
+                        await new Promise(resolve => { window.__smoke.finishActorCandidates = resolve; });
+                    }
                     return json({
                         person: null,
                         credits: [],
@@ -445,7 +460,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     productionCompanies: ['Smoke Studio'],
                     productionCountries: ['United States'],
                     cast: ['Smoke Actor'],
-                    castDetails: [{ id: 900, name: 'Clickable Actor', character: 'Lead' }],
+                    castDetails: [id === 100 && window.__smoke.profileEnrichment
+                        ? { id: 900, name: 'Christopher Eccleston', character: 'The Ninth Doctor' }
+                        : { id: 900, name: 'Clickable Actor', character: 'Lead' }],
                     director: ['Smoke Director'],
                     writer: ['Smoke Writer'],
                     imdbId: id === 104 || id === 111 ? '' : id === 116 && window.__smoke.retentionRecovery === 'imdb-conflict'
@@ -456,6 +473,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 return response;
             }
             if (url.pathname === '/api/douban/search') {
+                if (window.__smoke.profileEnrichment && url.searchParams.get('q') === 'Test Movie') {
+                    return json([{ id: '414', title: 'Test Movie', year: '2024' }]);
+                }
                 if (url.searchParams.get('q') === 'Retained Enrichment Movie') return window.__smoke.detailAttempts[116] > 1
                     ? json({ error: 'supplement outage' }, 503)
                     : json([{ id: '413', title: 'Retained Enrichment Movie', year: '2024' }]);
@@ -466,8 +486,14 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 ]);
                 return json([]);
             }
-            if (url.pathname === '/api/douban/detail') return url.searchParams.get('id') === '413'
-                ? json({ rating: 9.1, imdbId: 'tt1234567' }) : json({ rating: 9.1 });
+            if (url.pathname === '/api/douban/detail') {
+                const id = url.searchParams.get('id');
+                if (id === '414') {
+                    await new Promise(resolve => { window.__smoke.finishProfileEnrichment = resolve; });
+                    return json({ rating: 9.1, imdbId: 'tt1234567', genres: ['战争'] });
+                }
+                return id === '413' ? json({ rating: 9.1, imdbId: 'tt1234567' }) : json({ rating: 9.1 });
+            }
             if (url.pathname === '/api/wiki/zh' && ['Retained Enrichment Movie', 'Recovered Retained Movie'].includes(url.searchParams.get('q')) && window.__smoke.detailAttempts[116] > 1) return json({ error: 'supplement outage' }, 503);
             if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
                 ? '旧片同名作品简介。'
@@ -682,6 +708,11 @@ async function runFavoriteFromStickyHeaderFlow() {
 
 async function runHeroArtworkFlow() {
     await command('Network.setCacheDisabled', { cacheDisabled: true });
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    const hue = "Number(getComputedStyle(document.documentElement).getPropertyValue('--ambient-h'))";
+    const blueTint = `Math.abs(((${hue} + 360) % 360) - 262) < 4`;
+    const houseTint = `(${hue} + 360) % 360 === 55`;
+    const thumbnailsSince = start => actorPosterRequests.slice(start).filter(url => url.includes('/w92/audit-actor-hero-poster.jpg')).length;
     for (const scenario of ['poster', 'broken', 'still', 'recovered']) {
         await command('Page.navigate', { url: baseUrl });
         await waitFor("history.state?.kind === 'home'");
@@ -708,15 +739,125 @@ async function runHeroArtworkFlow() {
                     && getComputedStyle(hero, '::before').backgroundImage.includes(cover.currentSrc);
             })()`);
         }
+        await waitFor(blueTint);
         const requests = actorPosterRequests.slice(before);
-        // The full poster loads once; the ambient colour reads a separate w92
-        // thumbnail at most once.
         assert.equal(requests.filter(url => url.endsWith('/audit-actor-hero-poster.jpg') && !url.includes('/w92/')).length, 1);
-        assert.ok(requests.filter(url => url.includes('/w92/audit-actor-hero-poster.jpg')).length <= 1);
+        assert.equal(thumbnailsSince(before), 1);
         if (scenario === 'still') {
             assert.ok(requests.findIndex(url => url.includes('hero-still')) > requests.findIndex(url => url.includes('hero-poster')));
         }
+        if (scenario === 'poster') {
+            await evaluate('history.back()');
+            await waitFor(`history.state?.kind === 'home' && ${houseTint}`);
+            await search('Test Movie');
+            await waitFor(`history.state?.kind === 'detail' && ${blueTint}`);
+            assert.equal(thumbnailsSince(before), 1, 'reopening a work should reuse its sampled colour');
+            await waitFor("document.querySelector('.cast-card')");
+            await evaluate("document.querySelector('#profilePanel').open = true; document.querySelector('.cast-card').click()");
+            await waitFor(`document.querySelector('#actorResultsArea:not(.hidden)') && ${houseTint}`);
+        }
     }
+
+    for (const thumbnail of [false, true]) {
+        await command('Page.navigate', { url: baseUrl });
+        await waitFor("history.state?.kind === 'home'");
+        await evaluate("window.__smoke.heroArtwork = 'poster'");
+        const before = actorPosterRequests.length;
+        const request = Promise.withResolvers();
+        holdHeroArtwork = { thumbnail, request };
+        try {
+            await search('Test Movie');
+            const respond = await Promise.race([
+                request.promise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('The poster image was never requested')), 5000).unref())
+            ]);
+            holdHeroArtwork = null;
+            await evaluate('history.back()');
+            await waitFor("history.state?.kind === 'home'");
+            await respond();
+            await waitFor(thumbnail
+                ? "performance.getEntriesByType('resource').some(entry => entry.name.includes('/w92/audit-actor-hero-poster.jpg'))"
+                : "document.querySelector('#showCover').currentSrc.includes('audit-actor-hero-poster') && document.querySelector('#showCover').complete");
+            await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))', { awaitPromise: true });
+            assert.equal(await evaluate(houseTint), true, 'late artwork must not tint the home page');
+            assert.equal(thumbnailsSince(before), Number(thumbnail), 'the home page must not start sampling a late poster');
+        } finally {
+            holdHeroArtwork = null;
+        }
+    }
+}
+
+async function runDesktopSearchPopupFlow() {
+    await command('Emulation.setDeviceMetricsOverride', { width: 1024, height: 850, deviceScaleFactor: 1, mobile: false });
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await command('Page.bringToFront');
+    await command('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const recents = Array.from({ length: 6 }, (_, index) => `A long title in the list of previous searches ${index}`);
+    await evaluate(`localStorage.setItem('iplay_recent_searches', ${JSON.stringify(JSON.stringify(recents))})`);
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await waitFor("!document.querySelector('#favoriteToggle').disabled && document.activeElement.id === 'showTitle'");
+
+    const visible = "getComputedStyle(document.querySelector('#quickSearches')).visibility === 'visible'";
+    const press = async (key, windowsVirtualKeyCode, text) => {
+        const keyEvent = { key, code: key, windowsVirtualKeyCode };
+        await command('Input.dispatchKeyEvent', { ...keyEvent, type: 'keyDown', ...(text ? { text, unmodifiedText: text } : {}) });
+        await command('Input.dispatchKeyEvent', { ...keyEvent, type: 'keyUp' });
+    };
+    await evaluate("document.querySelector('#searchInput').focus()");
+    await waitFor(visible);
+    await evaluate("document.querySelector('#quickSearches .quick-chip').focus()");
+    await press('Escape', 27);
+    assert.equal(await evaluate(`!(${visible}) && document.activeElement.id === 'searchInput'`), true);
+    await evaluate("document.querySelector('#searchInput').click()");
+    await waitFor(visible);
+
+    await evaluate("document.querySelector('#searchInput').value = 'Ambiguous Actor'");
+    await press('Enter', 13, '\r');
+    await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)') && document.activeElement.id === 'actorCandidatePickerTitle'");
+    assert.equal(await evaluate(visible), false, 'keyboard submission must uncover the candidate picker');
+
+    await evaluate("window.__smoke.holdActorCandidates = true; document.querySelector('#searchInput').focus()");
+    await press('Enter', 13, '\r');
+    await waitFor('window.__smoke.finishActorCandidates');
+    await evaluate("document.querySelector('#favoritesTrigger').focus(); window.__smoke.finishActorCandidates()");
+    await waitFor("document.querySelector('#actorCandidatePicker:not(.hidden)')");
+    assert.equal(await evaluate('document.activeElement.id'), 'favoritesTrigger', 'a delayed search must respect focus moved elsewhere');
+
+    await evaluate("document.querySelector('#searchInput').focus(); document.querySelector('#searchInput').value = 'No Reliable Match'");
+    await press('Enter', 13, '\r');
+    await waitFor("document.querySelector('#errorState:not(.hidden)')");
+    assert.equal(await evaluate(visible), false, 'keyboard submission must uncover the no-match message');
+}
+
+async function runCastAccessibilityAndFocusFlow() {
+    await command('Emulation.setDeviceMetricsOverride', { width: 1024, height: 850, deviceScaleFactor: 1, mobile: false });
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await evaluate('window.__smoke.profileEnrichment = true');
+    await search('Test Movie');
+    await waitFor("window.__smoke.finishProfileEnrichment && document.querySelector('#profileFields a[href*=imdb]') && document.activeElement.id === 'showTitle'");
+
+    const { nodes } = await command('Accessibility.getFullAXTree');
+    const castHeading = nodes.filter(node => !node.ignored && node.name?.value === '演职员与作品资料');
+    assert.ok(castHeading.some(node => node.role?.value === 'heading'));
+    assert.ok(castHeading.every(node => node.role?.value !== 'DisclosureTriangle'));
+    assert.equal(await evaluate(`['.cast-name', '.cast-role'].every(selector => {
+        const text = document.querySelector(selector);
+        const style = getComputedStyle(text);
+        return style.whiteSpace !== 'nowrap' && text.scrollWidth <= text.clientWidth + 1;
+    })`), true, 'full actor and role names must fit at the desktop breakpoint');
+
+    await evaluate("document.querySelector('#profileFields a[href*=imdb]').focus(); window.__smoke.finishProfileEnrichment()");
+    await waitFor("document.querySelector('#showTags').textContent.includes('战争')");
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#profileFields a[href*=imdb]')"), true,
+        'an unrelated genre update must preserve focus in the cast and facts section');
+
+    await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await waitFor("!document.querySelector('#profilePanel').open && document.querySelector('#profilePanel summary').getClientRects().length");
+    await evaluate("document.querySelector('#profilePanel summary').click()");
+    assert.equal(await evaluate("document.querySelector('#profilePanel').open"), true);
 }
 
 async function runNarrowDetailFlow() {
@@ -1739,11 +1880,13 @@ try {
     await runPreferencePanelFlow();
     await runSearchAndFavoritesControlsFlow();
     await runSearchAndFavoritesControlsFlow({ fallback: true });
+    await runDesktopSearchPopupFlow();
+    await runCastAccessibilityAndFocusFlow();
     await runNarrowDetailFlow();
     await runHeroArtworkFlow();
     assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1024x850', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites', 'desktop-search-popup-and-focus', 'cast-accessibility-and-focus', 'hero-artwork-and-ambient-navigation'] }));
 } finally {
     socket.close();
 }

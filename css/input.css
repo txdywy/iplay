@@ -122,9 +122,6 @@ body::after {
   letter-spacing: 0.22em;
   line-height: 1;
 }
-/* A folding summary keeps its single row on phones. */
-.disclosure[data-eyebrow]::before { display: none; }
-
 button:not(:disabled) { cursor: pointer; }
 
 :where(a, button, summary, input):focus-visible {
@@ -711,6 +708,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 
 /* Cast and facts: portrait cards for the cast, a quiet definition grid for
    the rest. */
+.profile-heading { display: none; }
 .profile-body { display: grid; gap: 1.5rem; padding-bottom: 1.25rem; }
 .profile-label {
   margin-bottom: 0.75rem;
@@ -721,12 +719,13 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 }
 .cast-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
   gap: 0.5rem;
 }
 .cast-card {
   display: flex;
   width: 100%;
+  height: 100%;
   min-height: 3.75rem;
   align-items: center;
   gap: 0.75rem;
@@ -769,7 +768,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 }
 .cast-avatar.has-photo img { opacity: 1; }
 .cast-text { display: grid; min-width: 0; gap: 0.125rem; }
-.cast-name, .cast-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-name, .cast-role { overflow-wrap: anywhere; }
 .cast-name { font-size: 0.875rem; font-weight: 600; }
 .cast-role { color: var(--color-cinema-400); font-size: 0.75rem; }
 .fact-grid {
@@ -1234,24 +1233,21 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .card-row:first-of-type { margin-top: 2rem; }
   .disclosure { min-height: 3.25rem; font-size: 0.9375rem; }
 
-  /* The dossier is always open on desktop: its summary becomes a heading. */
-  .profile-panel.is-pinned { padding-top: 2rem; }
-  .profile-panel.is-pinned > .disclosure {
+  /* Desktop keeps the dossier open and shows a heading in place of the toggle. */
+  .profile-panel { padding-top: 2rem; }
+  .profile-panel > .disclosure { display: none; }
+  .profile-heading {
     display: block;
-    min-height: 0;
     margin-bottom: 1.25rem;
     color: var(--color-cinema-100);
-    cursor: default;
     font-size: 1.5rem;
     font-weight: 800;
     letter-spacing: -0.025em;
   }
-  .profile-panel.is-pinned > .disclosure::after { display: none; }
-  .profile-panel.is-pinned > .disclosure[data-eyebrow]::before { display: block; }
   /* One heading scale for the work's sections; the side panel stays smaller. */
   .work-main .card-title { font-size: 1.5rem; letter-spacing: -0.025em; }
   .profile-body { gap: 2rem; padding-bottom: 0.5rem; }
-  .cast-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+  .cast-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 12.5rem), 1fr)); gap: 0.75rem; }
   .cast-card { min-height: 4.25rem; padding: 0.625rem 0.875rem 0.625rem 0.625rem; }
   .cast-avatar { width: 3rem; height: 3rem; }
   .fact-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem 2rem; }
@@ -1309,8 +1305,9 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
     translate: 0 -0.25rem;
     transition: opacity 160ms var(--ease-out), translate 160ms var(--ease-out), visibility 0s linear 160ms;
   }
-  body.has-content .search-stage:focus-within .quick-searches:not(:empty),
-  body.has-content .quick-searches:hover {
+  body.has-content .quick-searches.is-dismissed { transition: none; }
+  body.has-content .search-stage:focus-within .quick-searches:not(.is-dismissed, :empty),
+  body.has-content .quick-searches:not(.is-dismissed):hover {
     opacity: 1;
     visibility: visible;
     translate: 0 0;

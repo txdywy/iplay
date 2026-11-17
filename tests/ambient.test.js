@@ -45,17 +45,14 @@ test('greyscale, transparent and empty images keep the house light', () => {
     assert.deepEqual(pickAmbientColor(null), DEFAULT_AMBIENT);
 });
 
-test('the page wires the poster colour into the registered ambient properties', async () => {
-    const [css, main, html] = await Promise.all([
-        readFile('css/input.css', 'utf8'), readFile('js/main.js', 'utf8'), readFile('index.html', 'utf8')
+test('ambient colours support reduced motion and decorative heading labels', async () => {
+    const [css, html] = await Promise.all([
+        readFile('css/input.css', 'utf8'), readFile('index.html', 'utf8')
     ]);
     assert.match(css, /@property --ambient-h \{ syntax: "<number>"; inherits: true; initial-value: 55; \}/);
     assert.match(css, /transition: --ambient-h 1\.4s/);
     assert.match(css, /prefers-reduced-motion: reduce\) \{ :root \{ transition: none; \} \}/);
     assert.match(css, /content: attr\(data-eyebrow\) \/ "";/);
-    assert.match(main, /sample\.crossOrigin = 'anonymous'/);
-    assert.match(main, /updateAmbientFromPoster\(els\.cover\.currentSrc \|\| els\.cover\.src\)/);
-    assert.match(main, /setAmbient\(DEFAULT_AMBIENT\)/);
     for (const eyebrow of ['SYNOPSIS', 'CAST &amp; DETAILS', 'WHERE TO WATCH', 'FOR YOU']) {
         assert.ok(html.includes(`data-eyebrow="${eyebrow}"`), eyebrow);
     }
