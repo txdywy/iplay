@@ -32,13 +32,11 @@ test('the three resource sources are told apart by colour, icon and count', () =
     assert.match(main, /function setResourceCount\(container, count\)/);
 });
 
-test('the cast and facts stay open on desktop with portraits and roles', () => {
+test('the cast and facts include a desktop heading and a mobile disclosure', () => {
     assert.match(html, /<details id="profilePanel" class="card-row profile-panel">/);
-    assert.match(main, /function syncProfileDisclosure\(\)/);
-    assert.match(main, /els\.profilePanel\.open = stickyHeaderMedia\.matches/);
+    assert.match(html, /<summary class="disclosure">演职员与作品资料<\/summary>/);
+    assert.match(html, /<h3 class="profile-heading"[^>]*>演职员与作品资料<\/h3>/);
     assert.match(main, /role\.textContent = `饰 \$\{character\}`/);
     assert.match(main, /img\.loading = 'lazy'/);
     assert.match(main, /'Returning Series': '连载中'/);
-    assert.match(css, /\.profile-panel\.is-pinned > \.disclosure::after \{ display: none; \}/);
-    assert.match(css, /\.cast-grid \{ grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
 });

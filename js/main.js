@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.56';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.57';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.56';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.56';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.56';
-import { RELEASE_VERSION } from './release.js?v=1.0.56';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.56';
+} from './scorer.js?v=1.0.57';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.57';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.57';
+import { RELEASE_VERSION } from './release.js?v=1.0.57';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.57';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.56';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.56';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.56';
+} from './match.js?v=1.0.57';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.57';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.57';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -457,6 +457,7 @@ function renderActorResults(personResult, query, searchId, searchOptions, { hist
     const person = personResult?.person;
     const credits = Array.isArray(personResult?.credits) ? personResult.credits.filter(credit => credit?.id && credit?.mediaType) : [];
     if (!person) return false;
+    setAmbient(DEFAULT_AMBIENT);
 
     actorResultState = {
         person,
@@ -749,6 +750,7 @@ const ACTOR_POSTER_SIZES = '(min-width: 80rem) calc(70.25rem / 6 - 2px), (min-wi
 
 let posterLoadToken = 0;
 let activePosterContext = null;
+const TMDB_POSTER_SIZE = /^(https:\/\/image\.tmdb\.org\/t\/p\/)w\d+\//;
 
 function createIcon(name, className = '') {
     const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
@@ -802,6 +804,10 @@ function matchSelectedPosterResult(result, identity) {
     return result;
 }
 
+function isActivePoster(context) {
+    return context && context.token === posterLoadToken && isActiveSearch(context.searchId, context.loadId);
+}
+
 function handlePosterLoadError() {
     if (!els.cover) return;
     const failedSource = els.cover.getAttribute('src');
@@ -810,7 +816,7 @@ function handlePosterLoadError() {
 
     els.cover.setAttribute('aria-busy', 'false');
     if (failedSource === POSTER_PLACEHOLDER) return;
-    if (!context || context.token !== token || context.source !== failedSource) return;
+    if (!isActivePoster(context) || context.token !== token || context.source !== failedSource) return;
     // A repaint can cause browsers to emit another error for the same broken
     // primary image while its replacement request is still in flight.
     syncHeroArtwork(false);
@@ -844,7 +850,6 @@ function handlePosterLoadError() {
                 viewModel.posterUrl = fallbackPoster;
                 viewModel.posterSource = 'fallback';
                 loadPoster(fallbackPoster, viewModel.title, { ...context, fallbackAttempted: true });
-                renderTmdbProfile(viewModel);
                 setEnrichmentStatus(els.posterStatus, '已找到备用海报');
                 return;
             }
@@ -866,51 +871,60 @@ function handlePosterLoadError() {
         });
 }
 
-let ambientToken = 0;
+let ambientPosterToken = 0;
+let lastAmbientSample = null;
 
 function setAmbient({ hue, chroma }) {
     const root = document.documentElement;
     // Turn the short way round the hue circle so a crossfade from amber to
     // violet does not pass through green.
-    const previous = Number.parseFloat(root.style.getPropertyValue('--ambient-h'));
+    const previous = Number.parseFloat(window.getComputedStyle(root).getPropertyValue('--ambient-h'));
     const from = Number.isFinite(previous) ? previous : DEFAULT_AMBIENT.hue;
     const turn = ((hue - from) % 360 + 540) % 360 - 180;
     root.style.setProperty('--ambient-h', String(Math.round((from + turn) * 10) / 10));
     root.style.setProperty('--ambient-c', String(chroma));
 }
 
-// Samples a thumbnail of the poster and tints the
-// stage light with its dominant hue. Any failure keeps the house colour.
-function updateAmbientFromPoster(src) {
-    const token = ++ambientToken;
-    const url = toSafeHttpUrl(src);
-    // Only TMDB serves a tiny CORS-readable thumbnail; other hosts would mean
-    // downloading the full poster again, usually without CORS.
-    if (!url || !/^https:\/\/image\.tmdb\.org\/t\/p\/w\d+\//.test(url)) {
+function samplePosterAmbient(thumbnailUrl) {
+    return new Promise(resolve => {
+        const sample = document.createElement('img');
+        sample.crossOrigin = 'anonymous';
+        sample.decoding = 'async';
+        sample.referrerPolicy = 'no-referrer';
+        sample.addEventListener('load', () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = 24;
+                canvas.height = 36;
+                const context = canvas.getContext('2d', { willReadFrequently: true });
+                context.drawImage(sample, 0, 0, canvas.width, canvas.height);
+                resolve(pickAmbientColor(context.getImageData(0, 0, canvas.width, canvas.height).data));
+            } catch {
+                resolve(null);
+            }
+        }, { once: true });
+        sample.addEventListener('error', () => resolve(null), { once: true });
+        sample.src = thumbnailUrl;
+    });
+}
+
+function updateAmbientFromPoster(context) {
+    if (!isActivePoster(context) || context.token === ambientPosterToken) return;
+    ambientPosterToken = context.token;
+    const { ambientThumbnail } = context;
+    if (!ambientThumbnail) {
         setAmbient(DEFAULT_AMBIENT);
         return;
     }
-    const sample = document.createElement('img');
-    sample.crossOrigin = 'anonymous';
-    sample.decoding = 'async';
-    sample.referrerPolicy = 'no-referrer';
-    sample.addEventListener('load', () => {
-        if (token !== ambientToken) return;
-        try {
-            const canvas = document.createElement('canvas');
-            canvas.width = 24;
-            canvas.height = 36;
-            const context = canvas.getContext('2d', { willReadFrequently: true });
-            context.drawImage(sample, 0, 0, canvas.width, canvas.height);
-            setAmbient(pickAmbientColor(context.getImageData(0, 0, canvas.width, canvas.height).data));
-        } catch {
-            setAmbient(DEFAULT_AMBIENT);
-        }
-    }, { once: true });
-    sample.addEventListener('error', () => {
-        if (token === ambientToken) setAmbient(DEFAULT_AMBIENT);
-    }, { once: true });
-    sample.src = url.replace(/\/t\/p\/w\d+\//, '/t/p/w92/');
+    // Reopening the same work can reuse both the foreground image and its tint.
+    if (lastAmbientSample?.url !== ambientThumbnail) {
+        lastAmbientSample = { url: ambientThumbnail, color: samplePosterAmbient(ambientThumbnail) };
+    }
+    const sample = lastAmbientSample;
+    void sample.color.then(color => {
+        if (!color && lastAmbientSample === sample) lastAmbientSample = null;
+        if (isActivePoster(context)) setAmbient(color ?? DEFAULT_AMBIENT);
+    });
 }
 
 if (els.cover) {
@@ -918,7 +932,7 @@ if (els.cover) {
     els.cover.addEventListener('load', () => {
         els.cover.setAttribute('aria-busy', 'false');
         syncHeroArtwork(true);
-        updateAmbientFromPoster(els.cover.currentSrc || els.cover.src);
+        updateAmbientFromPoster(activePosterContext);
     });
 }
 
@@ -938,11 +952,16 @@ function loadPoster(posterUrl, title = '', context = {}) {
     const token = previous?.loadKey === loadKey && previous.source === nextSource
         ? previous.token
         : ++posterLoadToken;
+    // Only TMDB has a small CORS-readable variant of the foreground image.
+    const ambientThumbnail = TMDB_POSTER_SIZE.test(safePosterUrl)
+        ? safePosterUrl.replace(TMDB_POSTER_SIZE, '$1w92/')
+        : null;
     activePosterContext = {
         ...context,
         title,
         source: nextSource,
         posterUrl: safePosterUrl,
+        ambientThumbnail,
         fallbackAttempted,
         token
     };
@@ -954,8 +973,13 @@ function loadPoster(posterUrl, title = '', context = {}) {
     if (els.cover.getAttribute('srcset') !== sourceSet) els.cover.setAttribute('srcset', sourceSet);
     if (els.cover.getAttribute('sizes') !== sizes) els.cover.setAttribute('sizes', sizes);
     els.cover.setAttribute('aria-busy', String(Boolean(safePosterUrl)));
+    if (!ambientThumbnail) updateAmbientFromPoster(activePosterContext);
     if (els.cover.getAttribute('src') === nextSource) {
-        if (els.cover.complete) els.cover.setAttribute('aria-busy', 'false');
+        if (els.cover.complete) {
+            els.cover.setAttribute('aria-busy', 'false');
+            if (els.cover.naturalWidth > 0) updateAmbientFromPoster(activePosterContext);
+            else handlePosterLoadError();
+        }
         syncHeroArtwork(els.cover.complete);
         return;
     }
@@ -2011,25 +2035,21 @@ function syncHeroArtwork(posterSettled) {
 
 stickyHeaderMedia.addEventListener('change', () => syncHeroArtwork(els.cover.complete));
 
-// Desktop has room for the cast and facts, so they stay open there; phones
-// keep them behind the disclosure.
-function syncProfileDisclosure() {
+let mobileProfileOpen = false;
+stickyHeaderMedia.addEventListener('change', ({ matches }) => {
     if (!els.profilePanel) return;
-    const pinned = stickyHeaderMedia.matches;
-    els.profilePanel.classList.toggle('is-pinned', pinned);
-    const summary = els.profilePanel.querySelector('summary');
-    if (pinned) summary?.setAttribute('tabindex', '-1');
-    else summary?.removeAttribute('tabindex');
-    if (pinned) els.profilePanel.open = true;
-}
-els.profilePanel?.querySelector('summary')?.addEventListener('click', event => {
-    if (stickyHeaderMedia.matches) event.preventDefault();
+    // Remember what the reader chose before forcing the section open on desktop.
+    if (matches) mobileProfileOpen = els.profilePanel.open;
+    const willHideFocus = !matches && !mobileProfileOpen && els.profileFields?.contains(document.activeElement);
+    els.profilePanel.open = matches || mobileProfileOpen;
+    if (willHideFocus) els.profilePanel.querySelector('summary')?.focus({ preventScroll: true });
 });
-stickyHeaderMedia.addEventListener('change', syncProfileDisclosure);
-syncProfileDisclosure();
 
 function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
-    if (!isUpdate && els.profilePanel) els.profilePanel.open = stickyHeaderMedia.matches;
+    if (!isUpdate && els.profilePanel) {
+        mobileProfileOpen = false;
+        els.profilePanel.open = stickyHeaderMedia.matches;
+    }
     setText(els.title, viewModel.title);
     setText(els.subTitle, viewModel.subtitle);
     renderGenres(viewModel.genres);
@@ -2203,6 +2223,7 @@ function getSearchErrorHint(error) {
 }
 
 function showEmptySearchError() {
+    setAmbient(DEFAULT_AMBIENT);
     setText(els.errorMsg, '请输入电影、剧集或演员名称');
     setText(els.errorHint, '输入片名后按 Enter 或点击搜索。');
     els.error.classList.remove('hidden');
@@ -2228,6 +2249,7 @@ function noMatchError(message) {
 
 function showSearchError(error, query, searchId, onRetry = null) {
     if (!isActiveSearch(searchId)) return;
+    setAmbient(DEFAULT_AMBIENT);
     const message = getSearchErrorMessage(error);
     setText(els.errorMsg, message);
     setText(els.errorHint, getSearchErrorHint(error));
@@ -2433,7 +2455,6 @@ function startPosterFallback(candidate, enrichmentQuery, viewModel, searchId, se
             viewModel.posterSource = 'fallback';
             loadPoster(safePoster, viewModel.title, posterContext);
         }
-        renderTmdbProfile(viewModel);
         setEnrichmentStatus(
             els.posterStatus,
             addedPoster ? '已找到备用海报' : viewModel.posterUrl ? '海报已加载' : '暂无备用海报'
@@ -2470,7 +2491,6 @@ function startMetadataEnrichments(candidate, query, viewModel, searchId, searchO
             if (mergedGenres.length > viewModel.genres.length) {
                 viewModel.genres = mergedGenres;
                 renderGenres(viewModel.genres);
-                renderTmdbProfile(viewModel);
                 renderScore({
                     rating: viewModel.rating,
                     votes: viewModel.votes,
@@ -2896,6 +2916,7 @@ function renderQuickSearches() {
 }
 
 function beginSearchSession(query) {
+    els.quickSearches?.classList.add('is-dismissed');
     document.body.classList.add('has-content');
     activeDetailState = null;
     lastSearchQuery = query;
@@ -2923,6 +2944,15 @@ function beginSearchSession(query) {
     return { searchId, searchOptions };
 }
 
+function focusCandidateHeading(heading, query, originalFocus) {
+    if (els.input.value.trim() !== query) return;
+    const focused = document.activeElement;
+    // A submitted recent-search chip is replaced when the history is rendered.
+    if (focused === originalFocus || (focused === document.body && !originalFocus?.isConnected)) {
+        heading?.focus({ preventScroll: true });
+    }
+}
+
 async function handleSearch({ historyMode = 'push' } = {}) {
     const query = els.input.value.trim();
     if (!query) {
@@ -2938,9 +2968,11 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         lastSearchQuery = '';
         searchRetryAction = null;
         showEmptySearchError();
+        els.quickSearches?.classList.add('is-dismissed');
         return;
     }
 
+    const originalFocus = document.activeElement;
     const { searchId, searchOptions } = beginSearchSession(query);
     // Shared links and back/forward restores are not searches the visitor typed.
     if (historyMode === 'push') rememberSearch(query);
@@ -3007,12 +3039,14 @@ async function handleSearch({ historyMode = 'push' } = {}) {
                 ? [personSearch.person]
                 : [];
         if (actorCandidates.length > 0 && renderActorCandidatePicker(actorCandidates, query, searchId, searchOptions)) {
+            setAmbient(DEFAULT_AMBIENT);
             els.loading.classList.add('hidden');
             els.results.classList.add('hidden');
             hideCandidatePicker();
             setSearching(false);
             setSearchStatus(`找到 ${Math.min(actorCandidates.length, 6)} 位可能的演员，请确认身份`);
             scrollToVisible(els.actorCandidatePicker);
+            focusCandidateHeading(els.actorCandidatePickerTitle, query, originalFocus);
             return;
         }
 
@@ -3025,6 +3059,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         const requiresConfirmation = shouldConfirmTmdbCandidate(rankedCandidates) || !candidate;
 
         if (requiresConfirmation) {
+            setAmbient(DEFAULT_AMBIENT);
             renderCandidatePicker(rankedCandidates, query, selectedCandidate => {
                 if (!isActiveSearch(searchId)) return;
                 void loadCandidateDetails(selectedCandidate, query, searchId, searchOptions, {
@@ -3038,6 +3073,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             setSearching(false);
             setSearchStatus(`找到 ${Math.min(rankedCandidates.length, 6)} 个候选，请确认要查看的影视条目`);
             scrollToVisible(els.candidatePicker);
+            focusCandidateHeading(els.candidatePickerTitle, query, originalFocus);
             return;
         }
 
@@ -3068,9 +3104,26 @@ if (els.searchForm) {
     });
 }
 
+function showQuickSearches() {
+    els.quickSearches?.classList.remove('is-dismissed');
+}
+
+els.input.addEventListener('focus', showQuickSearches);
+els.input.addEventListener('input', showQuickSearches);
+els.input.addEventListener('click', showQuickSearches);
+els.quickSearches?.parentElement.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing
+        || !stickyHeaderMedia.matches || !document.body.classList.contains('has-content')
+        || els.quickSearches.classList.contains('is-dismissed')) return;
+    event.preventDefault();
+    if (els.quickSearches.contains(event.target)) els.input.focus({ preventScroll: true });
+    els.quickSearches.classList.add('is-dismissed');
+});
+
 document.getElementById('clearSearch')?.addEventListener('click', () => {
     els.input.value = '';
     els.input.focus();
+    showQuickSearches();
 });
 
 document.addEventListener('keydown', event => {
@@ -3121,7 +3174,6 @@ if (els.actorLoadMore) {
 
 function resetInitialView() {
     document.body.classList.remove('has-content');
-    ambientToken += 1;
     setAmbient(DEFAULT_AMBIENT);
     activeDetailState = null;
     currentSearchId += 1;
