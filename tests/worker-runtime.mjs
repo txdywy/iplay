@@ -67,6 +67,16 @@ async function upstream(request) {
         redirectedRequests++;
         return Response.json(tmdbDetail({ id: 606, title: 'Untrusted Redirect' }));
     }
+    if (url.hostname === 'drive-h.quark.cn') {
+        assert.equal(url.pathname, '/1/clouddrive/share/sharepage/token');
+        assert.equal(request.method, 'POST');
+        assert.equal(request.headers.get('cookie'), null);
+        const { pwd_id: id, passcode } = await request.json();
+        assert.equal(passcode, '');
+        if (id === 'redirect') return new Response(null, { status: 302, headers: { Location: 'https://untrusted.example/quark' } });
+        assert.equal(id, 'missing');
+        return Response.json({ code: 41006 }, { status: 404 });
+    }
     if (url.hostname === 'api.themoviedb.org' && url.pathname === '/3/movie/606') {
         assert.equal(request.headers.get('Authorization'), 'Bearer runtime-test-bearer');
         return new Response(null, { status: 302, headers: { Location: 'https://untrusted.example/credentials' } });
@@ -218,6 +228,12 @@ try {
     assert.deepEqual(await redirect.json(), { error: 'TMDB unavailable' });
     assert.equal(redirectedRequests, 0, 'native fetch must not send bearer credentials to a redirected host');
     checks.push('tmdb-redirect-credential-isolation');
+
+    const quarkStatus = await request('/api/resource/quark-status?id=missing&id=redirect', 'runtime-quark-status');
+    assert.equal(quarkStatus.status, 200);
+    assert.deepEqual(await quarkStatus.json(), { unavailable: { missing: 'missing' } });
+    assert.equal(redirectedRequests, 0, 'Quark redirects must not reach other hosts');
+    checks.push('native-quark-status-and-redirect-handling');
 
     const gateway = await request('/api/tmdb/search?q=Runtime%20Gateway', 'runtime-tmdb-gateway');
     assert.equal(gateway.status, 429);

@@ -4,8 +4,8 @@ import {
     releaseUpstreamResponse, serveCachedJson
 } from './core.js';
 
-const SHARE_TOKEN_URL = 'https://drive-pc.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc&uc_param_str=';
-const CHECK_TIMEOUT_MS = 2200;
+const SHARE_TOKEN_URL = 'https://drive-h.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc&uc_param_str=';
+const CHECK_TIMEOUT_MS = 3200;
 const CHECK_CACHE_SECONDS = 300;
 const MAX_TOKEN_RESPONSE_BYTES = 24 * 1024;
 
@@ -29,7 +29,7 @@ async function checkShare(id, ctx) {
 
         const response = await fetchUpstream(SHARE_TOKEN_URL, {
             method: 'POST',
-            redirect: 'error',
+            redirect: 'manual',
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',

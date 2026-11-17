@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.59';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.60';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.59';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.59';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.59';
-import { RELEASE_VERSION } from './release.js?v=1.0.59';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.59';
+} from './scorer.js?v=1.0.60';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.60';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.60';
+import { RELEASE_VERSION } from './release.js?v=1.0.60';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.60';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.59';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.59';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.59';
+} from './match.js?v=1.0.60';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.60';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.60';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
