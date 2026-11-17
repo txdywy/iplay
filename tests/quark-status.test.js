@@ -13,10 +13,10 @@ test('Quark status labels only confirmed failures and caches no upstream account
         async put(key, response) { entries.set(key.url, response); }
     } };
     globalThis.fetch = async (url, options) => {
-        assert.equal(new URL(url).origin, 'https://drive-pc.quark.cn');
+        assert.equal(new URL(url).origin, 'https://drive-h.quark.cn');
         assert.equal(new URL(url).pathname, '/1/clouddrive/share/sharepage/token');
         assert.equal(options.method, 'POST');
-        assert.equal(options.redirect, 'error');
+        assert.equal(options.redirect, 'manual');
         const headers = new globalThis.Headers(options.headers);
         assert.equal(headers.get('cookie'), null);
         assert.equal(headers.get('authorization'), null);
@@ -26,6 +26,7 @@ test('Quark status labels only confirmed failures and caches no upstream account
         if (id === 'unknown') return new Response('<title>challenge</title>');
         if (id === 'limited') return Response.json({ code: 41006 }, { status: 429 });
         if (id === 'egress-error') return Response.json({ code: 41009 }, { status: 503 });
+        if (id === 'redirect') return Response.json({ code: 41009 }, { status: 302, headers: { Location: 'https://untrusted.test/' } });
         if (id === 'timeout') throw new Error('temporary network error');
         if (id === 'live') return Response.json({ code: 0, data: { stoken: 'secret-token', author: 'private' } });
         const codes = {
@@ -62,7 +63,7 @@ test('Quark status labels only confirmed failures and caches no upstream account
     assert.deepEqual(await (await probe(ids)).json(), { unavailable });
     for (const id of ['Missing', 'deleted', 'expired', 'cancelled', 'protected', 'live']) assert.equal(calls.get(id), 1);
     for (const id of ['unknown', 'limited', 'timeout', 'wrong']) assert.equal(calls.get(id), 2);
-    const additional = await probe(['missing-files', 'blocked', 'invalid', 'egress-error']);
+    const additional = await probe(['missing-files', 'blocked', 'invalid', 'egress-error', 'redirect']);
     assert.deepEqual(await additional.json(), {
         unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid' }
     });
