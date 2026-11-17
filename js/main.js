@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.57';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.58';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.57';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.57';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.57';
-import { RELEASE_VERSION } from './release.js?v=1.0.57';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.57';
+} from './scorer.js?v=1.0.58';
+import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.58';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.58';
+import { RELEASE_VERSION } from './release.js?v=1.0.58';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.58';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.57';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.57';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.57';
+} from './match.js?v=1.0.58';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.58';
+import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.58';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1403,7 +1403,8 @@ function pickSafeImageUrl(...values) {
 // Share links already opened in this browser, so a returning visitor can tell
 // which ones were tried.
 const OPENED_LINKS_KEY = 'iplay_opened_links';
-const OPENED_LINKS_LIMIT = 300;
+const OPENED_LINKS_LIMIT = 1000;
+const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
 const openedLinks = new Set();
 try {
     const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
@@ -1412,20 +1413,97 @@ try {
     // The marks are optional.
 }
 
-function rememberOpenedLink(url) {
-    openedLinks.delete(url);
-    openedLinks.add(url);
+function saveOpenedLinks() {
     try {
         window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks].slice(-OPENED_LINKS_LIMIT)));
     } catch {
-        // Keep the mark for this page view only.
+        // Keep the marks for this page view only.
     }
 }
 
-function renderLinkCards(container, items, {
-    emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
-    detailText, sourceText, actionLabel, onAction, trackOpened = false, initialLimit = 6
-}) {
+function rememberOpenedLink(url) {
+    openedLinks.delete(url);
+    openedLinks.add(url);
+    saveOpenedLinks();
+}
+
+// "unopened" hides links already opened, so a second visit shows what is left
+// to try. The choice is a per-browser convenience.
+let resourceFilter = 'all';
+try {
+    if (window.localStorage.getItem(RESOURCE_FILTER_KEY) === 'unopened') resourceFilter = 'unopened';
+} catch {
+    // Default to every link.
+}
+
+const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'wpzysResourceList'];
+// The arguments each list was last rendered with, so the filter can redraw it.
+const linkListRenders = new WeakMap();
+
+function resourceLinkUrls() {
+    const urls = new Set();
+    for (const id of RESOURCE_LIST_IDS) {
+        const render = linkListRenders.get(els[id]);
+        render?.urls.forEach(url => urls.add(url));
+    }
+    return urls;
+}
+
+function updateResourceToolbar() {
+    const toolbar = document.getElementById('resourceToolbar');
+    if (!toolbar) return;
+    const urls = resourceLinkUrls();
+    const opened = [...urls].filter(url => openedLinks.has(url)).length;
+    toolbar.hidden = urls.size === 0;
+    for (const button of toolbar.querySelectorAll('[data-resource-filter]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.resourceFilter === resourceFilter));
+    }
+    const summary = document.getElementById('resourceOpenedSummary');
+    if (summary) summary.textContent = `已打开 ${opened} / ${urls.size}`;
+    const clear = document.getElementById('resourceClearOpened');
+    if (clear) clear.hidden = opened === 0;
+}
+
+function rerenderResourceLists() {
+    for (const id of RESOURCE_LIST_IDS) {
+        const render = linkListRenders.get(els[id]);
+        if (render) renderLinkCards(els[id], render.items, render.options);
+    }
+    updateResourceToolbar();
+}
+
+function setResourceFilter(value) {
+    resourceFilter = value === 'unopened' ? 'unopened' : 'all';
+    try {
+        window.localStorage.setItem(RESOURCE_FILTER_KEY, resourceFilter);
+    } catch {
+        // The filter still applies to this page view.
+    }
+    rerenderResourceLists();
+}
+
+document.getElementById('resourceToolbar')?.addEventListener('click', event => {
+    const filterButton = event.target.closest('[data-resource-filter]');
+    if (filterButton) {
+        setResourceFilter(filterButton.dataset.resourceFilter);
+        return;
+    }
+    if (event.target.closest('#resourceClearOpened')) {
+        // Only this work's links: other works keep their marks.
+        const urls = resourceLinkUrls();
+        let cleared = 0;
+        urls.forEach(url => { if (openedLinks.delete(url)) cleared += 1; });
+        saveOpenedLinks();
+        rerenderResourceLists();
+        showToast(`已清除 ${cleared} 条打开标记`);
+    }
+});
+
+function renderLinkCards(container, items, options) {
+    const {
+        emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
+        detailText, sourceText, actionLabel, onAction, initialLimit = 6
+    } = options;
     if (!container) return;
     const wasExpanded = container.dataset.expanded === 'true';
     clearNode(container);
@@ -1437,6 +1515,7 @@ function renderLinkCards(container, items, {
         : [];
 
     setResourceCount(container, safeItems.length);
+    linkListRenders.set(container, { items, options, urls: safeItems.map(item => item.url) });
     if (safeItems.length === 0) {
         delete container.dataset.expanded;
         const li = document.createElement('li');
@@ -1456,17 +1535,34 @@ function renderLinkCards(container, items, {
         titleSeen.set(key, (titleSeen.get(key) || 0) + 1);
         item._repostLabel = total > 1 ? `同名帖 ${titleSeen.get(key)}/${total}` : '';
     });
+    // Numbers follow the full list, so "No. 7" names the same link whether
+    // the list is filtered or expanded.
+    safeItems.forEach((item, index) => { item._position = index + 1; });
 
-    const maxItems = safeItems.length;
+    const shownItems = resourceFilter === 'unopened'
+        ? safeItems.filter(item => !openedLinks.has(item.url))
+        : safeItems;
+    if (shownItems.length === 0) {
+        delete container.dataset.expanded;
+        const li = document.createElement('li');
+        li.className = 'link-filter-empty';
+        li.textContent = `本栏 ${safeItems.length} 条链接都已打开过`;
+        container.appendChild(li);
+        return;
+    }
+
+    const maxItems = shownItems.length;
     const firstPageSize = Math.min(Math.max(Number(initialLimit) || 1, 1), maxItems);
 
     const renderVisibleItems = (visibleLimit, focusTarget = null) => {
         container.dataset.expanded = String(visibleLimit > firstPageSize);
         clearNode(container);
         const frag = document.createDocumentFragment();
-        safeItems.slice(0, visibleLimit).forEach(item => {
+        shownItems.slice(0, visibleLimit).forEach(item => {
             const li = document.createElement('li');
             li.className = itemClass;
+            li.classList.toggle('is-opened', openedLinks.has(item.url));
+            li.dataset.linkUrl = item.url;
 
             const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
             const hasAction = Boolean(resolvedActionLabel && typeof onAction === 'function');
@@ -1481,6 +1577,11 @@ function renderLinkCards(container, items, {
 
             const row = document.createElement('div');
             row.className = 'flex items-start justify-between gap-3';
+
+            const position = document.createElement('span');
+            position.className = 'link-index';
+            position.setAttribute('aria-hidden', 'true');
+            position.textContent = String(item._position).padStart(2, '0');
 
             const content = document.createElement('div');
             content.className = 'min-w-0 flex-1 [overflow-wrap:anywhere]';
@@ -1511,20 +1612,27 @@ function renderLinkCards(container, items, {
                 content.appendChild(source);
             }
 
-            if (trackOpened) {
-                const opened = document.createElement('div');
-                opened.className = 'mt-2 text-xs text-cinema-400';
-                opened.textContent = '已打开过';
-                opened.hidden = !openedLinks.has(item.url);
-                content.appendChild(opened);
-                link.addEventListener('click', () => {
-                    rememberOpenedLink(item.url);
-                    opened.hidden = false;
-                });
-            }
+            // Opened links stay in place until the filter is next applied, so
+            // a click never moves the row out from under the pointer.
+            const opened = document.createElement('span');
+            opened.className = 'link-opened';
+            opened.textContent = '已打开';
+            title.appendChild(opened);
+            const markOpened = () => {
+                rememberOpenedLink(item.url);
+                // The same share can be listed in more than one column.
+                for (const row of document.querySelectorAll('#resourcesSection .link-item')) {
+                    if (row.dataset.linkUrl === item.url) row.classList.add('is-opened');
+                }
+                updateResourceToolbar();
+            };
+            link.addEventListener('click', markOpened);
+            // A middle click opens a tab without a click event.
+            link.addEventListener('auxclick', event => { if (event.button === 1) markOpened(); });
 
             const icon = createIcon(iconName, iconClass);
 
+            row.appendChild(position);
             row.appendChild(content);
             row.appendChild(icon);
             link.appendChild(row);
@@ -1602,6 +1710,7 @@ function renderLinkCards(container, items, {
     };
 
     renderVisibleItems(wasExpanded ? maxItems : firstPageSize);
+    updateResourceToolbar();
 }
 
 // Each resource column shows how many entries it lists; a status (loading,
@@ -1619,6 +1728,8 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, i
     if (!container) return;
     clearNode(container);
     setResourceCount(container, 0);
+    linkListRenders.delete(container);
+    updateResourceToolbar();
 
     const li = document.createElement('li');
     li.className = 'p-3';
@@ -1825,7 +1936,6 @@ function renderQuarkUrls(quarkUrls) {
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
         // The source post usually has the same title as the card; repeat it only when it differs.
         sourceText: item => (item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : ''),
-        trackOpened: true,
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         initialLimit: 6

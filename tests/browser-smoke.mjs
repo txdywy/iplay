@@ -936,10 +936,10 @@ async function runObserverFlow() {
     await evaluate("document.querySelector('#jumpToResources').click()");
     assert.equal(await evaluate("document.activeElement.id"), 'resourcesSection');
     await waitFor('window.__smoke.resourceCalls === 1');
-    await waitFor("document.querySelector('#resourcesSection button')?.textContent.includes('重试资源扫描')");
+    await waitFor("document.querySelector('#resourcesSection .link-list button')?.textContent.includes('重试资源扫描')");
     assert.match(await evaluate('document.querySelector("#resourcesStatus")?.textContent || ""'), /失败/);
 
-    await evaluate("document.querySelector('#resourcesSection button')?.click()");
+    await evaluate("document.querySelector('#resourcesSection .link-list button')?.click()");
     await waitFor('window.__smoke.resourceCalls === 2');
     await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
     await evaluate("document.querySelector('#resourcesNotice button')?.click()");
@@ -1038,8 +1038,8 @@ async function runResourceRetryAfterDetailRetryFlow() {
     await assertSearchReady('Retry Detail Movie');
     await waitFor("document.querySelector('#dataNotice button')?.textContent.includes('重试详情')");
     await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
-    await waitFor("document.querySelector('#resourcesSection button')?.textContent.includes('重试资源扫描')");
-    await evaluate("document.querySelector('#resourcesSection button').click()");
+    await waitFor("document.querySelector('#resourcesSection .link-list button')?.textContent.includes('重试资源扫描')");
+    await evaluate("document.querySelector('#resourcesSection .link-list button').click()");
     await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 2);
 
@@ -1358,7 +1358,7 @@ async function runDeepLinkFlow() {
     assert.equal(await evaluate("document.querySelector('#searchInput').value"), 'Canonical Movie');
     await evaluate("document.querySelector('#resultsArea [data-share-current]').click()");
     assert.equal(await evaluate('window.__smoke.copied'), await evaluate('location.href'));
-    await evaluate("document.querySelector('#resourcesSection button')?.click()");
+    await evaluate("document.querySelector('#resourcesSection .link-list button')?.click()");
     await waitFor('window.__smoke.resourceCalls === 1');
     const calls = await evaluate('window.__smoke.calls');
     assert.ok(calls.some(call => call.includes('/api/wiki/zh?q=Canonical%20Movie')));
@@ -1374,6 +1374,29 @@ async function runDesktopReducedMotionFlow() {
     await assertSearchReady('Test Movie');
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#resultsArea .fade-up')).animationName"), 'none');
     await assertResultLayout(true);
+}
+
+// Opening a link numbers and marks it; "只看未打开" hides it but keeps the
+// other links' numbers.
+async function assertOpenedLinkFilter() {
+    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
+    await waitFor("document.querySelectorAll('#quarkUrlList .link-index').length >= 2");
+    const before = await evaluate("[...document.querySelectorAll('#quarkUrlList .link-index')].map(node => node.textContent)");
+    assert.deepEqual(before.slice(0, 2), ['01', '02']);
+    await evaluate(`(() => {
+        // Keep the test page in place; the app's own click handler still runs.
+        window.addEventListener('click', event => event.preventDefault(), { once: true });
+        document.querySelector('#quarkUrlList .link-item a').click();
+    })()`);
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList .link-item').classList.contains('is-opened')"), true);
+    assert.match(await evaluate("document.getElementById('resourceOpenedSummary').textContent"), /^已打开 1 \/ \d+$/u);
+    await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').click()");
+    await waitFor("document.querySelector('#quarkUrlList .link-index')?.textContent === '02'");
+    assert.equal(await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').getAttribute('aria-pressed')"), 'true');
+    await evaluate("document.querySelector('[data-resource-filter=\"all\"]').click()");
+    await evaluate("document.getElementById('resourceClearOpened').click()");
+    await waitFor("document.querySelectorAll('#quarkUrlList .is-opened').length === 0");
+    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
 }
 
 async function runActorCandidateRaceFlow() {
@@ -1556,7 +1579,7 @@ async function runCanonicalEnrichmentFlow() {
     assert.equal(await evaluate("document.body.textContent.includes('旧片同名作品简介。')"), false);
     assert.equal(await evaluate("document.body.textContent.includes('详情确认后的新版作品简介。')"), true);
     assert.equal(await evaluate("new URL(location.href).searchParams.get('title')"), 'Canonical Renamed Movie');
-    await evaluate("window.__smoke.resourceCalls || document.querySelector('#resourcesSection button')?.click()");
+    await evaluate("window.__smoke.resourceCalls || document.querySelector('#resourcesSection .link-list button')?.click()");
     await waitFor('window.__smoke.resourceCalls === 1');
     const resourceCalls = (await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource?'))")).map(call => new URL(call, baseUrl));
     assert.deepEqual(resourceCalls.map(url => url.searchParams.get('q')), ['Canonical Renamed Movie']);
@@ -1606,7 +1629,7 @@ async function runCanonicalDetailRetryResourceFlow() {
     await waitFor("document.querySelector('#resourceList a')?.getAttribute('href') === 'https://resource.example/old'");
     await evaluate("document.querySelector('#dataNotice button').click()");
     await assertSearchReady('Recovered Canonical Movie');
-    await evaluate("window.__smoke.resourceCalls > 1 || document.querySelector('#resourcesSection button')?.click()");
+    await evaluate("window.__smoke.resourceCalls > 1 || document.querySelector('#resourcesSection .link-list button')?.click()");
     await waitFor("document.querySelector('#resourceList a')?.getAttribute('href') === 'https://resource.example/canonical'");
     const queries = (await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource?'))")).map(call => new URL(call, baseUrl).searchParams.get('q'));
     assert.deepEqual(queries, ['Retry Canonical Movie', 'Recovered Canonical Movie']);
@@ -1658,6 +1681,7 @@ async function runCompleteResourceVisibilityFlow() {
     assert.equal(await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/large-99\"]') !== null"), true);
     await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/large-99\"]').closest('li').querySelector('button').click()");
     await waitFor("window.__smoke.copied === 'abcd'");
+    await assertOpenedLinkFilter();
 }
 
 async function runUnscannedResourceStatusFlow() {
@@ -1670,7 +1694,7 @@ async function runUnscannedResourceStatusFlow() {
     // IntersectionObserver may start the scan as soon as scrolling exposes
     // the section. Do not require its transient deferred state to persist.
     await waitFor("window.__smoke.resourceCalls === 1 || document.querySelector('#resourcesStatus').textContent.includes('待启动')");
-    await evaluate("Array.from(document.querySelectorAll('#resourcesSection button')).find(button => button.textContent === '开始扫描资源')?.click()");
+    await evaluate("Array.from(document.querySelectorAll('#resourcesSection .link-list button')).find(button => button.textContent === '开始扫描资源')?.click()");
     await waitFor('window.__smoke.resourceCalls === 1');
     await waitFor("document.querySelector('#resourcesStatus').textContent.includes('12/13')");
     assert.equal(await evaluate("document.querySelector('#resourcesNotice').classList.contains('hidden')"), true,
