@@ -7,7 +7,7 @@ const LOGIN_COOKIE = 'bbs_token=test-session-a; bbs_sid=test-sid';
 const title = '流浪地球';
 const thread = (id, extra = '') => `<li class="media thread tap" data-href="thread-${id}.htm"><a href="thread-${id}.htm"><span class="text-danger">流浪地球</span> 夸克 ${extra}</a><a href="forum-9-1.htm?tagids=1">夸克</a></li>`;
 
-function setup(t, upstream) {
+function setup(t, upstream, { by669, zuidouyin } = {}) {
     const originalFetch = globalThis.fetch;
     const originalCaches = globalThis.caches;
     const requests = [];
@@ -15,20 +15,21 @@ function setup(t, upstream) {
     const writes = [];
     globalThis.caches = { default: {
         async match(key) { return entries.get(key.url)?.clone() || null; },
-        async put(key, response) { entries.set(key.url, response); }
+        async put(key, response) { entries.set(key.url, response); },
+        async delete(key) { return entries.delete(key.url); }
     } };
     globalThis.fetch = async (input, options = {}) => {
         const url = new URL(String(input));
         const headers = new globalThis.Headers(options.headers);
         requests.push({ url: url.href, cookie: headers.get('Cookie'), method: options.method || 'GET' });
-        if (url.origin === 'https://by669.org' && url.pathname === '/api/discussions') return Response.json({ data: [] });
-        if (url.origin === 'https://zuidouyin.com') return Response.json([]);
+        if (url.origin === 'https://by669.org') return by669 ? by669(url) : Response.json({ data: [] });
+        if (url.origin === 'https://zuidouyin.com') return zuidouyin ? zuidouyin(url) : Response.json([]);
         return upstream(url, headers);
     };
     t.after(() => { globalThis.fetch = originalFetch; globalThis.caches = originalCaches; });
     const ctx = { waitUntil(promise) { writes.push(promise); } };
-    async function search(cookie = LOGIN_COOKIE, { refresh = false, query = title } = {}) {
-        const response = await worker.fetch(new Request(`https://worker.test/api/resource?q=${encodeURIComponent(query)}${refresh ? '&refresh=1' : ''}`, {
+    async function search(cookie = LOGIN_COOKIE, { refresh = false, cacheOnly = false, query = title, identity = '' } = {}) {
+        const response = await worker.fetch(new Request(`https://worker.test/api/resource${cacheOnly ? '/cache' : ''}?q=${encodeURIComponent(query)}${identity}${refresh ? '&refresh=1' : ''}`, {
             headers: { 'cf-connecting-ip': t.name, Cookie: 'bbs_token=untrusted-client-cookie' }
         }), cookie ? { WPZY_COOKIE: cookie } : {}, ctx);
         const body = await response.json();
@@ -69,6 +70,84 @@ test('WPZY uses only the server secret for search, detail and same-origin redire
     assert.ok([...entries.keys()].every(key => key.startsWith('https://resource-search-v19-cache.local/') && !key.includes('test-session-a') && !key.includes('bbs_token')));
     assert.ok(!JSON.stringify(body).includes('test-session-a'));
     assert.equal(response.headers.get('set-cookie'), null);
+});
+
+test('resource previews read the existing snapshot for the same work and login without scanning', async t => {
+    let currentShare = 'first-share';
+    const { search, requests } = setup(t, url => new Response(url.pathname === '/search.htm'
+        ? thread(201, '2019') : 'https://pan.quark.cn/s/' + currentShare));
+    const identity = '&id=550988&type=movie&year=2019';
+    const preview = options => search(LOGIN_COOKIE, { cacheOnly: true, identity, ...options });
+    assert.equal((await preview()).response.status, 410);
+    assert.equal(requests.length, 0);
+
+    const { body: original } = await search(LOGIN_COOKIE, { identity });
+    assert.equal(original.quarkUrls[0]?.url, 'https://pan.quark.cn/s/first-share');
+    const warm = requests.length;
+    const { response, body } = await preview({ refresh: true });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(body.quarkUrls[0]?.url, original.quarkUrls[0]?.url);
+    assert.equal((await preview({ identity: '&id=550989&type=movie&year=2019' })).response.status, 410);
+    const otherLogin = await search('bbs_token=other-server-session', { cacheOnly: true, identity });
+    assert.equal(otherLogin.response.status, 410);
+    assert.equal(requests.length, warm);
+
+    currentShare = 'second-share';
+    const refreshed = await search(LOGIN_COOKIE, { identity, refresh: true });
+    assert.ok(requests.length > warm);
+    assert.equal(refreshed.body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/second-share');
+    assert.equal((await preview()).body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/second-share');
+});
+
+test('an explicit upstream login failure removes previously extracted shares from future previews', async t => {
+    let expired = false;
+    const { search } = setup(t, url => {
+        if (expired) return new Response(null, { status: 302, headers: { Location: 'user-login.htm' } });
+        return new Response(url.pathname === '/search.htm' ? thread(201) : 'https://pan.quark.cn/s/old-share');
+    });
+    assert.equal((await search()).body.quarkUrls[0]?.url, 'https://pan.quark.cn/s/old-share');
+    expired = true;
+    const refresh = await search(LOGIN_COOKIE, { refresh: true });
+    assert.equal(refresh.body.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.deepEqual(refresh.body.quarkUrls, []);
+    assert.deepEqual((await search(LOGIN_COOKIE, { cacheOnly: true })).body.quarkUrls, []);
+});
+
+test('refresh removes login-gated shares while retaining temporarily unavailable public pages', async t => {
+    let providersOffline = false;
+    const failure = () => new Response(null, { status: 503 });
+    const { entries, search } = setup(t, url => {
+        if (providersOffline) return new Response(null, { status: 302, headers: { Location: 'user-login.htm' } });
+        return new Response(url.pathname === '/search.htm' ? thread(201) : 'https://pan.quark.cn/s/login-share');
+    }, {
+        by669: url => {
+            if (providersOffline) return failure();
+            if (url.pathname === '/api/discussions') return Response.json({ data: [{ id: 21, attributes: { title: title + ' 夸克' } }] });
+            return new Response('https://pan.quark.cn/s/public-share?pwd=keep');
+        },
+        zuidouyin: () => providersOffline ? failure() : Response.json([])
+    });
+    const first = (await search()).body;
+    assert.equal(first.quarkUrls.length, 2);
+    providersOffline = true;
+    const refresh = await search(LOGIN_COOKIE, { refresh: true });
+    assert.equal(refresh.response.status, 200);
+    assert.equal(refresh.body.partial, true);
+    assert.equal(refresh.body.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.deepEqual(refresh.body.quarkUrls.map(({ url, password }) => [url, password]),
+        [['https://pan.quark.cn/s/public-share', 'keep']]);
+    assert.deepEqual(refresh.body.resourceMeta.retainedPages.map(page => page.source), ['by669']);
+    const preview = (await search(LOGIN_COOKIE, { cacheOnly: true })).body;
+    assert.deepEqual(preview.quarkUrls, refresh.body.quarkUrls);
+    assert.ok(preview.resourceMeta.cacheExpiresAt <= first.resourceMeta.cacheExpiresAt);
+
+    // The entry can disappear between a browser's preview and its refresh.
+    entries.clear();
+    const cold = await search(LOGIN_COOKIE, { refresh: true });
+    assert.equal(cold.response.status, 200);
+    assert.equal(cold.body.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.deepEqual(cold.body.quarkUrls, []);
 });
 
 test('WPZY login redirects are failures, not cached empty successes', async t => {

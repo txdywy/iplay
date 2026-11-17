@@ -21,7 +21,7 @@ const workerDirectory = fileURLToPath(new URL('../worker/', import.meta.url));
 const siblingModules = (await readdir(workerDirectory)).filter(name => name.endsWith('.js'))
     .map(name => join(workerDirectory, name)).filter(path => path !== resolve(productionConfig.main));
 // The Telegram bot reuses the page's pure scoring, matching and season helpers.
-const sharedFrontendModules = ['release.js', 'scorer.js', 'match.js', 'seasons.js']
+const sharedFrontendModules = ['release.js', 'scorer.js', 'match.js', 'seasons.js', 'quark.js', 'resources.js']
     .map(name => fileURLToPath(new URL(`../js/${name}`, import.meta.url)));
 const modules = await Promise.all([
     productionConfig.main, ...siblingModules, ...sharedFrontendModules

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeResourceState, resourceQueryKey } from '../js/resources.js';
+import { mergeResourceSnapshot, mergeResourceState, resourceQueryKey } from '../js/resources.js';
 
 const sourceA = { title: 'A', url: 'https://by669.com/a', source: 'by669' };
 const sourceB = { title: 'B', url: 'https://wpzy.org/thread-1.htm', source: 'wpzys' };
@@ -105,6 +105,18 @@ test('display cap still reconciles conflicts encountered after the first hundred
     assert.equal(result.result.quarkUrls[0].password, undefined);
     assert.equal(result.result.quarkUrls[0].passwordConflict, true);
     assert.equal(result.pages[0].quarkUrls.length, 125, 'retained evidence remains available for later scans');
+});
+
+test('new shares get a slot when retained evidence fills the display cap', () => {
+    const links = Array.from({ length: 100 }, (_, index) => share(String(index), 'aaaa'));
+    const initial = scan({ pages: [page(sourceA, links)] });
+    const latest = [share('new', 'bbbb')];
+    const partial = scan({ by669: 'failed', resources: [], partial: true, pages: [page(sourceB, latest)] });
+    const snapshot = mergeResourceSnapshot(initial, { ...partial, quarkUrls: latest });
+    for (const retained of [snapshot, mergeResourceState(null, snapshot).result]) {
+        assert.equal(retained.quarkUrls.length, 100);
+        assert.ok(retained.quarkUrls.some(item => item.url === latest[0].url));
+    }
 });
 
 test('legacy resource responses remain usable and full scans clear obsolete links', () => {

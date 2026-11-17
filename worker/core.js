@@ -336,8 +336,10 @@ function checkLocalRateLimit(key, limit = RATE_LIMIT) {
 
 export async function checkRateLimit(ip, path, env) {
     const isResourceRoute = path === "/api/resource";
-    const routeKey = isResourceRoute ? "resource" : "api";
-    const binding = isResourceRoute ? env?.RESOURCE_RATE_LIMITER : env?.API_RATE_LIMITER;
+    const isQuarkStatus = path === "/api/resource/quark-status";
+    const useResourceLimiter = isResourceRoute || isQuarkStatus;
+    const routeKey = isQuarkStatus ? "quark-status" : isResourceRoute ? "resource" : "api";
+    const binding = useResourceLimiter ? env?.RESOURCE_RATE_LIMITER : env?.API_RATE_LIMITER;
 
     if (binding) {
         if (typeof binding.limit !== "function") {
@@ -364,7 +366,7 @@ export async function checkRateLimit(ip, path, env) {
         return null;
     }
 
-    return checkLocalRateLimit(`${routeKey}:${ip}`, isResourceRoute ? 10 : RATE_LIMIT);
+    return checkLocalRateLimit(`${routeKey}:${ip}`, useResourceLimiter ? 10 : RATE_LIMIT);
 }
 
 export async function forEachWithConcurrency(items, concurrency, task) {

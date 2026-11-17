@@ -20,6 +20,7 @@ import {
 import {
     handlePosterSearch
 } from './poster.js';
+import { handleQuarkStatus } from './quark-status.js';
 import {
     handleResourceSearch
 } from './resources.js';
@@ -177,13 +178,19 @@ export default {
                 return withCors(await handleDoubanDetail(url.searchParams.get("id"), ctx), request, env);
             }
 
-            if (path === "/api/resource") {
+            if (path === "/api/resource/quark-status") {
+                return withCors(await handleQuarkStatus(url.searchParams.getAll("id"), ctx), request, env);
+            }
+
+            if (path === "/api/resource" || path === "/api/resource/cache") {
+                const cacheOnly = path === "/api/resource/cache";
                 return withCors(await handleResourceSearch(
                     url.searchParams.get("q"),
                     env,
                     ctx,
                     {
-                        refresh: url.searchParams.get("refresh") === "1",
+                        refresh: !cacheOnly && url.searchParams.get("refresh") === "1",
+                        cacheOnly,
                         id: url.searchParams.get("id"),
                         mediaType: url.searchParams.get("type"),
                         year: url.searchParams.get("year")

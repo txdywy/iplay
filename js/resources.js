@@ -12,6 +12,14 @@ export function resourceQueryKey(candidate) {
     ]);
 }
 
+export function newResourceUrls(previous, current) {
+    if (!previous) return new Set();
+    const fields = [...Object.values(PROVIDER_LISTS), 'quarkUrls'];
+    const previousUrls = new Set(fields.flatMap(field => asArray(previous[field]).map(item => item.url)));
+    const currentUrls = fields.flatMap(field => asArray(current[field]).map(item => item.url));
+    return new Set(currentUrls.filter(url => !previousUrls.has(url)));
+}
+
 function mergeLists(previous, incoming) {
     const byUrl = new Map();
     for (const item of [...asArray(previous), ...asArray(incoming)]) {
@@ -53,13 +61,15 @@ function legacyPages(result, previous) {
     return [...pages.values()];
 }
 
-function combineShares(pages) {
+function combineShares(pages, preferredUrls) {
     const byUrl = new Map();
     for (const page of pages) {
         for (const item of asArray(page.quarkUrls)) {
             if (!item?.url) continue;
             if (!byUrl.has(item.url)) {
-                if (byUrl.size >= MAX_QUARK_LINKS) continue;
+                // Reserve space for new scan results even when the retained
+                // pages already contain a full list.
+                if (!preferredUrls.delete(item.url) && byUrl.size + preferredUrls.size >= MAX_QUARK_LINKS) continue;
                 byUrl.set(item.url, { known: null, unknown: [], first: null });
             }
             const evidence = byUrl.get(item.url);
@@ -126,14 +136,33 @@ export function mergeResourceState(previous, incoming) {
             || (sourceUrls.get(page.source)?.has(page.url) && (hasPageEvidence || partial));
         if (retain) pages.set(pageKey(page), page);
     }
-    for (const page of currentPages) {
+    // A cached snapshot can carry evidence for pages the latest scan could
+    // not revisit. The latest statuses still decide whether it may survive.
+    const retainedPages = asArray(incoming.resourceMeta?.retainedPages).filter(page =>
+        !expiredSources.has(page.source)
+        && incoming.resourceMeta?.providerIssues?.[page.source] !== 'login_required'
+        && !['ok', 'restricted', 'login_required'].includes(pageUpdates.get(pageKey(page))?.status));
+    for (const page of [...retainedPages, ...currentPages]) {
         if (page?.status !== 'ok') continue;
         const evidence = { ...page, quarkUrls: asArray(page.quarkUrls).map(item => ({ ...item })) };
         pages.set(pageKey(page), evidence);
     }
     const evidencePages = [...pages.values()];
+    const previousUrls = new Set(asArray(previous?.result?.quarkUrls).map(item => item.url));
+    const preferredUrls = new Set(asArray(incoming.quarkUrls).slice(0, MAX_QUARK_LINKS)
+        .map(item => item?.url).filter(url => url && !previousUrls.has(url)));
     return {
         pages: evidencePages,
-        result: { ...incoming, ...lists, quarkUrls: combineShares(evidencePages) }
+        result: { ...incoming, ...lists, quarkUrls: combineShares(evidencePages, preferredUrls) }
+    };
+}
+
+export function mergeResourceSnapshot(previous, incoming) {
+    const merged = mergeResourceState(mergeResourceState(null, previous), incoming);
+    const scanned = new Set(incoming.resourceMeta.pages.filter(page => page.status === 'ok').map(pageKey));
+    const retainedPages = merged.pages.filter(page => !scanned.has(pageKey(page)));
+    return {
+        ...merged.result,
+        resourceMeta: { ...incoming.resourceMeta, retainedPages }
     };
 }

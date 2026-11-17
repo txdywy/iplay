@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.58';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.59';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.58';
-import { copyQuarkShare, formatQuarkCopyText } from './quark.js?v=1.0.58';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.58';
-import { RELEASE_VERSION } from './release.js?v=1.0.58';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.58';
+} from './scorer.js?v=1.0.59';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.59';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.59';
+import { RELEASE_VERSION } from './release.js?v=1.0.59';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.59';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.58';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.58';
-import { mergeResourceState, resourceQueryKey } from './resources.js?v=1.0.58';
+} from './match.js?v=1.0.59';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.59';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.59';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1278,8 +1278,9 @@ function setEnrichmentStatus(element, message, isPending = false) {
     element.classList.toggle('animate-pulse', isPending);
 }
 
-function setResourceStatus(message, isPending = false) {
+function setResourceStatus(message, isPending = false, visible = false) {
     setEnrichmentStatus(els.resourceStatus, message, isPending);
+    els.resourceStatus?.classList.toggle('sr-only', !visible);
 }
 
 function hideResourceNotice() {
@@ -1288,7 +1289,7 @@ function hideResourceNotice() {
     els.resourceNotice.classList.add('hidden');
 }
 
-function renderResourceNotice(resourceResult, totalSources, onRetry) {
+function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFailed = false } = {}) {
     if (!els.resourceNotice) return;
     clearNode(els.resourceNotice);
 
@@ -1312,8 +1313,9 @@ function renderResourceNotice(resourceResult, totalSources, onRetry) {
     if (restrictedPages > 0) notes.push(`有 ${restrictedPages} 个 WPZY 帖子需回复或 VIP 才能查看链接，已保留原帖入口。`);
     if (unavailablePages > 0) notes.push(`有 ${unavailablePages} 个资源页面暂时无法打开。`);
     if (unattemptedSources > 0) notes.push(`另有 ${unattemptedSources} 个来源未扫描，可直接打开原帖查看。`);
-    const detail = notes.join(' ') || '部分资源尚未完成提取，已保留当前可用结果。';
-    const canRetry = failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
+    const detail = refreshFailed ? '已保留上次找到的资源，可再次扫描。'
+        : notes.join(' ') || '部分资源尚未完成提取，已保留当前可用结果。';
+    const canRetry = refreshFailed || failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
         || (Number(meta.attemptedPages) || 0) < (Number(meta.selectedPages) || 0) || notes.length === 0;
 
     // With links in hand, an incomplete scan is a footnote, not a warning.
@@ -1330,7 +1332,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry) {
     copy.className = 'min-w-0';
     const heading = document.createElement('p');
     heading.className = `font-mono text-xs uppercase tracking-[0.2em] ${quiet ? 'text-cinema-400' : 'text-accent-gold'}`;
-    heading.textContent = quiet ? '部分来源未扫描完' : '资源扫描部分完成';
+    heading.textContent = refreshFailed ? '资源刷新失败' : quiet ? '部分来源未扫描完' : '资源扫描部分完成';
     const description = document.createElement('p');
     description.className = quiet ? 'mt-1 text-xs text-cinema-400' : 'mt-1 text-sm text-cinema-100/80';
     description.textContent = detail;
@@ -1439,6 +1441,45 @@ try {
 const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'wpzysResourceList'];
 // The arguments each list was last rendered with, so the filter can redraw it.
 const linkListRenders = new WeakMap();
+const quarkChecksBySignal = new WeakMap();
+const QUARK_UNAVAILABLE_LABELS = new Map([
+    ['missing_files', '分享文件不存在'],
+    ['missing', '分享不存在'],
+    ['deleted', '分享已删除'],
+    ['blocked', '分享已受限'],
+    ['invalid', '分享已失效'],
+    ['cancelled', '分享已取消'],
+    ['expired', '分享已过期']
+]);
+
+function checkQuarkRows(rows, signal) {
+    if (!rows.length || !signal || signal.aborted) return;
+    let verification = quarkChecksBySignal.get(signal);
+    if (!verification) {
+        verification = { queue: Promise.resolve(), checks: new Map() };
+        quarkChecksBySignal.set(signal, verification);
+    }
+    const unchecked = [...new Set(rows.map(({ id }) => id))].filter(id => !verification.checks.has(id));
+    for (let offset = 0; offset < unchecked.length; offset += QUARK_CHECK_BATCH_SIZE) {
+        const ids = unchecked.slice(offset, offset + QUARK_CHECK_BATCH_SIZE);
+        const batch = verification.queue
+            .then(() => ResourceAPI.checkQuarkLinks(ids, { signal }))
+            .then(result => result?.unavailable, () => {
+                ids.forEach(id => verification.checks.delete(id));
+                return null;
+            });
+        verification.queue = batch;
+        for (const id of ids) verification.checks.set(id, batch.then(unavailable => unavailable?.[id]));
+    }
+    for (const { id, badge } of rows) {
+        void verification.checks.get(id).then(reason => {
+            const label = QUARK_UNAVAILABLE_LABELS.get(reason);
+            if (!label || signal.aborted || !badge.isConnected) return;
+            badge.textContent = label;
+            badge.hidden = false;
+        });
+    }
+}
 
 function resourceLinkUrls() {
     const urls = new Set();
@@ -1502,10 +1543,12 @@ document.getElementById('resourceToolbar')?.addEventListener('click', event => {
 function renderLinkCards(container, items, options) {
     const {
         emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
-        detailText, sourceText, actionLabel, onAction, initialLimit = 6
+        detailText, sourceText, actionLabel, onAction, newUrls, probeSignal, initialLimit = 6
     } = options;
     if (!container) return;
     const wasExpanded = container.dataset.expanded === 'true';
+    const focused = container.contains(document.activeElement) ? document.activeElement : null;
+    const focusedUrl = focused?.closest('[data-link-url]')?.dataset.linkUrl;
     clearNode(container);
 
     const safeItems = Array.isArray(items)
@@ -1523,6 +1566,9 @@ function renderLinkCards(container, items, options) {
         li.textContent = emptyLabel;
         container.appendChild(li);
         return;
+    }
+    if (newUrls?.size) {
+        safeItems.sort((left, right) => Number(newUrls.has(right.url)) - Number(newUrls.has(left.url)));
     }
 
     // Reposts share one title; number them so they do not look like one row repeated.
@@ -1558,6 +1604,7 @@ function renderLinkCards(container, items, options) {
         container.dataset.expanded = String(visibleLimit > firstPageSize);
         clearNode(container);
         const frag = document.createDocumentFragment();
+        const quarkRows = [];
         shownItems.slice(0, visibleLimit).forEach(item => {
             const li = document.createElement('li');
             li.className = itemClass;
@@ -1588,6 +1635,20 @@ function renderLinkCards(container, items, options) {
             const title = document.createElement('div');
             title.className = 'text-sm font-semibold leading-snug text-cinema-100';
             title.textContent = titleText(item);
+            if (newUrls?.has(item.url)) {
+                const badge = document.createElement('span');
+                badge.className = 'link-tag link-tag-new';
+                badge.textContent = '本次新增';
+                title.appendChild(badge);
+            }
+            const shareId = probeSignal && quarkShareId(item.url);
+            if (shareId) {
+                const badge = document.createElement('span');
+                badge.className = 'link-tag link-tag-unavailable';
+                badge.hidden = true;
+                title.appendChild(badge);
+                quarkRows.push({ id: shareId, badge });
+            }
 
             const meta = document.createElement('div');
             meta.className = metaClass;
@@ -1698,6 +1759,7 @@ function renderLinkCards(container, items, options) {
         }
 
         container.appendChild(frag);
+        checkQuarkRows(quarkRows, probeSignal);
         if (focusTarget !== null) {
             // Move only a replaced control's existing focus. Keyboard and
             // assistive-technology users continue at the first new result;
@@ -1709,7 +1771,16 @@ function renderLinkCards(container, items, options) {
         }
     };
 
-    renderVisibleItems(wasExpanded ? maxItems : firstPageSize);
+    const focusedIndex = focusedUrl ? shownItems.findIndex(item => item.url === focusedUrl) : -1;
+    const keepListToggle = focused?.matches('button[aria-expanded]') ? 'toggle' : null;
+    renderVisibleItems(wasExpanded ? maxItems : Math.max(firstPageSize, focusedIndex + 1), keepListToggle);
+    if (focusedIndex >= 0) {
+        const row = container.children[focusedIndex];
+        const previousControl = focused.matches('button') ? row?.querySelector('button') : null;
+        (previousControl || row?.querySelector('a'))?.focus({ preventScroll: true });
+    } else if (focusedUrl || (keepListToggle && maxItems === firstPageSize)) {
+        container.querySelector('a')?.focus({ preventScroll: true });
+    }
     updateResourceToolbar();
 }
 
@@ -1884,7 +1955,7 @@ function renderResourcesAwaitingDetails() {
     renderResourceStatus(els.wpzysResourceList, { ...waiting, iconName: 'comments', iconClass: 'text-accent-gold' });
 }
 
-function renderResourceList(resources) {
+function renderResourceList(resources, newUrls) {
     renderLinkCards(els.resourceList, resources, {
         emptyLabel: '暂未发现资源页面',
         itemClass: 'link-item',
@@ -1894,11 +1965,12 @@ function renderResourceList(resources) {
         metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
+        newUrls,
         initialLimit: 6
     });
 }
 
-function renderWpzysResourceList(resources, meta = {}) {
+function renderWpzysResourceList(resources, meta, newUrls) {
     if (!resources.length && meta?.providers?.wpzys === 'failed') {
         renderResourceStatus(els.wpzysResourceList, {
             title: meta.providerIssues?.wpzys === 'login_required' ? 'WPZY 登录需要维护' : 'WPZY 暂时不可用',
@@ -1918,11 +1990,12 @@ function renderWpzysResourceList(resources, meta = {}) {
         metaClass: 'mt-1 text-xs text-cinema-400',
         metaText: item => safeHostname(item.url),
         titleText: item => item.title,
+        newUrls,
         initialLimit: 6
     });
 }
 
-function renderQuarkUrls(quarkUrls) {
+function renderQuarkUrls(quarkUrls, newUrls, probeSignal) {
     renderLinkCards(els.quarkUrlList, quarkUrls, {
         emptyLabel: '暂未提取到夸克链接',
         itemClass: 'link-item',
@@ -1938,6 +2011,8 @@ function renderQuarkUrls(quarkUrls) {
         sourceText: item => (item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : ''),
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
+        newUrls,
+        probeSignal,
         initialLimit: 6
     });
 }
@@ -2423,54 +2498,69 @@ function cancelResourceLoadSchedule() {
     if (cleanup) cleanup();
 }
 
-function beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
+function beginResourceLoad(candidate, searchId, searchOptions, loadId, { useCache = true } = {}) {
     if (!isActiveSearch(searchId, loadId) || resourceLoadStarted) return;
     resourceLoadStarted = true;
     cancelResourceLoadSchedule();
     if (resourceResultState?.queryKey === resourceQueryKey(candidate)) {
-        setResourceStatus('正在补全资源，已保留可用结果…', true);
+        resourceResultState.refreshPending = true;
+        setResourceStatus('正在重新扫描，已保留当前资源…', true, true);
     } else {
         renderResourceLoadingStates(candidate.title || candidate.originalTitle || '当前影视');
     }
-    return loadResources(candidate, searchId, searchOptions, loadId, { refresh });
+    return loadResources(candidate, searchId, searchOptions, loadId, useCache);
 }
 
 function createResourceRetry(candidate, searchId, searchOptions, loadId) {
     return () => {
         if (!isActiveSearch(searchId, loadId)) return;
         resourceLoadStarted = false;
-        return beginResourceLoad(candidate, searchId, searchOptions, loadId, { refresh: true });
+        return beginResourceLoad(candidate, searchId, searchOptions, loadId, { useCache: false });
     };
 }
 
-function renderResourceResult(resourceResult, onRetry) {
+function renderResourceLists(resourceResult, newUrls, signal) {
     const resources = [...resourceResult.resources, ...resourceResult.zuidouyinResources];
     const wpzysResources = resourceResult.wpzysResources;
-    const totalSources = resources.length + wpzysResources.length;
-    renderResourceList(resources);
-    renderWpzysResourceList(wpzysResources, resourceResult.resourceMeta);
-    renderQuarkUrls(Array.isArray(resourceResult.quarkUrls) ? resourceResult.quarkUrls : []);
+    renderResourceList(resources, newUrls);
+    renderWpzysResourceList(wpzysResources, resourceResult.resourceMeta, newUrls);
+    renderQuarkUrls(resourceResult.quarkUrls, newUrls, signal);
+    return resources.length + wpzysResources.length;
+}
+
+function renderResourceResult({ result: resourceResult, newUrls, refreshFailed }, onRetry, signal) {
+    const totalSources = renderResourceLists(resourceResult, newUrls, signal);
+    if (refreshFailed) {
+        setResourceStatus('资源刷新失败，已保留上次的结果');
+        renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFailed });
+        return;
+    }
+    const update = newUrls?.size ? `，本次新增 ${newUrls.size} 条` : '，暂无新增';
     if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
-        setResourceStatus('资源扫描部分完成，已保留可用结果');
+        setResourceStatus('资源扫描部分完成' + (newUrls ? update : '，已保留可用结果'), false, Boolean(newUrls));
         renderResourceNotice(resourceResult, totalSources, onRetry);
     } else {
         hideResourceNotice();
         const attemptedPages = Number(resourceResult.resourceMeta?.attemptedPages);
-        if (Number.isFinite(attemptedPages) && attemptedPages < totalSources) {
-            setResourceStatus(`已扫描 ${attemptedPages}/${totalSources} 个来源，未扫描的帖子仍可直接打开`);
-        } else {
-            setResourceStatus('资源扫描完成');
-        }
+        const completion = Number.isFinite(attemptedPages) && attemptedPages < totalSources
+            ? `已扫描 ${attemptedPages}/${totalSources} 个来源，未扫描的帖子仍可直接打开`
+            : '资源扫描完成';
+        setResourceStatus(completion + (newUrls ? update : ''), false, Boolean(newUrls));
     }
 }
 
 function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     cancelResourceLoadSchedule();
     if (resourceResultState?.queryKey === resourceQueryKey(candidate)) {
+        if (resourceResultState.refreshPending) {
+            renderResourceLists(resourceResultState.result, resourceResultState.newUrls, searchOptions.signal);
+            beginResourceLoad(candidate, searchId, searchOptions, loadId, { useCache: false });
+            return;
+        }
         resourceLoadStarted = true;
-        // Detail retries rotate the load ID and abort signal. Keep the data,
-        // but bind its retry controls to this request rather than the old one.
-        renderResourceResult(resourceResultState.result, createResourceRetry(candidate, searchId, searchOptions, loadId));
+        // Detail retries rotate the load ID and abort signal. Bind the
+        // retained data and its retry controls to the current request.
+        renderResourceResult(resourceResultState, createResourceRetry(candidate, searchId, searchOptions, loadId), searchOptions.signal);
         return;
     }
     resourceLoadStarted = false;
@@ -2514,34 +2604,46 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
     }
 }
 
-async function loadResources(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
+async function loadResources(candidate, searchId, searchOptions, loadId, useCache) {
     if (!isActiveSearch(searchId, loadId)) return;
     const query = candidate.title || candidate.originalTitle;
     const queryKey = resourceQueryKey(candidate);
+    const identity = { mediaId: candidate.id, mediaType: candidate.mediaType, year: candidate.year };
+    const isCurrent = () => isActiveSearch(searchId, loadId) && resourceQueryKey(candidate) === queryKey;
+    const retry = createResourceRetry(candidate, searchId, searchOptions, loadId);
 
     try {
-        const resourceResult = await ResourceAPI.search(query, searchOptions, {
-            refresh,
-            identity: {
-                mediaId: candidate.id,
-                mediaType: candidate.mediaType,
-                year: candidate.year
+        if (useCache && resourceResultState?.queryKey !== queryKey) {
+            // Read the previous snapshot before starting a scan which could
+            // replace it. A miss never starts a second scan on the Worker.
+            const cached = await ResourceAPI.search(query, searchOptions, { cacheOnly: true, identity }).catch(() => null);
+            if (!isCurrent()) return;
+            if (Array.isArray(cached?.quarkUrls)) {
+                resourceResultState = { ...mergeResourceState(null, cached), queryKey, refreshPending: true };
+                renderResourceLists(resourceResultState.result, null, searchOptions.signal);
+                setResourceStatus('正在重新扫描，先显示上次找到的资源…', true, true);
             }
-        });
+        }
+        const resourceResult = await ResourceAPI.search(query, searchOptions, { refresh: true, identity });
         if (!resourceResult) throw new Error('资源服务返回了空结果');
-        if (!isActiveSearch(searchId, loadId) || resourceQueryKey(candidate) !== queryKey) return;
+        if (!isCurrent()) return;
+        const previous = resourceResultState?.queryKey === queryKey ? resourceResultState : null;
+        const refreshFailed = Boolean(resourceResult.resourceMeta?.stale);
+        const merged = refreshFailed && previous ? previous : mergeResourceState(previous, resourceResult);
         resourceResultState = {
-            ...mergeResourceState(resourceResultState?.queryKey === queryKey ? resourceResultState : null, resourceResult),
-            queryKey
+            ...merged, queryKey, refreshFailed, refreshPending: false,
+            newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result)
         };
-        renderResourceResult(resourceResultState.result, createResourceRetry(candidate, searchId, searchOptions, loadId));
+        renderResourceResult(resourceResultState, retry, searchOptions.signal);
     } catch (error) {
         if (error?.name === 'AbortError') return;
-        if (!isActiveSearch(searchId, loadId) || resourceQueryKey(candidate) !== queryKey) return;
+        if (!isCurrent()) return;
         if (resourceResultState?.queryKey === queryKey) {
-            setResourceStatus('资源补全失败，已保留可用结果，可重试');
+            resourceResultState.refreshFailed = true;
+            resourceResultState.refreshPending = false;
+            renderResourceResult(resourceResultState, retry, searchOptions.signal);
         } else {
-            renderResourceErrorStates(createResourceRetry(candidate, searchId, searchOptions, loadId));
+            renderResourceErrorStates(retry);
         }
         console.debug('Resource enrichment skipped:', error);
     }
