@@ -866,6 +866,85 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .link-row:hover { background: oklch(100% 0 0 / 0.045); }
 }
 
+/* Position numbers name a link ("No. 7"); a filled number means opened. */
+.link-index {
+  display: grid;
+  flex: none;
+  min-width: 1.75rem;
+  height: 1.375rem;
+  margin-top: 0.0625rem;
+  padding-inline: 0.3rem;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--res-accent, var(--color-cinema-400)) 45%, transparent);
+  border-radius: 0.4375rem;
+  color: var(--res-accent, var(--color-cinema-300));
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.link-opened {
+  display: none;
+  margin-inline-start: 0.5rem;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  background: oklch(100% 0 0 / 0.08);
+  color: var(--color-cinema-400);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: 0.0625rem;
+  white-space: nowrap;
+}
+.link-opened::before { content: "✓ "; }
+.is-opened .link-opened { display: inline-block; }
+.is-opened .link-index {
+  border-color: transparent;
+  background: color-mix(in oklab, var(--res-accent, var(--color-cinema-400)) 70%, transparent);
+  color: var(--color-cinema-950);
+}
+.is-opened .link-row .text-cinema-100 { color: var(--color-cinema-400); }
+.link-filter-empty { padding: 1rem 0.5rem; color: var(--color-cinema-400); font-size: 0.875rem; }
+
+/* Filter bar above the three columns. */
+.res-toolbar {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.875rem;
+}
+.res-toolbar[hidden] { display: none; }
+.res-filter {
+  display: inline-flex;
+  padding: 0.1875rem;
+  border: 1px solid var(--glass-line-strong);
+  border-radius: 999px;
+  background: oklch(100% 0 0 / 0.03);
+}
+.res-filter-btn {
+  min-height: 2.25rem;
+  padding: 0 0.875rem;
+  border-radius: 999px;
+  color: var(--color-cinema-400);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.res-filter-btn:hover { color: var(--color-cinema-100); }
+.res-filter-btn[aria-pressed="true"] { background: oklch(100% 0 0 / 0.1); color: var(--color-cinema-100); }
+.res-opened-summary { color: var(--color-cinema-400); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.res-clear {
+  min-height: 2.25rem;
+  padding: 0 0.5rem;
+  color: var(--color-cinema-400);
+  font-size: 0.8125rem;
+  text-decoration: underline;
+  text-decoration-color: var(--glass-line-strong);
+  text-underline-offset: 3px;
+}
+.res-clear:hover { color: var(--color-cinema-100); text-decoration-color: currentColor; }
+.res-clear[hidden] { display: none; }
+
 
 /* Candidate cards: poster-forward, with the match as a badge. */
 .candidate-card {

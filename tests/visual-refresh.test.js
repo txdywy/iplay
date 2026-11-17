@@ -40,3 +40,15 @@ test('the cast and facts include a desktop heading and a mobile disclosure', () 
     assert.match(main, /img\.loading = 'lazy'/);
     assert.match(main, /'Returning Series': '连载中'/);
 });
+
+test('resource links are numbered, remember being opened and can hide opened ones', () => {
+    assert.match(html, /id="resourceToolbar" class="res-toolbar" role="group" aria-label="资源筛选" hidden/);
+    assert.match(html, /data-resource-filter="unopened" aria-pressed="false">只看未打开</);
+    assert.match(html, /id="resourceClearOpened"/);
+    assert.match(main, /position\.textContent = String\(item\._position\)\.padStart\(2, '0'\)/);
+    assert.match(main, /safeItems\.filter\(item => !openedLinks\.has\(item\.url\)\)/);
+    assert.match(main, /link\.addEventListener\('auxclick'/);
+    assert.match(main, /const RESOURCE_FILTER_KEY = 'iplay_resource_filter'/);
+    assert.doesNotMatch(main, /trackOpened/);
+    assert.match(css, /\.is-opened \.link-opened \{ display: inline-block; \}/);
+});
