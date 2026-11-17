@@ -73,7 +73,9 @@ test('a forced resource refresh keeps the cached answer when every provider fail
     assert.equal(refreshed.status, 200);
     assert.equal(refreshed.headers.get('x-iplay-stale'), '1');
     assert.equal(refreshed.headers.get('cache-control'), 'no-store');
-    assert.ok(Array.isArray((await refreshed.json()).resources));
+    const result = await refreshed.json();
+    assert.ok(Array.isArray(result.resources));
+    assert.equal(result.resourceMeta.stale, true);
 });
 
 test('a Douban search challenge page is a 503 the client can back off from', async t => {

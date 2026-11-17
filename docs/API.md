@@ -384,7 +384,9 @@ GET /api/resource?q={query}&id={id}&type={type}&year={year}
 | `id` | number | 否 | 已选作品的 TMDB ID；必须与 `type` 一起提供，用于隔离作品资源缓存 |
 | `type` | string | 否 | 已选作品类型：`movie` 或 `tv`；必须与 `id` 一起提供 |
 | `year` | number | 否 | 已选作品年份。上游只按片名搜索，年份在本地校验：电影要求标题含该年份、相邻年份（帖子常写本地上映年份）或覆盖该年份的区间（如「2019-2023」）；剧集还接受更晚的年份或未写年份的标题（帖子常写最新一季年份）。醉都音合集的小标题未写年份时，可由帖子标题或该作品小节的正文证明；分享链接中的数字不计为年份。 |
-| `refresh` | `1` | 否 | 显式重试时绕过 Worker 缓存；前端同时使用 `cache: 'no-store'` 绕过浏览器 HTTP 缓存。所有来源都失败时返回已有缓存结果，并带 `X-iPlay-Stale: 1` 与 `Cache-Control: no-store` |
+| `refresh` | `1` | 否 | 发起新的上游扫描。所有来源暂时不可用时，可返回已有缓存，并带 `resourceMeta.stale: true`、`X-iPlay-Stale: 1` 与 `Cache-Control: no-store` |
+
+`GET /api/resource/cache` 接受相同的作品参数，只读取 Worker 在当前节点、作品和 WPZY 登录态下的缓存。缓存未命中返回 `410`；此接口不发起上游扫描，按普通 API 限流。确认登录失效、回帖限制或 VIP 限制后，Worker 会移除旧快照，后续可显示本次取得的结果。
 
 **Example Request：**
 
@@ -428,23 +430,27 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 
 详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
 
-任一来源或选中详情页失败时，响应通过 `partial: true` 和 `resourceMeta` 报告进度，并短暂缓存可用结果。超过详情页上限的帖子标记为 `unattempted`，前端保留原帖入口。所有来源都失败时返回 `502`。
+任一来源或选中详情页失败时，响应通过 `partial: true` 和 `resourceMeta` 报告进度。超过详情页上限的帖子标记为 `unattempted`，前端保留原帖入口。所有来源暂时不可用且没有缓存时返回 `502`。明确的 WPZY 登录失效随部分结果报告。
 
 分享 token 最长 128 字符，原始分享 URL 与来源 URL 最长 2048 字符。超限地址整项拒绝，不截断为另一个分享；来源卡片仍保留。聚合 JSON 编码后最多 2 MiB，超过预算返回 `502` 且不缓存，防止多页有界输入在页面证据与去重列表中被重复放大。
 
 正文解析用相邻 URL 迭代器保留密码边界，避免把所有外站 URL 和重复分享保存在中间数组中。达到单页 25 个新分享的采样上限后，仍继续检查页内已保留分享的后续密码证据；若超限链接已在其他选中页进入全局结果，该链接的额外证据也会进入页级快照并参与最终对账。外站密码隔离和等置信度冲突规则不变。
 
-资源响应对浏览器统一返回 `Cache-Control: no-store`，前端普通查询和重试也都使用 `cache: 'no-store'`，包括调用者传入其他缓存模式的情况。Worker 内部仍按当前登录态指纹缓存完整结果 12 小时、部分结果 15 分钟；登录态更换或撤销后，下次浏览器查询必须到达 Worker 并使用新的作用域。
+资源响应对浏览器统一返回 `Cache-Control: no-store`，前端查询和重试也都使用 `cache: 'no-store'`。Worker 按当前登录态指纹缓存，完整且含夸克链接的结果通常保留 12 小时，空结果 30 分钟，首次取得的部分结果 15 分钟。刷新时沿用的页面证据保留到原缓存期限。登录态更换或撤销后，下次请求使用新的作用域。
 
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
 
 提取码按相邻链接、段落/行与资源卡片范围配对，不跨其他网盘链接或独立卡片、页脚取码。支持链接前后文本、HTML 行内格式、中文及 ASCII 括号包裹，以及 URL 的密码查询/Hash 参数；URL 自带密码优先于附近文字，去重后保留该密码的实际来源。相同优先级的密码相互矛盾时省略 `password` 并返回 `passwordConflict: true`，仍保留链接，不猜测归属。单页 25 个新分享的采样上限按去重后的夸克链接计算；重复 HTML/JSON 表达与其他网盘提取码不占此配额。跨页已进入全局结果的重复链接可作为额外页级证据返回，不占该页的新分享采样额度。
 
-`resourceMeta.pages` 为每个搜索结果提供独立扫描证据：`{url, source, status, quarkUrls?}`。`status` 为 `ok`、`failed`、`restricted`、`login_required` 或 `unattempted`；只有 `ok` 页包含该页的 `quarkUrls`（成功但无直链时为空数组）。页内链接额外携带 `passwordRank`（文本密码为 1、URL 密码为 2）与可选的 `passwordConflict`，用于跨次重试重新对账；顶层去重后的 `quarkUrls` 不暴露 rank。
+`resourceMeta.pages` 为每个搜索结果提供本次扫描证据 `{url, source, status, quarkUrls?}`。`status` 为 `ok`、`failed`、`restricted`、`login_required` 或 `unattempted`，只有 `ok` 页包含该页的 `quarkUrls`（成功但无直链时为空数组）。`resourceMeta.retainedPages` 记录暂时无法重扫、仍可沿用原缓存的页面。页内链接携带 `passwordRank`（文本密码为 1、URL 密码为 2）与可选的 `passwordConflict`，用于跨次扫描对账。
 
 前端按作品与查询身份保存页面快照：成功页替换旧证据，临时失败和未扫描页保留旧证据；成功搜索移除已消失的帖子，受限或登录失效的页面移除旧分享。各页证据重新去重后最多展示 100 个分享，避免部分 HTTP 200 覆盖既有结果或复活旧冲突密码。列表初始显示 6 项，展开后可访问全部返回项，来源列表和分享列表不再额外截断为 12 项或 50 项。
 
 `resourceMeta.providerIssues.wpzys` 可为 `login_required` 或 `upstream_unavailable`，用于区分登录维护和一般上游故障。`restrictedPages` 与 `loginRequiredPages` 分别记录回复/VIP 受限、详情页要求重新登录的数量，均计入 `failedPages` 并使结果为部分完成。受限内容不会提取链接，但原帖卡片仍可访问；客户端不应把登录页当作空搜索结果，也不应通过重复重试解锁受限内容。
+
+### 6.1 夸克分享状态
+
+`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID，返回 `{ unavailable: { [shareId]: reason } }`。原因可为 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 或 `expired`。只有夸克返回明确状态时才列入 `unavailable`。提取码提示、限流与网络故障均为未确认。探测使用公开分享状态，Worker 缓存状态 5 分钟。此接口使用独立的每分钟 10 次限流额度。
 
 ---
 
@@ -543,13 +549,15 @@ Worker 还配置了 6 小时一次的 Cloudflare Cron Trigger。定时任务只�
 
 同一作品的详情重试保留已加载的简介、海报和豆瓣评分；确认的片名、类型、年份或 IMDb ID 变化时，会清除不再匹配的补充数据。豆瓣和 Wikipedia 查询等待详情完成后使用确认的身份。
 
-补全资源时，已有链接和复制密码按钮继续可用，补全按钮在请求结束前禁用；补全失败后保留当前结果和展开状态，可再次重试。演员候选或分享链接的加载失败后，“重试演员作品”继续请求已选人物 ID。分享链接中明确提供但无效的 `type`（包括空值）会显示错误，不按同 ID 的其他媒体类型回退；类型值会去除首尾空白并转为小写。
+资源扫描先查询 Worker 缓存，命中后展示上次结果，并继续发起新的扫描。新扫描结束时合并各来源，本次新发现的链接和帖子排在对应列表前面。扫描或补全失败时保留可用结果和展开状态，可再次重试。页面另外分批检查已展示的夸克链接，展开列表时检查新增可见条目。
+
+演员候选或分享链接的加载失败后，“重试演员作品”继续请求已选人物 ID。分享链接中明确提供但无效的 `type`（包括空值）会显示错误，不按同 ID 的其他媒体类型回退；类型值会去除首尾空白并转为小写。
 
 分享链接明确提供的 `person` 或影视 `id` 必须是 1–12 位正整数；空值、零、负数、混合字符或过长值会显示错误且不请求 API。未提供 `person` 的旧版演员姓名链接仍支持姓名搜索。
 
 剧集详情会在 TMDB facts 和数据档案中展示总季数、总集数以及每季集数。季数数据由 Worker 归一化后交给 `js/seasons.js` 格式化，未知集数会明确显示为“待定”。搜索词带季号时，Worker 会确认该季存在后才允许加载豆瓣、Wikipedia 与资源补充信息；复制或恢复详情链接时也会保留季号。
 
-资源请求会附带所选作品的 TMDB ID、媒体类型和年份。Worker 按作品身份隔离缓存，年份会参与上游搜索与结果校验；部分失败的刷新不会用不完整结果覆盖先前完整缓存。
+资源请求会附带所选作品的 TMDB ID、媒体类型和年份。Worker 按作品身份隔离缓存，年份参与上游搜索与结果校验。部分成功的扫描会更新可用结果，暂时无法重扫的页面可沿用旧证据。确认访问受限后移除该页面的旧分享。
 
 ### 通用配置
 
@@ -618,7 +626,8 @@ const { resources, wpzysResources, zuidouyinResources, quarkUrls } = await Resou
 
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
-| `search` | `(query, options = {}, { refresh = false } = {})` | `{ resources[], wpzysResources[], zuidouyinResources[], quarkUrls[], resourceMeta, partial }` |
+| `search` | `(query, options = {}, { refresh = false, cacheOnly = false, identity } = {})` | `{ resources[], wpzysResources[], zuidouyinResources[], quarkUrls[], resourceMeta, partial }` |
+| `checkQuarkLinks` | `(ids, options = {})` | `{ unavailable }` |
 
 ### `PosterAPI`
 

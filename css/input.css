@@ -883,8 +883,8 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
-.link-opened {
-  display: none;
+.link-opened, .link-tag {
+  display: inline-block;
   margin-inline-start: 0.5rem;
   padding: 0.0625rem 0.4375rem;
   border-radius: 999px;
@@ -895,6 +895,9 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   vertical-align: 0.0625rem;
   white-space: nowrap;
 }
+.link-opened, .link-tag[hidden] { display: none; }
+.link-tag-new { color: var(--color-green-500); }
+.link-tag-unavailable { color: var(--color-accent-red); }
 .link-opened::before { content: "✓ "; }
 .is-opened .link-opened { display: inline-block; }
 .is-opened .link-index {
@@ -904,6 +907,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 }
 .is-opened .link-row .text-cinema-100 { color: var(--color-cinema-400); }
 .link-filter-empty { padding: 1rem 0.5rem; color: var(--color-cinema-400); font-size: 0.875rem; }
+.resource-update { color: var(--ambient-text); font-size: 0.875rem; }
 
 /* Filter bar above the three columns. */
 .res-toolbar {

@@ -130,6 +130,15 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             matchScore: 1,
             matchConfidence: 'high'
         });
+        const cachedResources = {
+            resources: [{ title: 'Previously found source', url: 'https://by669.org/d/previous' }],
+            wpzysResources: [{ title: 'Previously found forum post', url: 'https://wpzy.org/thread-700.htm' }],
+            quarkUrls: [
+                { title: 'Existing share', url: 'https://pan.quark.cn/s/still-present', password: 'keep' },
+                { title: 'Deleted share', url: 'https://pan.quark.cn/s/prior-gone' },
+                { title: 'Protected share', url: 'https://pan.quark.cn/s/protected' }
+            ]
+        };
         window.__smoke = { calls: [], requestOptions: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {}, actorFilterFailures: 0 };
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
             writeText: async text => { window.__smoke.copied = text; }
@@ -498,8 +507,48 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             if (url.pathname === '/api/wiki/zh') return json({ extract: url.searchParams.get('q') === 'Changing Metadata Movie'
                 ? '旧片同名作品简介。'
                 : url.searchParams.get('q') === 'Canonical Renamed Movie' ? '详情确认后的新版作品简介。' : '中文烟测简介。' });
+            if (url.pathname === '/api/resource/cache') {
+                if (['cached-refresh', 'cached-detail-retry'].includes(window.__smoke.resourceMode)) {
+                    return json(window.__smoke.cachedResources || cachedResources);
+                }
+                return json({ error: 'cache miss' }, 410);
+            }
+            if (url.pathname === '/api/resource/quark-status') {
+                if (window.__smoke.resourceMode !== 'cached-refresh') return json({ unavailable: {} });
+                if (!window.__smoke.releaseQuarkChecks) {
+                    await new Promise(resolve => { window.__smoke.releaseQuarkChecks = resolve; });
+                }
+                const reasons = { 'prior-gone': 'deleted', 'new-cancelled': 'cancelled' };
+                return json({ unavailable: Object.fromEntries(url.searchParams.getAll('id').filter(id => reasons[id]).map(id => [id, reasons[id]])) });
+            }
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
+                if (window.__smoke.resourceMode === 'cached-refresh') {
+                    if (window.__smoke.resourceCalls === 1) {
+                        await new Promise(resolve => { window.__smoke.releaseResourceRefresh = resolve; });
+                        window.__smoke.cachedResources = {
+                            resources: [...cachedResources.resources, { title: 'A new source', url: 'https://zuidouyin.com/?p=42' }],
+                            wpzysResources: [...cachedResources.wpzysResources, { title: 'A new forum post', url: 'https://wpzy.org/thread-701.htm' }],
+                            quarkUrls: [...cachedResources.quarkUrls, { title: 'A new share', url: 'https://pan.quark.cn/s/new-cancelled' }]
+                        };
+                    }
+                    if (window.__smoke.resourceCalls === 2) {
+                        return json({ ...cachedResources, quarkUrls: [], resourceMeta: { stale: true } });
+                    }
+                    return json(window.__smoke.cachedResources);
+                }
+                if (window.__smoke.resourceMode === 'cached-detail-retry') {
+                    if (window.__smoke.resourceCalls === 1) {
+                        await new Promise((resolve, reject) => options.signal.addEventListener('abort', () => {
+                            window.__smoke.firstScanAborted = true;
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        }, { once: true }));
+                    }
+                    return json({
+                        ...cachedResources,
+                        quarkUrls: [...cachedResources.quarkUrls, { title: 'Resumed share', url: 'https://pan.quark.cn/s/resumed' }]
+                    });
+                }
                 if (window.__smoke.resourceMode === 'large') return json({
                     resources: Array.from({ length: 20 }, (_, index) => ({ title: 'Source ' + index, url: 'https://by669.org/d/' + index })),
                     wpzysResources: Array.from({ length: 20 }, (_, index) => ({ title: 'Forum ' + index, url: 'https://wpzy.org/thread-' + index + '.htm' })),
@@ -956,7 +1005,7 @@ async function runObserverFlow() {
     assert.equal(await evaluate('window.__smoke.copied'), 'e5F6');
     const calls = await evaluate('window.__smoke.calls');
     assert.ok(calls.some(call => call.includes('/api/resource?q=Test%20Movie&id=') && call.includes('&refresh=1')));
-    assert.deepEqual(await evaluate("window.__smoke.requestOptions.filter(call => call.path === '/api/resource' && call.refresh === '1').map(call => call.cache)"), ['no-store', 'no-store']);
+    assert.deepEqual(await evaluate("window.__smoke.requestOptions.filter(call => call.path === '/api/resource' && call.refresh === '1').map(call => call.cache)"), ['no-store', 'no-store', 'no-store']);
 }
 
 async function runStaleSearchFlow() {
@@ -1494,7 +1543,64 @@ async function runResourceRetryPreservationFlow() {
         'a failed completion must preserve the expanded resource list');
     await evaluate("document.querySelector('#resourcesNotice button').click()");
     await waitFor("window.__smoke.resourceCalls === 3 && document.querySelector('#resourcesNotice').classList.contains('hidden')");
-    assert.equal(await evaluate("document.querySelector('#resourcesStatus').textContent"), '资源扫描完成');
+    assert.equal(await evaluate("document.querySelector('#resourcesStatus').textContent"), '资源扫描完成，暂无新增');
+}
+
+async function runResourceCacheAndQuarkStatusFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'cached-refresh'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("window.__smoke.releaseResourceRefresh && window.__smoke.releaseQuarkChecks");
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 3);
+    assert.equal(await evaluate("document.querySelector('#resourcesStatus').textContent.includes('先显示上次')"), true);
+    assert.equal(await evaluate("document.querySelectorAll('#resourcesSection .link-tag-new').length"), 0);
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList .link-tag-unavailable:not([hidden])').length"), 0);
+
+    await evaluate("window.__smoke.releaseQuarkChecks()");
+    await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已删除'");
+    const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] button')";
+    await evaluate(copy + '.focus(); window.__smoke.releaseResourceRefresh()');
+    await waitFor("document.querySelector('#resourcesStatus').textContent.includes('本次新增 3 条')");
+    assert.equal(await evaluate('document.activeElement === ' + copy), true);
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList a').href"), 'https://pan.quark.cn/s/new-cancelled');
+    assert.equal(await evaluate("document.querySelectorAll('#resourcesSection .link-tag-new').length"), 3);
+    await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已取消'");
+    assert.equal(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-unavailable').hidden"), true);
+    assert.equal(await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource/quark-status?') && call.includes('id=prior-gone')).length"), 1);
+
+    const queries = await evaluate("window.__smoke.requestOptions.filter(call => ['/api/resource/cache', '/api/resource'].includes(call.path))");
+    assert.deepEqual(queries, [
+        { path: '/api/resource/cache', refresh: null, cache: 'no-store' },
+        { path: '/api/resource', refresh: '1', cache: 'no-store' }
+    ]);
+
+    await evaluate("document.querySelector('#searchForm').requestSubmit()");
+    await waitFor("window.__smoke.resourceCalls === 2 && document.querySelector('#resourcesNotice button')");
+    assert.match(await evaluate("document.querySelector('#resourcesNotice').textContent"), /资源刷新失败/);
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 4);
+    await evaluate(copy + '.click()');
+    await waitFor("window.__smoke.copied === 'keep'");
+    await evaluate("document.querySelector('#resourcesNotice button').click()");
+    await waitFor("window.__smoke.resourceCalls === 3 && document.querySelector('#resourcesStatus').textContent.includes('暂无新增')");
+}
+
+async function runCachedResourceDetailRetryFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'cached-detail-retry'");
+    await search('Retry Detail Movie');
+    await waitFor("document.querySelector('#dataNotice button')?.textContent === '重试详情'");
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("window.__smoke.resourceCalls === 1 && document.querySelector('#quarkUrlList a')");
+    await evaluate("document.querySelector('#dataNotice button').click()");
+    await waitFor("document.querySelector('#quarkUrlList .link-tag-new')?.textContent === '本次新增'");
+    assert.equal(await evaluate('window.__smoke.firstScanAborted'), true);
+    assert.equal(await evaluate('window.__smoke.resourceCalls'), 2);
+    assert.equal(await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource/cache?')).length"), 1);
+    assert.equal(await evaluate("document.querySelector('#quarkUrlList a').href"), 'https://pan.quark.cn/s/resumed');
 }
 
 async function runActorIdentityRetryFlow(shared) {
@@ -1872,6 +1978,8 @@ try {
     await runUpdatedPosterFlow();
     await runPosterFallbackDetailRaceFlow();
     await runResourceRetryPreservationFlow();
+    await runResourceCacheAndQuarkStatusFlow();
+    await runCachedResourceDetailRetryFlow();
     await runActorIdentityRetryFlow(false);
     await runActorIdentityRetryFlow(true);
     await runSharedTypeValidationFlow();
@@ -1910,7 +2018,7 @@ try {
     await runHeroArtworkFlow();
     assert.deepEqual(await evaluate('window.__cspViolations || []'), [], 'the page must not trigger CSP violations');
     assert.deepEqual(browserExceptions, [], 'browser flows must complete without uncaught application exceptions');
-    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1024x850', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites', 'desktop-search-popup-and-focus', 'cast-accessibility-and-focus', 'hero-artwork-and-ambient-navigation'] }));
+    console.log(JSON.stringify({ browserSmoke: 'passed', viewports: ['390x844', '1024x850', '1280x900'], flows: ['same-url-history-restoration', 'long-resource-titles-and-keyboard-expansion', 'complete-resource-visibility', 'unscanned-resource-status', 'actor-responsive-posters', 'detail-retry-preserves-enrichment', 'detail-retry-recovery-identity', 'shared-identity-validation', 'canonical-enrichment', 'requested-season-validation', 'alternating-provider-retry', 'canonical-detail-retry-resources', 'updated-poster', 'poster-fallback-detail-races', 'resource-retry-preserves-links', 'resource-cache-refresh-and-quark-status', 'selected-actor-retry', 'shared-actor-retry', 'shared-type-validation', 'observer-and-rating-visibility', 'resource-partial-retry', 'wpzy-reply-vip-restrictions', 'wpzy-login-maintenance', 'stale-search', 'stale-actor-search', 'empty-actor', 'progressive-detail', 'detail-retry', 'resource-retry-after-detail-retry', 'poster-tmdb-identity', 'broken-poster', 'exhausted-poster', 'unsafe-poster', 'timer-fallback', 'actor-search-and-id-navigation', 'exact-actor-intent', 'prefetched-follow-up', 'actor-candidate-picker-and-reload', 'actor-candidate-race', 'actor-pagination-and-filter-retry', 'medium-actor-confirmation', 'rapid-actor-filter-switch', 'canonical-deep-link-and-sharing', 'desktop-reduced-motion', 'result-layout-order-and-scroll', 'preference-panel-and-csp', 'search-shortcut-clear-and-favorites', 'desktop-search-popup-and-focus', 'cast-accessibility-and-focus', 'hero-artwork-and-ambient-navigation'] }));
 } finally {
     socket.close();
 }

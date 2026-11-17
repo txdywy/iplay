@@ -1,13 +1,14 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.58';
+import { RELEASE_VERSION } from './release.js?v=1.0.59';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
     : 'https://iplayw.hackx64.eu.org';
 const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
+const RESOURCE_CACHE_TIMEOUT_MS = 2500;
 const POSTER_TIMEOUT_MS = 18000;
 // Successful TMDB answers are briefly browser-cacheable. Tag them by release so
 // a new frontend never reuses a response shaped for the previous Worker.
@@ -233,8 +234,9 @@ export const WikiAPI = {
 };
 
 export const ResourceAPI = {
-    async search(query, options = {}, { refresh = false, identity = null } = {}) {
-        const refreshParam = refresh ? '&refresh=1' : '';
+    async search(query, options = {}, { refresh = false, cacheOnly = false, identity = null } = {}) {
+        const path = cacheOnly ? '/api/resource/cache' : '/api/resource';
+        const refreshParam = refresh && !cacheOnly ? '&refresh=1' : '';
         const identityParams = identity ? [
             `&id=${encodeURIComponent(identity.mediaId)}`,
             `&type=${encodeURIComponent(identity.mediaType)}`,
@@ -243,7 +245,13 @@ export const ResourceAPI = {
         // The Worker cache is scoped to its current provider credentials. Always
         // reach it so a browser cannot reuse results from a revoked session.
         const requestOptions = { ...options, cache: 'no-store' };
-        return fetchWithTimeout(`${API_BASE}/api/resource?q=${encodeURIComponent(query)}${identityParams}${refreshParam}&v=${encodeURIComponent(RELEASE_VERSION)}`, requestOptions, RESOURCE_TIMEOUT_MS);
+        return fetchWithTimeout(`${API_BASE}${path}?q=${encodeURIComponent(query)}${identityParams}${refreshParam}&${RELEASE_PARAM}`,
+            requestOptions, cacheOnly ? RESOURCE_CACHE_TIMEOUT_MS : RESOURCE_TIMEOUT_MS);
+    },
+
+    async checkQuarkLinks(ids, options = {}) {
+        const params = new globalThis.URLSearchParams(ids.map(id => ['id', id]));
+        return fetchWithTimeout(`${API_BASE}/api/resource/quark-status?${params}`, { ...options, cache: 'no-store' });
     }
 };
 

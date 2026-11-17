@@ -2,6 +2,8 @@
  * Quark resource search across By669, WPZY and 醉都音.
  */
 
+import { isQuarkShareId } from '../js/quark.js';
+import { mergeResourceSnapshot } from '../js/resources.js';
 import {
     MAX_MEDIA_TITLE_LENGTH,
     MAX_QUERY_LENGTH,
@@ -10,9 +12,11 @@ import {
     createDeadline,
     createHttpError,
     decodeHtmlEntities,
+    deleteCachedResponse,
     errorResponse,
     escapeRegExp,
     fetchUpstream,
+    getErrorStatus,
     isChallengePage,
     isDeadlineExpired,
     isObject,
@@ -65,8 +69,6 @@ const RESOURCE_MAX_QUARK_URLS_TOTAL = 100;
 // Real share identifiers are short. Keep generous compatibility margins while
 // preventing one upstream URL from dominating both aggregate and page evidence.
 const RESOURCE_MAX_URL_LENGTH = 2048;
-
-const RESOURCE_MAX_QUARK_TOKEN_LENGTH = 128;
 
 const RESOURCE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -183,8 +185,8 @@ function parseQuarkUrl(rawUrl) {
         // source must never become a different valid share after normalization.
         const rawPath = absoluteUrl.match(/^https?:\/\/[^/?#]+(\/[^?#]*)?/i)?.[1];
         if (rawPath !== url.pathname) return null;
-        const token = url.pathname.match(/^\/s\/([a-z0-9_-]+)$/i)?.[1];
-        if (!token || token.length > RESOURCE_MAX_QUARK_TOKEN_LENGTH) return null;
+        const token = url.pathname.match(/^\/s\/([^/]+)$/i)?.[1];
+        if (!isQuarkShareId(token)) return null;
         return {
             url: `${url.origin}${url.pathname}`,
             ...extractQuarkPasswordFromUrl(url)
@@ -1014,15 +1016,18 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
     query = queryCheck.value;
 
     const cacheKey = new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
-    const cached = await serveCachedJson(cacheKey);
+    let cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) return cached;
     if (cacheOnly) return jsonResponse({ error: "资源结果已过期或暂不可读，请重新扫描。" }, 410);
 
-    let previousComplete = null;
+    let previous = null;
+    let previousExpiry = 0;
     if (refresh && cached) {
         try {
-            const previousData = await readJsonWithLimit(cached.clone());
-            if (!previousData.partial && !previousData.resourceMeta?.partial) previousComplete = cached;
+            previous = await readJsonWithLimit(cached.clone(), RESOURCE_MAX_RESPONSE_BYTES);
+            const maxAge = Number(cached.headers.get("Cache-Control")?.match(/max-age=(\d+)/i)?.[1]) || 0;
+            const age = Number(cached.headers.get("Age")) || 0;
+            previousExpiry = Number(previous?.resourceMeta?.cacheExpiresAt) || Date.now() + (maxAge - age) * 1000;
         } catch {
             // Ignore malformed cache entries and let the refreshed scan replace them.
         }
@@ -1043,12 +1048,21 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
 
         const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });
         const failedProviders = providerResults.filter(([, result]) => result.status === "rejected");
+        const loginRequired = wpzysResult.status === "rejected" && wpzysResult.reason?.resourceIssue === "login_required";
         if (failedProviders.length === providerResults.length) {
             logEvent("warn", "resource_providers_failed",
                 Object.fromEntries(failedProviders.map(([source, result]) => [source, logErrorMessage(result.reason)])));
             // A forced refresh must not replace a usable cached answer with an error.
-            if (refresh && cached) return withStaleMarker(cached);
-            return jsonResponse({ error: "Resource providers unavailable" }, 502);
+            if (!loginRequired) {
+                if (refresh && cached) return withStaleMarker(cached);
+                return jsonResponse({ error: "Resource providers unavailable" }, 502);
+            }
+        }
+        if (loginRequired && cached) {
+            // A confirmed login failure invalidates previously extracted WPZY
+            // links, including the snapshot shown on the next visit.
+            cached = null;
+            await deleteCachedResponse(cacheKey);
         }
 
         const resources = by669Result.value ?? [];
@@ -1061,6 +1075,10 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             zuidouyinPosts
         );
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
+        if ((detailResult.restrictedPages || detailResult.loginRequiredPages) && cached) {
+            cached = null;
+            await deleteCachedResponse(cacheKey);
+        }
         const selectedUrls = new Set(detailResult.pages.map(page => page.url));
         const unselectedPages = [...resources, ...wpzysResources, ...zuidouyinResources]
             .filter(entry => !selectedUrls.has(entry.url))
@@ -1080,7 +1098,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 providers: Object.fromEntries(providerResults.map(([source, result]) =>
                     [source, result.status === "fulfilled" ? "ok" : "failed"])),
                 providerIssues: wpzysResult.status === "rejected"
-                    ? { wpzys: wpzysResult.reason?.resourceIssue === "login_required" ? "login_required" : "upstream_unavailable" }
+                    ? { wpzys: loginRequired ? "login_required" : "upstream_unavailable" }
                     : {},
                 selectedPages: detailResources.length,
                 attemptedPages: detailResult.attemptedPages,
@@ -1091,19 +1109,42 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 pages: [...detailResult.pages, ...unselectedPages]
             }
         };
-        const cacheContext = isPartial && previousComplete ? null : ctx;
         // Links for a new release appear within hours: recheck an empty scan sooner.
         const maxAge = isPartial ? 900 : detailResult.quarkUrls.length === 0 ? 1800 : 43200;
-        return cacheJson(cacheContext, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+        const now = Date.now();
+        const remaining = Math.floor((previousExpiry - now) / 1000);
+        if (previous && remaining > 0 && (isPartial || unselectedPages.length > 0)) {
+            const snapshot = mergeResourceSnapshot(previous, result);
+            const retainedEvidence = snapshot.resourceMeta.retainedPages.length > 0;
+            if (isPartial || retainedEvidence) {
+                try {
+                    // Merge successful pages without extending the age of anything
+                    // carried forward from the previous snapshot.
+                    const ttl = retainedEvidence ? remaining : Math.min(maxAge, remaining);
+                    snapshot.resourceMeta.cacheExpiresAt = now + ttl * 1000;
+                    return cacheJson(ctx, cacheKey, snapshot, ttl, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+                } catch (error) {
+                    if (getErrorStatus(error) !== 502) throw error;
+                    // The individual scan may fit even if the merged one does not.
+                }
+            }
+        }
+        result.resourceMeta.cacheExpiresAt = now + maxAge * 1000;
+        return cacheJson(ctx, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
         if (refresh && cached) return withStaleMarker(cached);
         return errorResponse(e);
     }
 }
 
-function withStaleMarker(response) {
-    const headers = new Headers(response.headers);
-    headers.set("Cache-Control", "no-store");
-    headers.set("X-iPlay-Stale", "1");
-    return new Response(response.body, { status: response.status, headers });
+async function withStaleMarker(response) {
+    try {
+        const result = await readJsonWithLimit(response, RESOURCE_MAX_RESPONSE_BYTES);
+        return jsonResponse({
+            ...result,
+            resourceMeta: { ...result.resourceMeta, stale: true }
+        }, response.status, { "X-iPlay-Stale": "1" });
+    } catch {
+        return jsonResponse({ error: "Resource providers unavailable" }, 502);
+    }
 }

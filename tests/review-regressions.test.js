@@ -501,7 +501,7 @@ test('resource searches scope release-year results and cached data to the select
     assert.equal(cache.size, 2, 'distinct selected TMDB IDs receive distinct cache entries');
 });
 
-test('a partial resource refresh preserves a previously complete Worker cache entry', async t => {
+test('a partial resource refresh combines new evidence with the last usable Worker cache', async t => {
     let providerUnavailable = false;
     const ctx = mockUpstreams(t, async input => {
         const url = new URL(input);
@@ -513,7 +513,12 @@ test('a partial resource refresh preserves a previously complete Worker cache en
         if (url.hostname === 'by669.org' && url.pathname === '/d/42') {
             return new Response('https://pan.quark.cn/s/cached-work');
         }
-        if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') return new Response(WPZY_EMPTY_SEARCH_HTML);
+        if (url.hostname === 'wpzy.org' && url.pathname === '/search.htm') return new Response(providerUnavailable
+            ? '<li data-href="thread-42.htm"><a href="thread-42.htm">Cached Work 夸克</a></li>'
+            : WPZY_EMPTY_SEARCH_HTML);
+        if (url.hostname === 'wpzy.org' && url.pathname === '/thread-42.htm') {
+            return new Response('https://pan.quark.cn/s/new-link');
+        }
         throw new Error(`Unexpected upstream URL ${url}`);
     });
     const cache = new Map();
@@ -533,12 +538,16 @@ test('a partial resource refresh preserves a previously complete Worker cache en
     await Promise.all(ctx.writes);
     providerUnavailable = true;
     const refreshed = await search(true);
+    await Promise.all(ctx.writes);
     const subsequent = await search();
     assert.equal(complete.partial, false);
     assert.equal(refreshed.partial, true, 'refresh should report a partial scan so the UI can show its recovery state');
-    assert.equal(subsequent.partial, false, 'the complete cached result remains available to later requests');
-    assert.notDeepEqual(refreshed.quarkUrls, complete.quarkUrls, 'partial refresh results should describe the current scan');
-    assert.deepEqual(subsequent.quarkUrls, complete.quarkUrls);
+    assert.deepEqual(refreshed.resourceMeta.retainedPages.map(page => page.source), ['by669']);
+    assert.deepEqual(refreshed.quarkUrls.map(item => item.url), [
+        'https://pan.quark.cn/s/cached-work', 'https://pan.quark.cn/s/new-link'
+    ]);
+    assert.deepEqual(subsequent.quarkUrls, refreshed.quarkUrls);
+    assert.ok(subsequent.resourceMeta.cacheExpiresAt <= complete.resourceMeta.cacheExpiresAt);
 });
 
 test('Douban streaming text chunks preserve full ratings, votes and genres', async t => {
