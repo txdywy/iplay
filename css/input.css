@@ -853,6 +853,25 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 
 
 /* Lists are rows separated by hairlines, the same in every resource card. */
+.link-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.link-star {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-block-start: 0.25rem;
+  place-items: center;
+  border-radius: 0.625rem;
+  color: var(--color-cinema-400);
+}
+.link-star svg { width: 1.125rem; height: 1.125rem; }
+.link-star:is(:hover, :focus-visible, [aria-pressed="true"]) { color: var(--color-accent-gold); }
+.link-star[aria-pressed="true"] svg { fill: currentColor; }
+
 .link-item + .link-item { border-top: 1px solid var(--glass-line); }
 
 .link-row {
