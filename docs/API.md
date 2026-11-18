@@ -436,7 +436,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 
 正文解析用相邻 URL 迭代器保留密码边界，避免把所有外站 URL 和重复分享保存在中间数组中。达到单页 25 个新分享的采样上限后，仍继续检查页内已保留分享的后续密码证据；若超限链接已在其他选中页进入全局结果，该链接的额外证据也会进入页级快照并参与最终对账。外站密码隔离和等置信度冲突规则不变。
 
-资源响应对浏览器统一返回 `Cache-Control: no-store`，前端查询和重试也都使用 `cache: 'no-store'`。Worker 按当前登录态指纹缓存，完整且含夸克链接的结果通常保留 12 小时，空结果 30 分钟，首次取得的部分结果 15 分钟。刷新时沿用的页面证据保留到原缓存期限。登录态更换或撤销后，下次请求使用新的作用域。
+资源响应对浏览器统一返回 `Cache-Control: no-store`，前端查询和重试也都使用 `cache: 'no-store'`。Worker 按当前登录态指纹缓存，完整且含夸克链接的结果通常保留 12 小时，空结果 30 分钟，首次取得的部分结果 15 分钟。刷新时沿用的页面证据保留到原缓存期限。登录凭据更换会切换缓存作用域。WPZY 明确要求重新登录时，该登录态下的所有作品切换到新的缓存代次，在途旧扫描无法恢复已失效的分享。
 
 WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`source: "wpzys"` 及 `resourceMeta.providers.wpzys` 名称不变。每次最多选择六个 WPZY 详情页。需要登录时由服务端 `WPZY_COOKIE` Secret 提供登录态，不接受客户端 Cookie、不返回账号凭据；仅访问搜索和帖子路径，不执行回帖或其他账号操作。
 
@@ -450,7 +450,7 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 ### 6.1 夸克分享状态
 
-`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID，返回 `{ unavailable: { [shareId]: reason } }`。原因可为 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 或 `expired`。只有夸克返回明确状态时才列入 `unavailable`。提取码提示、限流与网络故障均为未确认。探测使用公开分享状态，Worker 缓存状态 5 分钟。此接口使用独立的每分钟 10 次限流额度。
+`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID，返回 `{ unavailable: { [shareId]: reason }, unknown: [shareId] }`。原因可为 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 或 `expired`。只有夸克返回明确状态时才列入 `unavailable`。提取码提示表示需要用户输入提取码。限流、网络故障等无法判断的结果列入 `unknown`，后续可复查。探测使用公开分享状态，Worker 缓存状态 5 分钟。此接口使用独立的每分钟 10 次限流额度。
 
 ---
 

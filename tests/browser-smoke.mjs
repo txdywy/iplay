@@ -514,12 +514,18 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 return json({ error: 'cache miss' }, 410);
             }
             if (url.pathname === '/api/resource/quark-status') {
-                if (window.__smoke.resourceMode !== 'cached-refresh') return json({ unavailable: {} });
-                if (!window.__smoke.releaseQuarkChecks) {
+                if (window.__smoke.resourceMode !== 'cached-refresh') return json({ unavailable: {}, unknown: [] });
+                const firstProbe = !window.__smoke.releaseQuarkChecks;
+                if (firstProbe) {
                     await new Promise(resolve => { window.__smoke.releaseQuarkChecks = resolve; });
                 }
                 const reasons = { 'prior-gone': 'deleted', 'new-cancelled': 'cancelled' };
-                return json({ unavailable: Object.fromEntries(url.searchParams.getAll('id').filter(id => reasons[id]).map(id => [id, reasons[id]])) });
+                if (!firstProbe) reasons['still-present'] = 'expired';
+                const ids = url.searchParams.getAll('id');
+                return json({
+                    unavailable: Object.fromEntries(ids.filter(id => reasons[id]).map(id => [id, reasons[id]])),
+                    unknown: firstProbe && ids.includes('still-present') ? ['still-present'] : []
+                });
             }
             if (url.pathname === '/api/resource') {
                 window.__smoke.resourceCalls += 1;
@@ -535,6 +541,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     if (window.__smoke.resourceCalls === 2) {
                         return json({ ...cachedResources, quarkUrls: [], resourceMeta: { stale: true } });
                     }
+                    if (window.__smoke.resourceCalls === 3) return json({ ...window.__smoke.cachedResources, partial: true });
+                    if (window.__smoke.resourceCalls === 4) return json({ ...window.__smoke.cachedResources, quarkUrls: [] });
                     return json(window.__smoke.cachedResources);
                 }
                 if (window.__smoke.resourceMode === 'cached-detail-retry') {
@@ -1437,14 +1445,24 @@ async function assertOpenedLinkFilter() {
         window.addEventListener('click', event => event.preventDefault(), { once: true });
         document.querySelector('#quarkUrlList .link-item a').click();
     })()`);
-    assert.equal(await evaluate("document.querySelector('#quarkUrlList .link-item').classList.contains('is-opened')"), true);
+    await waitFor("document.querySelector('#quarkUrlList .link-item').classList.contains('is-opened')");
     assert.match(await evaluate("document.getElementById('resourceOpenedSummary').textContent"), /^已打开 1 \/ \d+$/u);
     await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').click()");
     await waitFor("document.querySelector('#quarkUrlList .link-index')?.textContent === '02'");
     assert.equal(await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').getAttribute('aria-pressed')"), 'true');
     await evaluate("document.querySelector('[data-resource-filter=\"all\"]').click()");
-    await evaluate("document.getElementById('resourceClearOpened').click()");
+    await evaluate(`(() => {
+        const otherPage = document.createElement('iframe');
+        otherPage.hidden = true;
+        document.body.appendChild(otherPage);
+        const storage = otherPage.contentWindow.localStorage;
+        const key = 'iplay_opened_links';
+        storage.setItem(key, JSON.stringify([...JSON.parse(storage.getItem(key)), 'https://pan.quark.cn/s/other-work']));
+        document.getElementById('resourceClearOpened').click();
+        otherPage.remove();
+    })()`);
     await waitFor("document.querySelectorAll('#quarkUrlList .is-opened').length === 0");
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), ['https://pan.quark.cn/s/other-work']);
     await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
 }
 
@@ -1568,6 +1586,7 @@ async function runResourceCacheAndQuarkStatusFlow() {
     assert.equal(await evaluate("document.querySelector('#quarkUrlList a').href"), 'https://pan.quark.cn/s/new-cancelled');
     assert.equal(await evaluate("document.querySelectorAll('#resourcesSection .link-tag-new').length"), 3);
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已取消'");
+    await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-unavailable')?.textContent === '分享已过期'");
     assert.equal(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-unavailable').hidden"), true);
     assert.equal(await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource/quark-status?') && call.includes('id=prior-gone')).length"), 1);
 
@@ -1585,6 +1604,9 @@ async function runResourceCacheAndQuarkStatusFlow() {
     await waitFor("window.__smoke.copied === 'keep'");
     await evaluate("document.querySelector('#resourcesNotice button').click()");
     await waitFor("window.__smoke.resourceCalls === 3 && document.querySelector('#resourcesStatus').textContent.includes('暂无新增')");
+    await evaluate(copy + ".focus(); document.querySelector('#resourcesNotice button').click()");
+    await waitFor("window.__smoke.resourceCalls === 4 && !document.querySelector('#quarkUrlList a')");
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#quarkUrlList li')"), true);
 }
 
 async function runCachedResourceDetailRetryFlow() {

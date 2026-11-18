@@ -47,3 +47,35 @@ crons = ["0 */6 * * *"]
 # command = "npm run build"
 # cwd = ""
 # watch_dir = ""
+
+[[durable_objects.bindings]]
+name = "WPZY_CACHE_SESSION"
+class_name = "WpzyCacheSession"
+
+[[migrations]]
+tag = "wpzy-cache-session-v1"
+new_sqlite_classes = ["WpzyCacheSession"]
+
+# Branch Previews use isolated storage and independent rate limit counters.
+[previews.vars]
+ENVIRONMENT = "production"
+
+[[previews.durable_objects.bindings]]
+name = "WPZY_CACHE_SESSION"
+class_name = "WpzyCacheSession"
+
+[[previews.ratelimits]]
+name = "API_RATE_LIMITER"
+namespace_id = "1101"
+
+[previews.ratelimits.simple]
+limit = 60
+period = 60
+
+[[previews.ratelimits]]
+name = "RESOURCE_RATE_LIMITER"
+namespace_id = "1102"
+
+[previews.ratelimits.simple]
+limit = 10
+period = 60

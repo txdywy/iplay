@@ -3,7 +3,8 @@
  */
 
 import { isQuarkShareId } from '../js/quark.js';
-import { mergeResourceSnapshot } from '../js/resources.js';
+import { getWpzyCacheSession } from './wpzy-cache.js';
+import { mergeResourceSnapshot, mergeResourceState } from '../js/resources.js';
 import {
     MAX_MEDIA_TITLE_LENGTH,
     MAX_QUERY_LENGTH,
@@ -950,12 +951,18 @@ export async function handleResourceSearch(query, env, ctx, { refresh = false, c
 
     const wpzySession = await getWpzySession(env);
 
-    const options = { refresh, cacheOnly, wpzySession, identity, env };
+    const sessionState = wpzySession.cookie && env.WPZY_CACHE_SESSION
+        ? getWpzyCacheSession(env.WPZY_CACHE_SESSION, wpzySession.cacheScope) : null;
+    if (wpzySession.cookie && env.ENVIRONMENT === "production" && !sessionState) {
+        return jsonResponse({ error: "WPZY cache coordination unavailable" }, 503);
+    }
+    const generation = sessionState ? await sessionState() : 0;
+    const options = { refresh, cacheOnly, wpzySession, identity, env, sessionState, generation };
     const response = cacheOnly
         ? await handleResourceSearchUncoalesced(query, ctx, options)
         : await withInFlight(
             ctx,
-            `resource:${wpzySession.cacheScope}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
+            `resource:${wpzySession.cacheScope}:${generation}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
             () => handleResourceSearchUncoalesced(query, ctx, options)
         );
     const clientResponse = response.clone();
@@ -1010,14 +1017,21 @@ async function getResourceTitleAliases(query, identity, env, ctx) {
     return aliases;
 }
 
-async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, cacheOnly = false, wpzySession, identity = {}, env = {} } = {}) {
+async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, cacheOnly = false, wpzySession, identity = {}, env = {}, sessionState, generation } = {}) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const cacheKey = new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}`);
+    const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}`);
+    let cacheKey = keyForGeneration(generation);
     let cached = await serveCachedJson(cacheKey);
-    if (cached && !refresh) return cached;
+    if (cached && !refresh) {
+        const latestGeneration = sessionState ? await sessionState() : generation;
+        if (latestGeneration === generation) return cached;
+        if (!cacheOnly) return handleResourceSearchUncoalesced(query, ctx, {
+            refresh: true, wpzySession, identity, env, sessionState, generation: latestGeneration
+        });
+    }
     if (cacheOnly) return jsonResponse({ error: "资源结果已过期或暂不可读，请重新扫描。" }, 410);
 
     let previous = null;
@@ -1048,21 +1062,16 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
 
         const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });
         const failedProviders = providerResults.filter(([, result]) => result.status === "rejected");
-        const loginRequired = wpzysResult.status === "rejected" && wpzysResult.reason?.resourceIssue === "login_required";
+        let loginRequired = wpzysResult.status === "rejected" && wpzysResult.reason?.resourceIssue === "login_required";
         if (failedProviders.length === providerResults.length) {
             logEvent("warn", "resource_providers_failed",
                 Object.fromEntries(failedProviders.map(([source, result]) => [source, logErrorMessage(result.reason)])));
-            // A forced refresh must not replace a usable cached answer with an error.
-            if (!loginRequired) {
-                if (refresh && cached) return withStaleMarker(cached);
-                return jsonResponse({ error: "Resource providers unavailable" }, 502);
-            }
         }
-        if (loginRequired && cached) {
-            // A confirmed login failure invalidates previously extracted WPZY
-            // links, including the snapshot shown on the next visit.
+        let currentGeneration = generation;
+        if (loginRequired) {
+            if (sessionState) currentGeneration = await sessionState(generation, true);
+            if (cached && !sessionState) await deleteCachedResponse(cacheKey);
             cached = null;
-            await deleteCachedResponse(cacheKey);
         }
 
         const resources = by669Result.value ?? [];
@@ -1075,7 +1084,19 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             zuidouyinPosts
         );
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
-        if ((detailResult.restrictedPages || detailResult.loginRequiredPages) && cached) {
+        if (detailResult.loginRequiredPages && sessionState) {
+            currentGeneration = await sessionState(generation, true);
+            loginRequired = true;
+        } else if (!loginRequired && sessionState) {
+            currentGeneration = wpzysResult.status === "fulfilled"
+                ? await sessionState(generation, false) : await sessionState();
+        }
+        const superseded = currentGeneration !== generation;
+        if (failedProviders.length === providerResults.length && !loginRequired && !superseded) {
+            if (refresh && cached) return withStaleMarker(cached);
+            return jsonResponse({ error: "Resource providers unavailable" }, 502);
+        }
+        if ((detailResult.restrictedPages || detailResult.loginRequiredPages) && cached && !superseded) {
             cached = null;
             await deleteCachedResponse(cacheKey);
         }
@@ -1084,10 +1105,11 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             .filter(entry => !selectedUrls.has(entry.url))
             .map(({ url, source }) => ({ url, source, status: "unattempted" }));
 
-        const isPartial = failedProviders.length > 0
+        if (superseded) cached = null;
+        const isPartial = loginRequired || superseded || failedProviders.length > 0
             || detailResult.failedPages > 0
             || detailResult.attemptedPages < detailResources.length;
-        const result = {
+        let result = {
             resources,
             wpzysResources,
             zuidouyinResources,
@@ -1097,9 +1119,8 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 partial: isPartial,
                 providers: Object.fromEntries(providerResults.map(([source, result]) =>
                     [source, result.status === "fulfilled" ? "ok" : "failed"])),
-                providerIssues: wpzysResult.status === "rejected"
-                    ? { wpzys: loginRequired ? "login_required" : "upstream_unavailable" }
-                    : {},
+                providerIssues: loginRequired || superseded ? { wpzys: "login_required" }
+                    : wpzysResult.status === "rejected" ? { wpzys: "upstream_unavailable" } : {},
                 selectedPages: detailResources.length,
                 attemptedPages: detailResult.attemptedPages,
                 failedPages: detailResult.failedPages,
@@ -1109,6 +1130,15 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 pages: [...detailResult.pages, ...unselectedPages]
             }
         };
+        if (sessionState && (loginRequired || superseded)) {
+            // Rebuild direct links from public pages. A different scan may have
+            // used this cookie before the login failure was observed.
+            result.resourceMeta.pages = result.resourceMeta.pages.filter(page => page.source !== "wpzys" || page.status !== "ok");
+            result.quarkUrls = [];
+            result = mergeResourceState(null, result).result;
+            if (!loginRequired && superseded) return jsonResponse(result);
+            cacheKey = keyForGeneration(currentGeneration);
+        }
         // Links for a new release appear within hours: recheck an empty scan sooner.
         const maxAge = isPartial ? 900 : detailResult.quarkUrls.length === 0 ? 1800 : 43200;
         const now = Date.now();
@@ -1132,7 +1162,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         result.resourceMeta.cacheExpiresAt = now + maxAge * 1000;
         return cacheJson(ctx, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
-        if (refresh && cached) return withStaleMarker(cached);
+        if (refresh && cached && (!sessionState || generation === await sessionState())) return withStaleMarker(cached);
         return errorResponse(e);
     }
 }

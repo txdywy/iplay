@@ -12,10 +12,13 @@ export function resourceQueryKey(candidate) {
     ]);
 }
 
-export function newResourceUrls(previous, current) {
+export function newResourceUrls(previous, current, previousPages = []) {
     if (!previous) return new Set();
     const fields = [...Object.values(PROVIDER_LISTS), 'quarkUrls'];
     const previousUrls = new Set(fields.flatMap(field => asArray(previous[field]).map(item => item.url)));
+    for (const page of previousPages) {
+        for (const share of asArray(page.quarkUrls)) previousUrls.add(share.url);
+    }
     const currentUrls = fields.flatMap(field => asArray(current[field]).map(item => item.url));
     return new Set(currentUrls.filter(url => !previousUrls.has(url)));
 }
@@ -67,7 +70,7 @@ function combineShares(pages, preferredUrls) {
         for (const item of asArray(page.quarkUrls)) {
             if (!item?.url) continue;
             if (!byUrl.has(item.url)) {
-                // Reserve space for new scan results even when the retained
+                // Reserve space for current scan results even when the retained
                 // pages already contain a full list.
                 if (!preferredUrls.delete(item.url) && byUrl.size + preferredUrls.size >= MAX_QUARK_LINKS) continue;
                 byUrl.set(item.url, { known: null, unknown: [], first: null });
@@ -148,9 +151,10 @@ export function mergeResourceState(previous, incoming) {
         pages.set(pageKey(page), evidence);
     }
     const evidencePages = [...pages.values()];
-    const previousUrls = new Set(asArray(previous?.result?.quarkUrls).map(item => item.url));
-    const preferredUrls = new Set(asArray(incoming.quarkUrls).slice(0, MAX_QUARK_LINKS)
-        .map(item => item?.url).filter(url => url && !previousUrls.has(url)));
+    const currentUrls = new Set(currentPages.filter(page => page.status === 'ok')
+        .flatMap(page => asArray(page.quarkUrls).map(item => item.url)));
+    const preferredUrls = new Set(asArray(incoming.quarkUrls).filter(item => currentUrls.has(item?.url))
+        .slice(0, MAX_QUARK_LINKS).map(item => item.url));
     return {
         pages: evidencePages,
         result: { ...incoming, ...lists, quarkUrls: combineShares(evidencePages, preferredUrls) }

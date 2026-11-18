@@ -25,6 +25,8 @@ export function loadProductionRuntimeConfig(configPath) {
         bindings: config.vars,
         compatibilityDate: config.compatibility_date,
         compatibilityFlags: config.compatibility_flags,
-        ratelimits
+        ratelimits,
+        durableObjects: Object.fromEntries(config.durable_objects.bindings.map(binding =>
+            [binding.name, { className: binding.class_name, useSQLite: true }]))
     };
 }
