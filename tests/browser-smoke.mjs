@@ -1003,12 +1003,12 @@ async function runObserverFlow() {
     await waitFor('window.__smoke.resourceCalls === 3');
     await waitFor("Boolean(document.querySelector('#resourceList a[href=\\\"https://resource.example/smoke\\\"]'))");
     assert.equal(await evaluate('document.querySelector("#quarkUrlList a")?.getAttribute("href")'), 'https://pan.quark.cn/s/smoke');
-    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#quarkUrlList li')).map(card => ({ url: card.querySelector('a')?.getAttribute('href'), passwordText: card.innerText.match(/提取码：[a-z0-9]+/i)?.[0] || '', buttons: card.querySelectorAll('button').length }))"), [
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#quarkUrlList li')).map(card => ({ url: card.querySelector('a')?.getAttribute('href'), passwordText: card.innerText.match(/提取码：[a-z0-9]+/i)?.[0] || '', buttons: card.querySelectorAll('.link-copy').length }))"), [
         { url: 'https://pan.quark.cn/s/smoke', passwordText: '提取码：abcd', buttons: 1 },
         { url: 'https://pan.quark.cn/s/smoke-second', passwordText: '提取码：e5F6', buttons: 1 },
         { url: 'https://pan.quark.cn/s/smoke-public', passwordText: '', buttons: 0 }
     ]);
-    await evaluate("document.querySelectorAll('#quarkUrlList button')[1].click()");
+    await evaluate("document.querySelectorAll('#quarkUrlList .link-copy')[1].click()");
     await waitFor("window.__smoke.copied === 'e5F6'");
     assert.equal(await evaluate('window.__smoke.copied'), 'e5F6');
     const calls = await evaluate('window.__smoke.calls');
@@ -1563,7 +1563,7 @@ async function runResourceRetryPreservationFlow() {
     assert.equal(await evaluate("document.querySelector('#quarkUrlList a')?.getAttribute('href')"), 'https://pan.quark.cn/s/retained');
     assert.equal(await evaluate("document.querySelector('#resourcesNotice button')?.disabled"), true,
         'completion cannot be submitted repeatedly while the request is pending');
-    await evaluate("document.querySelector('#quarkUrlList button').click()");
+    await evaluate("document.querySelector('#quarkUrlList .link-copy').click()");
     await waitFor("window.__smoke.copied === 'keep'");
 
     await waitFor("document.querySelector('#resourcesStatus').getAttribute('aria-busy') === 'false'");
@@ -1592,7 +1592,7 @@ async function runResourceCacheAndQuarkStatusFlow() {
 
     await evaluate("window.__smoke.releaseQuarkChecks()");
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已删除'");
-    const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] button')";
+    const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-copy')";
     await evaluate(copy + '.focus(); window.__smoke.releaseResourceRefresh()');
     await waitFor("document.querySelector('#resourcesStatus').textContent.includes('本次新增 3 条')");
     assert.equal(await evaluate('document.activeElement === ' + copy), true);
@@ -1755,7 +1755,7 @@ async function runAlternatingResourceRetryFlow() {
     assert.equal(await evaluate("document.querySelector('#wpzysResourceList a')?.getAttribute('href')"), 'https://wpzy.org/thread-302.htm');
     assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 9, 'partial completion preserves the expanded list');
     assert.equal(await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/recovered\"]') !== null"), true);
-    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList button')).find(button => button.closest('li')?.textContent.includes('Retained Quark'))?.click()");
+    await evaluate("Array.from(document.querySelectorAll('#quarkUrlList .link-copy')).find(button => button.closest('li')?.textContent.includes('Retained Quark'))?.click()");
     await waitFor("window.__smoke.copied === 'keep'");
 }
 
@@ -1820,9 +1820,30 @@ async function runCompleteResourceVisibilityFlow() {
         assert.equal(await evaluate(`document.querySelectorAll('${selector} a').length`), total, 'every returned result must remain accessible');
     }
     assert.equal(await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/large-99\"]') !== null"), true);
-    await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/large-99\"]').closest('li').querySelector('button').click()");
+    await evaluate("document.querySelector('#quarkUrlList a[href=\"https://pan.quark.cn/s/large-99\"]').closest('li').querySelector('.link-copy').click()");
     await waitFor("window.__smoke.copied === 'abcd'");
     await assertOpenedLinkFilter();
+    const firstUrl = "document.querySelector('#quarkUrlList a')?.href";
+    const firstStar = "document.querySelector('#quarkUrlList .link-star')";
+    const pinnedUrl = 'https://pan.quark.cn/s/large-99';
+    await evaluate(`(() => {
+        const button = document.querySelector('#quarkUrlList [data-link-url="${pinnedUrl}"] .link-star');
+        button.focus();
+        button.click();
+    })()`);
+    await waitFor(firstUrl + " === " + JSON.stringify(pinnedUrl));
+    assert.equal(await evaluate(firstStar + ".getAttribute('aria-pressed')"), 'true');
+    assert.equal(await evaluate('document.activeElement === ' + firstStar), true, 'pinning keeps focus on the star');
+    assert.equal(await evaluate("localStorage.getItem('iplay_opened_links')"), null, 'pinning does not open a link');
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'large'");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await waitFor(firstUrl + " === " + JSON.stringify(pinnedUrl));
+    await evaluate(firstStar + '.click()');
+    await waitFor(firstUrl + " === 'https://pan.quark.cn/s/large-0'");
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_starred_links'))"), []);
 }
 
 async function runUnscannedResourceStatusFlow() {
@@ -1928,7 +1949,7 @@ async function runResourceKeyboardAndLongTitleFlow() {
     assert.ok(Math.abs(await evaluate('scrollY') - beforeExpand) <= 1, 'expansion must preserve the current scroll position');
     await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
     await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-    assert.equal(await evaluate("document.activeElement === document.querySelectorAll('#quarkUrlList a')[6].closest('li').querySelector('button')"), true,
+    assert.equal(await evaluate("document.activeElement === document.querySelectorAll('#quarkUrlList a')[6].closest('li').querySelector('.link-copy')"), true,
         'the next Tab must reach the new share password control in reading order');
 
     await evaluate(`(() => {

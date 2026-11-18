@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.62';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.63';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.62';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.62';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.62';
-import { RELEASE_VERSION } from './release.js?v=1.0.62';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.62';
+} from './scorer.js?v=1.0.63';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.63';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.63';
+import { RELEASE_VERSION } from './release.js?v=1.0.63';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.63';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.62';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.62';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.62';
+} from './match.js?v=1.0.63';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.63';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.63';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -735,7 +735,8 @@ const ICON_PATHS = Object.freeze({
     external: 'M14 4h6v6m0-6-8 8M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4',
     link: 'M10 13a5 5 0 0 0 7.07 0l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15m3.15 5.93a5 5 0 0 0-7.07 0l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15',
     minus: 'M5 12h14',
-    plus: 'M12 5v14M5 12h14'
+    plus: 'M12 5v14M5 12h14',
+    star: 'm12 3 2.78 5.64 6.22.9-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.9L12 3Z'
 });
 const RESOURCE_OBSERVER_ROOT_MARGIN = '320px 0px';
 const RESOURCE_IDLE_TIMEOUT_MS = 1400;
@@ -1407,6 +1408,9 @@ function pickSafeImageUrl(...values) {
 const OPENED_LINKS_KEY = 'iplay_opened_links';
 const OPENED_LINKS_LIMIT = 1000;
 const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
+const STARRED_LINKS_KEY = 'iplay_starred_links';
+const STARRED_LINKS_LIMIT = 1000;
+let starredLinks = new Set();
 const openedLinks = new Map();
 
 function syncOpenedLinks() {
@@ -1438,8 +1442,38 @@ function updateOpenedLinks(change) {
         }
         return result;
     };
+    return withResourceStorageLock(OPENED_LINKS_KEY, update);
+}
+
+function withResourceStorageLock(key, update) {
     const locks = window.navigator.locks;
-    return locks ? locks.request(OPENED_LINKS_KEY, update).catch(update) : update();
+    return locks ? locks.request(key, update).catch(update) : update();
+}
+
+function syncStarredLinks() {
+    try {
+        const stored = JSON.parse(window.localStorage.getItem(STARRED_LINKS_KEY) || '[]');
+        if (Array.isArray(stored)) {
+            starredLinks = new Set(stored.filter(url => typeof url === 'string').slice(-STARRED_LINKS_LIMIT));
+        }
+    } catch {
+        // Keep the stars available for this page view.
+    }
+}
+
+syncStarredLinks();
+
+function toggleStarredLink(url) {
+    return withResourceStorageLock(STARRED_LINKS_KEY, () => {
+        syncStarredLinks();
+        if (!starredLinks.delete(url)) starredLinks.add(url);
+        if (starredLinks.size > STARRED_LINKS_LIMIT) starredLinks.delete(starredLinks.keys().next().value);
+        try {
+            window.localStorage.setItem(STARRED_LINKS_KEY, JSON.stringify([...starredLinks]));
+        } catch {
+            // Keep the stars available for this page view.
+        }
+    });
 }
 
 // "unopened" hides links already opened, so a second visit shows what is left
@@ -1547,10 +1581,10 @@ function setResourceFilter(value) {
 }
 
 window.addEventListener('storage', event => {
-    if (event.storageArea === window.localStorage && (event.key === OPENED_LINKS_KEY || event.key === null)) {
-        syncOpenedLinks();
-        rerenderResourceLists();
-    }
+    if (event.storageArea !== window.localStorage) return;
+    if (event.key === OPENED_LINKS_KEY || event.key === null) syncOpenedLinks();
+    if (event.key === STARRED_LINKS_KEY || event.key === null) syncStarredLinks();
+    if ([OPENED_LINKS_KEY, STARRED_LINKS_KEY, null].includes(event.key)) rerenderResourceLists();
 });
 
 document.getElementById('resourceToolbar')?.addEventListener('click', async event => {
@@ -1614,8 +1648,10 @@ function renderLinkCards(container, items, options) {
         }
         return;
     }
-    if (newUrls?.size) {
-        safeItems.sort((left, right) => Number(newUrls.has(right.url)) - Number(newUrls.has(left.url)));
+    const starOrder = new Map([...starredLinks].map((url, index) => [url, index + 1]));
+    if (starOrder.size || newUrls?.size) {
+        safeItems.sort((left, right) => (starOrder.get(right.url) || 0) - (starOrder.get(left.url) || 0)
+            || Number(newUrls?.has(right.url) ?? false) - Number(newUrls?.has(left.url) ?? false));
     }
 
     // Reposts share one title; number them so they do not look like one row repeated.
@@ -1757,7 +1793,7 @@ function renderLinkCards(container, items, options) {
 
                 const button = document.createElement('button');
                 button.type = 'button';
-                button.className = 'ui-button mt-3 text-xs';
+                button.className = 'link-copy ui-button mt-3 text-xs';
                 button.textContent = resolvedActionLabel;
                 button.setAttribute('aria-live', 'polite');
                 button.addEventListener('click', async () => {
@@ -1776,7 +1812,19 @@ function renderLinkCards(container, items, options) {
                 card.appendChild(button);
             }
 
-            li.appendChild(card);
+            const star = document.createElement('button');
+            star.type = 'button';
+            star.className = 'link-star';
+            const starred = starredLinks.has(item.url);
+            star.setAttribute('aria-label', `星标：${titleText(item)}`);
+            star.setAttribute('aria-pressed', String(starred));
+            star.title = starred ? '取消星标' : '星标并置顶';
+            star.appendChild(createIcon('star'));
+            star.addEventListener('click', async () => {
+                await toggleStarredLink(item.url);
+                rerenderResourceLists();
+            });
+            li.append(card, star);
             frag.appendChild(li);
         });
 
@@ -1830,7 +1878,8 @@ function renderLinkCards(container, items, options) {
     renderVisibleItems(wasExpanded ? maxItems : Math.max(firstPageSize, focusedIndex + 1), keepListToggle);
     if (focusedIndex >= 0) {
         const row = container.children[focusedIndex];
-        const previousControl = focused.matches('button') ? row?.querySelector('button') : null;
+        const previousControl = focused.matches('.link-star') ? row?.querySelector('.link-star')
+            : focused.matches('.link-copy') ? row?.querySelector('.link-copy') : null;
         (previousControl || row?.querySelector('a'))?.focus({ preventScroll: true });
     } else if (focusedUrl || (keepListToggle && maxItems === firstPageSize)) {
         container.querySelector('a')?.focus({ preventScroll: true });
