@@ -41,7 +41,7 @@ async function checkShare(id, ctx) {
         }, CHECK_TIMEOUT_MS);
         if (!response.ok && ![400, 403, 404, 410].includes(response.status)) {
             await releaseUpstreamResponse(response);
-            return null;
+            return undefined;
         }
 
         const data = await readJsonWithLimit(response, MAX_TOKEN_RESPONSE_BYTES);
@@ -52,10 +52,11 @@ async function checkShare(id, ctx) {
             // Cache only the status. Quark's token response can include
             // author information and a temporary access credential.
             cacheJson(ctx, cacheKey, { reason }, CHECK_CACHE_SECONDS);
+            return reason;
         }
-        return reason;
+        return undefined;
     } catch {
-        return null;
+        return undefined;
     }
 }
 
@@ -63,10 +64,12 @@ export async function handleQuarkStatus(ids, ctx) {
     if (ids.length === 0 || ids.length > QUARK_CHECK_BATCH_SIZE || !ids.every(isQuarkShareId)) {
         return jsonResponse({ error: 'Invalid Quark share IDs' }, 400);
     }
-    const unavailable = new Map();
-    await forEachWithConcurrency([...new Set(ids)], 4, async id => {
-        const reason = await checkShare(id, ctx);
-        if (reason) unavailable.set(id, reason);
+    const uniqueIds = [...new Set(ids)];
+    const statuses = new Map();
+    await forEachWithConcurrency(uniqueIds, 4, async id => {
+        statuses.set(id, await checkShare(id, ctx));
     });
-    return jsonResponse({ unavailable: Object.fromEntries(unavailable) });
+    const unavailable = Object.fromEntries(uniqueIds.filter(id => statuses.get(id)).map(id => [id, statuses.get(id)]));
+    const unknown = uniqueIds.filter(id => statuses.get(id) === undefined);
+    return jsonResponse({ unavailable, unknown });
 }

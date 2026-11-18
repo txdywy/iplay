@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.60';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.61';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.60';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.60';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.60';
-import { RELEASE_VERSION } from './release.js?v=1.0.60';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.60';
+} from './scorer.js?v=1.0.61';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.61';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.61';
+import { RELEASE_VERSION } from './release.js?v=1.0.61';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.61';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.60';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.60';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.60';
+} from './match.js?v=1.0.61';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.61';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.61';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1408,25 +1408,33 @@ const OPENED_LINKS_KEY = 'iplay_opened_links';
 const OPENED_LINKS_LIMIT = 1000;
 const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
 const openedLinks = new Set();
-try {
-    const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
-    if (Array.isArray(stored)) stored.filter(value => typeof value === 'string').slice(-OPENED_LINKS_LIMIT).forEach(value => openedLinks.add(value));
-} catch {
-    // The marks are optional.
-}
 
-function saveOpenedLinks() {
+function syncOpenedLinks() {
     try {
-        window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks].slice(-OPENED_LINKS_LIMIT)));
+        const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
+        if (!Array.isArray(stored)) return;
+        openedLinks.clear();
+        stored.filter(value => typeof value === 'string').slice(-OPENED_LINKS_LIMIT).forEach(value => openedLinks.add(value));
     } catch {
         // Keep the marks for this page view only.
     }
 }
 
-function rememberOpenedLink(url) {
-    openedLinks.delete(url);
-    openedLinks.add(url);
-    saveOpenedLinks();
+syncOpenedLinks();
+
+function updateOpenedLinks(change) {
+    const update = () => {
+        syncOpenedLinks();
+        const result = change(openedLinks);
+        try {
+            window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks].slice(-OPENED_LINKS_LIMIT)));
+        } catch {
+            // Keep the marks for this page view only.
+        }
+        return result;
+    };
+    const locks = window.navigator.locks;
+    return locks ? locks.request(OPENED_LINKS_KEY, update).catch(update) : update();
 }
 
 // "unopened" hides links already opened, so a second visit shows what is left
@@ -1442,6 +1450,8 @@ const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'wpzysResourceList'];
 // The arguments each list was last rendered with, so the filter can redraw it.
 const linkListRenders = new WeakMap();
 const quarkChecksBySignal = new WeakMap();
+const QUARK_CHECK_TTL_MS = 300000;
+const QUARK_CHECK_RETRY_MS = 3000;
 const QUARK_UNAVAILABLE_LABELS = new Map([
     ['missing_files', '分享文件不存在'],
     ['missing', '分享不存在'],
@@ -1459,20 +1469,28 @@ function checkQuarkRows(rows, signal) {
         verification = { queue: Promise.resolve(), checks: new Map() };
         quarkChecksBySignal.set(signal, verification);
     }
-    const unchecked = [...new Set(rows.map(({ id }) => id))].filter(id => !verification.checks.has(id));
+    const now = Date.now();
+    const unchecked = [...new Set(rows.map(({ id }) => id))]
+        .filter(id => (verification.checks.get(id)?.expiresAt ?? 0) <= now);
     for (let offset = 0; offset < unchecked.length; offset += QUARK_CHECK_BATCH_SIZE) {
         const ids = unchecked.slice(offset, offset + QUARK_CHECK_BATCH_SIZE);
         const batch = verification.queue
             .then(() => ResourceAPI.checkQuarkLinks(ids, { signal }))
-            .then(result => result?.unavailable, () => {
-                ids.forEach(id => verification.checks.delete(id));
-                return null;
-            });
+            .then(result => result, () => null);
         verification.queue = batch;
-        for (const id of ids) verification.checks.set(id, batch.then(unavailable => unavailable?.[id]));
+        for (const id of ids) {
+            const check = { expiresAt: Infinity, unknown: false };
+            check.result = batch.then(result => {
+                const reason = Object.hasOwn(result?.unavailable || {}, id) ? result.unavailable[id] : undefined;
+                check.unknown = !reason && (!Array.isArray(result?.unknown) || result.unknown.includes(id));
+                check.expiresAt = Date.now() + (check.unknown ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
+                return reason;
+            });
+            verification.checks.set(id, check);
+        }
     }
     for (const { id, badge } of rows) {
-        void verification.checks.get(id).then(reason => {
+        void verification.checks.get(id).result.then(reason => {
             const label = QUARK_UNAVAILABLE_LABELS.get(reason);
             if (!label || signal.aborted || !badge.isConnected) return;
             badge.textContent = label;
@@ -1523,7 +1541,14 @@ function setResourceFilter(value) {
     rerenderResourceLists();
 }
 
-document.getElementById('resourceToolbar')?.addEventListener('click', event => {
+window.addEventListener('storage', event => {
+    if (event.storageArea === window.localStorage && (event.key === OPENED_LINKS_KEY || event.key === null)) {
+        syncOpenedLinks();
+        rerenderResourceLists();
+    }
+});
+
+document.getElementById('resourceToolbar')?.addEventListener('click', async event => {
     const filterButton = event.target.closest('[data-resource-filter]');
     if (filterButton) {
         setResourceFilter(filterButton.dataset.resourceFilter);
@@ -1532,9 +1557,15 @@ document.getElementById('resourceToolbar')?.addEventListener('click', event => {
     if (event.target.closest('#resourceClearOpened')) {
         // Only this work's links: other works keep their marks.
         const urls = resourceLinkUrls();
-        let cleared = 0;
-        urls.forEach(url => { if (openedLinks.delete(url)) cleared += 1; });
-        saveOpenedLinks();
+        const cleared = await updateOpenedLinks(marks => {
+            let count = 0;
+            urls.forEach(url => { if (marks.delete(url)) count += 1; });
+            return count;
+        });
+        const clearButton = document.getElementById('resourceClearOpened');
+        if (document.activeElement === clearButton) {
+            document.querySelector('#resourceToolbar [aria-pressed="true"]')?.focus();
+        }
         rerenderResourceLists();
         showToast(`已清除 ${cleared} 条打开标记`);
     }
@@ -1565,6 +1596,10 @@ function renderLinkCards(container, items, options) {
         li.className = 'p-4 text-sm font-mono text-cinema-400';
         li.textContent = emptyLabel;
         container.appendChild(li);
+        if (focused) {
+            li.tabIndex = -1;
+            li.focus({ preventScroll: true });
+        }
         return;
     }
     if (newUrls?.size) {
@@ -1594,6 +1629,10 @@ function renderLinkCards(container, items, options) {
         li.className = 'link-filter-empty';
         li.textContent = `本栏 ${safeItems.length} 条链接都已打开过`;
         container.appendChild(li);
+        if (focused) {
+            li.tabIndex = -1;
+            li.focus({ preventScroll: true });
+        }
         return;
     }
 
@@ -1679,8 +1718,11 @@ function renderLinkCards(container, items, options) {
             opened.className = 'link-opened';
             opened.textContent = '已打开';
             title.appendChild(opened);
-            const markOpened = () => {
-                rememberOpenedLink(item.url);
+            const markOpened = async () => {
+                await updateOpenedLinks(marks => {
+                    marks.delete(item.url);
+                    marks.add(item.url);
+                });
                 // The same share can be listed in more than one column.
                 for (const row of document.querySelectorAll('#resourcesSection .link-item')) {
                     if (row.dataset.linkUrl === item.url) row.classList.add('is-opened');
@@ -2632,8 +2674,11 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
         const merged = refreshFailed && previous ? previous : mergeResourceState(previous, resourceResult);
         resourceResultState = {
             ...merged, queryKey, refreshFailed, refreshPending: false,
-            newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result)
+            newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result, previous.pages)
         };
+        for (const check of quarkChecksBySignal.get(searchOptions.signal)?.checks.values() || []) {
+            if (check.unknown) check.expiresAt = 0;
+        }
         renderResourceResult(resourceResultState, retry, searchOptions.signal);
     } catch (error) {
         if (error?.name === 'AbortError') return;

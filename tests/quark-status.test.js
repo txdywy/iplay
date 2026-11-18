@@ -58,14 +58,16 @@ test('Quark status labels only confirmed failures and caches no upstream account
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     const unavailable = { Missing: 'missing', deleted: 'deleted', expired: 'expired', cancelled: 'cancelled' };
-    assert.deepEqual(await response.json(), { unavailable });
+    const unknown = ['wrong', 'unknown', 'limited', 'timeout'];
+    assert.deepEqual(await response.json(), { unavailable, unknown });
     assert.equal(calls.get('Missing'), 1);
-    assert.deepEqual(await (await probe(ids)).json(), { unavailable });
+    assert.deepEqual(await (await probe(ids)).json(), { unavailable, unknown });
     for (const id of ['Missing', 'deleted', 'expired', 'cancelled', 'protected', 'live']) assert.equal(calls.get(id), 1);
     for (const id of ['unknown', 'limited', 'timeout', 'wrong']) assert.equal(calls.get(id), 2);
     const additional = await probe(['missing-files', 'blocked', 'invalid', 'egress-error', 'redirect']);
     assert.deepEqual(await additional.json(), {
-        unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid' }
+        unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid' },
+        unknown: ['egress-error', 'redirect']
     });
     assert.ok(limits.every(key => key === 'quark-test:quark-status'));
     for (const entry of entries.values()) {

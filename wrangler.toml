@@ -47,3 +47,11 @@ crons = ["0 */6 * * *"]
 # command = "npm run build"
 # cwd = ""
 # watch_dir = ""
+
+[[durable_objects.bindings]]
+name = "WPZY_CACHE_SESSION"
+class_name = "WpzyCacheSession"
+
+[[migrations]]
+tag = "wpzy-cache-session-v1"
+new_sqlite_classes = ["WpzyCacheSession"]

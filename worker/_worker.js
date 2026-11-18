@@ -92,6 +92,8 @@ function withCors(response, request, env) {
     });
 }
 
+export { WpzyCacheSession } from "./wpzy-cache.js";
+
 export default {
     async fetch(request, env, ctx) {
         if (request.method === "OPTIONS") {

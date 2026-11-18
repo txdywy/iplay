@@ -35,6 +35,8 @@ const telegramToken = '123456789:RuntimeTelegramTokenForWorkerdTests00';
 const telegramCalls = [];
 const bindings = { ...productionConfig.bindings, TMDB_ACCESS_TOKEN: 'runtime-test-bearer', WPZY_COOKIE: runtimeCookie, TELEGRAM_BOT_TOKEN: telegramToken };
 let wpzyMode = 'public';
+let wpzyDetailEntered;
+let releaseWpzyDetail;
 let personCreditsAvailable = false;
 let mediaFieldsAvailable = false;
 let wikiRemakeYear = '2005';
@@ -153,9 +155,16 @@ async function upstream(request) {
             if (wpzyMode === 'login') return new Response(null, {status:302,headers:{Location:'user-login.htm'}});
             if (wpzyMode === 'maintenance') return new Response('<title>网站维护</title><p>请求过于频繁，请稍后重试</p>');
             if (['empty', 'scheduling', 'foreign-links'].includes(wpzyMode)) return new Response(WPZY_EMPTY_SEARCH_HTML);
-            return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie 夸克</a></li>');
+            return new Response('<li data-href="thread-100.htm"><a href="thread-100.htm">Runtime Movie (2019) 夸克</a></li>');
         }
         assert.equal(url.pathname, '/thread-100.htm', 'Non-resource WPZY path must not be fetched');
+        if (wpzyMode === 'delayed-detail') {
+            await new Promise(resolve => {
+                releaseWpzyDetail = resolve;
+                wpzyDetailEntered();
+            });
+            return new Response('<p>https://pan.quark.cn/s/old-wpzy?pwd=abcd</p>');
+        }
         if (wpzyMode === 'oversized') return new Response(`https://pan.quark.cn/s/${'b'.repeat(1900000)}`);
         if (wpzyMode === 'detail-maintenance') return new Response('<title>Service unavailable</title><h1>Maintenance in progress</h1>');
         if (wpzyMode === 'conflict') return new Response('https://pan.quark.cn/s/runtime-shared?pwd=BBBB');
@@ -188,6 +197,7 @@ async function upstream(request) {
 
 const options = {
     modules, modulesRoot: root, bindings, ratelimits, outboundService: upstream,
+    durableObjects: productionConfig.durableObjects,
     compatibilityDate: productionConfig.compatibilityDate,
     compatibilityFlags: productionConfig.compatibilityFlags
 };
@@ -231,7 +241,7 @@ try {
 
     const quarkStatus = await request('/api/resource/quark-status?id=missing&id=redirect', 'runtime-quark-status');
     assert.equal(quarkStatus.status, 200);
-    assert.deepEqual(await quarkStatus.json(), { unavailable: { missing: 'missing' } });
+    assert.deepEqual(await quarkStatus.json(), { unavailable: { missing: 'missing' }, unknown: ['redirect'] });
     assert.equal(redirectedRequests, 0, 'Quark redirects must not reach other hosts');
     checks.push('native-quark-status-and-redirect-handling');
 
@@ -381,13 +391,29 @@ try {
     }
     checks.push('resource-page-password-evidence-and-cache-serialization');
 
+    const otherWork = '/api/resource?q=Runtime%20Movie&year=2019';
+    assert.equal((await request(otherWork, 'runtime-wpzy-other')).status, 200);
+    assert.equal((await request(otherWork.replace('/api/resource?', '/api/resource/cache?'), 'runtime-wpzy-other')).status, 200);
+    wpzyMode = 'delayed-detail';
+    const detailEntered = new Promise(resolve => { wpzyDetailEntered = resolve; });
+    const delayedScan = request(otherWork + '&refresh=1', 'runtime-wpzy-other');
+    await Promise.race([detailEntered, delayedScan.then(() => {
+        throw new Error('The delayed WPZY detail request did not start');
+    })]);
     wpzyMode = 'login';
     const expired = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-expired');
     const expiredData = await expired.json();
+    releaseWpzyDetail();
+    assert.equal(expired.status, 200, JSON.stringify(expiredData));
     assert.equal(expiredData.partial, true);
     assert.equal(expiredData.resourceMeta.providerIssues.wpzys, 'login_required');
     assert.equal(expired.headers.get('cache-control'), 'no-store');
-    checks.push('wpzy-login-expiry-fails-closed');
+    assert.equal((await request(otherWork.replace('/api/resource?', '/api/resource/cache?'), 'runtime-wpzy-other')).status, 410);
+    const delayedData = await (await delayedScan).json();
+    assert.equal(delayedData.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.ok(!delayedData.quarkUrls.some(share => share.url.includes('old-wpzy')));
+    assert.equal((await request(otherWork.replace('/api/resource?', '/api/resource/cache?'), 'runtime-wpzy-other')).status, 410);
+    checks.push('wpzy-login-expiry-fails-closed-across-works-and-in-flight-scans');
 
     wpzyMode = 'maintenance';
     const maintenance = await request('/api/resource?q=Runtime%20Movie&refresh=1', 'runtime-wpzy-maintenance');

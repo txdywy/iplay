@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { URLSearchParams } from 'node:url';
 
 // Explicit opt-in only: this performs public read-only requests, not mocked CI tests.
@@ -130,5 +131,16 @@ for (const path of ['/api/wiki/zh?q=流浪地球&type=movie&year=2019', '/api/re
     }
     results.push({ check: path, status: response.ok ? (data.partial ? 'partial' : 'available') : 'provider-unavailable', http: response.status });
 }
+
+const probeId = randomBytes(6).toString('hex');
+const cacheMiss = await getApi('/api/resource/cache?q=release-check-' + probeId, 410);
+assert.ok(cacheMiss.data.error);
+assert.equal(cacheMiss.response.headers.get('cache-control'), 'no-store');
+results.push({ check: 'resource-cache-miss', status: 'passed' });
+const quark = await getApi('/api/resource/quark-status?id=' + probeId, 200);
+assert.equal(quark.response.headers.get('cache-control'), 'no-store');
+assert.ok(['missing', 'invalid', 'deleted'].includes(quark.data.unavailable?.[probeId]), 'Quark must confirm the generated nonexistent share');
+assert.deepEqual(quark.data.unknown, []);
+results.push({ check: 'quark-confirmed-missing-share', status: 'passed' });
 
 console.log(JSON.stringify({ liveSmoke: 'passed', release, site, api, results }, null, 2));

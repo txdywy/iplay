@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeResourceSnapshot, mergeResourceState, resourceQueryKey } from '../js/resources.js';
+import { mergeResourceSnapshot, mergeResourceState, newResourceUrls, resourceQueryKey } from '../js/resources.js';
 
 const sourceA = { title: 'A', url: 'https://by669.com/a', source: 'by669' };
 const sourceB = { title: 'B', url: 'https://wpzy.org/thread-1.htm', source: 'wpzys' };
@@ -112,11 +112,18 @@ test('new shares get a slot when retained evidence fills the display cap', () =>
     const initial = scan({ pages: [page(sourceA, links)] });
     const latest = [share('new', 'bbbb')];
     const partial = scan({ by669: 'failed', resources: [], partial: true, pages: [page(sourceB, latest)] });
-    const snapshot = mergeResourceSnapshot(initial, { ...partial, quarkUrls: latest });
+    const fresh = { ...partial, quarkUrls: latest };
+    const snapshot = mergeResourceSnapshot(initial, fresh);
     for (const retained of [snapshot, mergeResourceState(null, snapshot).result]) {
         assert.equal(retained.quarkUrls.length, 100);
         assert.ok(retained.quarkUrls.some(item => item.url === latest[0].url));
     }
+    const repeated = mergeResourceSnapshot(snapshot, fresh);
+    assert.deepEqual(repeated.quarkUrls, snapshot.quarkUrls);
+    const previous = mergeResourceState(null, snapshot);
+    const next = mergeResourceState(previous, repeated);
+    assert.deepEqual(next.result.quarkUrls, previous.result.quarkUrls);
+    assert.equal(newResourceUrls(previous.result, mergeResourceState(null, initial).result, previous.pages).size, 0);
 });
 
 test('legacy resource responses remain usable and full scans clear obsolete links', () => {
