@@ -126,6 +126,22 @@ test('new shares get a slot when retained evidence fills the display cap', () =>
     assert.equal(newResourceUrls(previous.result, mergeResourceState(null, initial).result, previous.pages).size, 0);
 });
 
+test('retained stars get a slot in a full refresh, while revoked shares stay removed', () => {
+    const pinned = share('pinned');
+    const stars = new Set([pinned.url]);
+    const links = Array.from({ length: 100 }, (_, index) => share('fresh-' + index));
+    const previous = mergeResourceState(null, scan({ pages: [page(sourceB, [pinned])] }));
+    const fresh = scan({ wpzys: 'failed', wpzysResources: [], pages: [page(sourceA, links)], partial: true });
+    fresh.quarkUrls = links;
+    const merged = mergeResourceState(previous, fresh, stars);
+    assert.equal(merged.result.quarkUrls.length, 100);
+    assert.ok(merged.result.quarkUrls.some(item => item.url === pinned.url));
+    const snapshot = mergeResourceSnapshot(previous.result, fresh);
+    assert.ok(mergeResourceState(null, snapshot, stars).result.quarkUrls.some(item => item.url === pinned.url));
+    fresh.resourceMeta.providerIssues = { wpzys: 'login_required' };
+    assert.ok(!mergeResourceState(previous, fresh, stars).result.quarkUrls.some(item => item.url === pinned.url));
+});
+
 test('legacy resource responses remain usable and full scans clear obsolete links', () => {
     const initial = mergeResourceState(null, { partial: true, resources: [sourceA], quarkUrls: [{ ...share('legacy', 'keep'), sourceUrl: sourceA.url }], resourceMeta: { providers: { by669: 'ok', wpzys: 'failed' } } });
     const retried = mergeResourceState(initial, { partial: true, resources: [], wpzysResources: [sourceB], quarkUrls: [{ ...share('new', 'new1'), sourceUrl: sourceB.url }], resourceMeta: { providers: { by669: 'failed', wpzys: 'ok' } } });

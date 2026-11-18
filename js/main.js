@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.63';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.64';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.63';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.63';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.63';
-import { RELEASE_VERSION } from './release.js?v=1.0.63';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.63';
+} from './scorer.js?v=1.0.64';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.64';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.64';
+import { RELEASE_VERSION } from './release.js?v=1.0.64';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.64';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.63';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.63';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.63';
+} from './match.js?v=1.0.64';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.64';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.64';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1406,43 +1406,65 @@ function pickSafeImageUrl(...values) {
 // Share links already opened in this browser, so a returning visitor can tell
 // which ones were tried.
 const OPENED_LINKS_KEY = 'iplay_opened_links';
+const OPENED_LINK_COUNTS_KEY = 'iplay_opened_link_counts_v1';
 const OPENED_LINKS_LIMIT = 1000;
 const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
 const STARRED_LINKS_KEY = 'iplay_starred_links';
 const STARRED_LINKS_LIMIT = 1000;
 let starredLinks = new Set();
 const openedLinks = new Map();
+let openedLinksUnsaved = false;
+let starredLinksUnsaved = false;
 
 function syncOpenedLinks() {
+    if (openedLinksUnsaved) return false;
     try {
         const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
-        if (!Array.isArray(stored)) return;
+        const storedCounts = JSON.parse(window.localStorage.getItem(OPENED_LINK_COUNTS_KEY) || '[]');
+        if (!Array.isArray(stored)) return false;
+        const counts = new Map(Array.isArray(storedCounts) ? storedCounts.filter(Array.isArray) : []);
         openedLinks.clear();
         for (const entry of stored.slice(-OPENED_LINKS_LIMIT)) {
-            // Earlier versions stored only the URL after the first opening.
-            const [url, count] = typeof entry === 'string' ? [entry, 1] : Array.isArray(entry) ? entry : [];
-            if (typeof url === 'string' && Number.isSafeInteger(count) && count > 0) openedLinks.set(url, count);
+            const [url, previousCount] = typeof entry === 'string' ? [entry, 1] : Array.isArray(entry) ? entry : [];
+            if (typeof url !== 'string') continue;
+            const count = counts.get(url);
+            openedLinks.set(url, Math.max(
+                Number.isSafeInteger(previousCount) ? previousCount : 1,
+                Number.isSafeInteger(count) ? count : 1,
+                1
+            ));
         }
+        return stored.some(Array.isArray);
     } catch {
-        // Keep the marks for this page view only.
+        return false;
     }
 }
 
-syncOpenedLinks();
+function saveOpenedLinks() {
+    try {
+        // Keep the URL list readable by tabs still running older releases.
+        window.localStorage.setItem(OPENED_LINK_COUNTS_KEY, JSON.stringify([...openedLinks]));
+        window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks.keys()]));
+        openedLinksUnsaved = false;
+    } catch {
+        openedLinksUnsaved = true;
+    }
+}
+
+if (syncOpenedLinks()) {
+    void withResourceStorageLock(OPENED_LINKS_KEY, () => {
+        if (syncOpenedLinks()) saveOpenedLinks();
+    });
+}
 
 function updateOpenedLinks(change) {
-    const update = () => {
+    return withResourceStorageLock(OPENED_LINKS_KEY, () => {
         syncOpenedLinks();
         const result = change(openedLinks);
         if (openedLinks.size > OPENED_LINKS_LIMIT) openedLinks.delete(openedLinks.keys().next().value);
-        try {
-            window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks]));
-        } catch {
-            // Keep the marks for this page view only.
-        }
+        saveOpenedLinks();
         return result;
-    };
-    return withResourceStorageLock(OPENED_LINKS_KEY, update);
+    });
 }
 
 function withResourceStorageLock(key, update) {
@@ -1451,6 +1473,7 @@ function withResourceStorageLock(key, update) {
 }
 
 function syncStarredLinks() {
+    if (starredLinksUnsaved) return;
     try {
         const stored = JSON.parse(window.localStorage.getItem(STARRED_LINKS_KEY) || '[]');
         if (Array.isArray(stored)) {
@@ -1470,8 +1493,9 @@ function toggleStarredLink(url) {
         if (starredLinks.size > STARRED_LINKS_LIMIT) starredLinks.delete(starredLinks.keys().next().value);
         try {
             window.localStorage.setItem(STARRED_LINKS_KEY, JSON.stringify([...starredLinks]));
+            starredLinksUnsaved = false;
         } catch {
-            // Keep the stars available for this page view.
+            starredLinksUnsaved = true;
         }
     });
 }
@@ -1562,10 +1586,10 @@ function updateResourceToolbar() {
     if (clear) clear.hidden = opened === 0;
 }
 
-function rerenderResourceLists() {
+function rerenderResourceLists(revealFocusIn = null) {
     for (const id of RESOURCE_LIST_IDS) {
         const render = linkListRenders.get(els[id]);
-        if (render) renderLinkCards(els[id], render.items, render.options);
+        if (render) renderLinkCards(els[id], render.items, render.options, els[id] === revealFocusIn);
     }
     updateResourceToolbar();
 }
@@ -1582,9 +1606,11 @@ function setResourceFilter(value) {
 
 window.addEventListener('storage', event => {
     if (event.storageArea !== window.localStorage) return;
-    if (event.key === OPENED_LINKS_KEY || event.key === null) syncOpenedLinks();
-    if (event.key === STARRED_LINKS_KEY || event.key === null) syncStarredLinks();
-    if ([OPENED_LINKS_KEY, STARRED_LINKS_KEY, null].includes(event.key)) rerenderResourceLists();
+    const openedChanged = event.key === OPENED_LINKS_KEY || event.key === OPENED_LINK_COUNTS_KEY || event.key === null;
+    const starredChanged = event.key === STARRED_LINKS_KEY || event.key === null;
+    if (openedChanged) syncOpenedLinks();
+    if (starredChanged) syncStarredLinks();
+    if (openedChanged || starredChanged) rerenderResourceLists();
 });
 
 document.getElementById('resourceToolbar')?.addEventListener('click', async event => {
@@ -1617,7 +1643,7 @@ function renderLinkOpenCount(row, badge) {
     badge.textContent = count ? `已打开 ${count} 次` : '';
 }
 
-function renderLinkCards(container, items, options) {
+function renderLinkCards(container, items, options, revealFocus = false) {
     const {
         emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
         detailText, sourceText, actionLabel, onAction, newUrls, probeSignal, initialLimit = 6
@@ -1822,7 +1848,7 @@ function renderLinkCards(container, items, options) {
             star.appendChild(createIcon('star'));
             star.addEventListener('click', async () => {
                 await toggleStarredLink(item.url);
-                rerenderResourceLists();
+                rerenderResourceLists(document.activeElement === star ? container : null);
             });
             li.append(card, star);
             frag.appendChild(li);
@@ -1874,16 +1900,23 @@ function renderLinkCards(container, items, options) {
     };
 
     const focusedIndex = focusedUrl ? shownItems.findIndex(item => item.url === focusedUrl) : -1;
+    const focusedStar = focused?.matches('.link-star');
     const keepListToggle = focused?.matches('button[aria-expanded]') ? 'toggle' : null;
-    renderVisibleItems(wasExpanded ? maxItems : Math.max(firstPageSize, focusedIndex + 1), keepListToggle);
-    if (focusedIndex >= 0) {
+    const visibleLimit = wasExpanded ? maxItems : focusedStar ? firstPageSize : Math.max(firstPageSize, focusedIndex + 1);
+    renderVisibleItems(visibleLimit, keepListToggle);
+    let focusTarget;
+    if (focusedIndex >= 0 && focusedIndex < visibleLimit) {
         const row = container.children[focusedIndex];
-        const previousControl = focused.matches('.link-star') ? row?.querySelector('.link-star')
+        const previousControl = focusedStar ? row?.querySelector('.link-star')
             : focused.matches('.link-copy') ? row?.querySelector('.link-copy') : null;
-        (previousControl || row?.querySelector('a'))?.focus({ preventScroll: true });
+        focusTarget = previousControl || row?.querySelector('a');
+    } else if (focusedStar && focusedIndex >= visibleLimit) {
+        focusTarget = container.lastElementChild?.querySelector('button[aria-expanded]');
     } else if (focusedUrl || (keepListToggle && maxItems === firstPageSize)) {
-        container.querySelector('a')?.focus({ preventScroll: true });
+        focusTarget = container.querySelector('a');
     }
+    focusTarget?.focus({ preventScroll: true });
+    if (revealFocus) focusTarget?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     updateResourceToolbar();
 }
 
@@ -2722,7 +2755,7 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
             const cached = await ResourceAPI.search(query, searchOptions, { cacheOnly: true, identity }).catch(() => null);
             if (!isCurrent()) return;
             if (Array.isArray(cached?.quarkUrls)) {
-                resourceResultState = { ...mergeResourceState(null, cached), queryKey, refreshPending: true };
+                resourceResultState = { ...mergeResourceState(null, cached, starredLinks), queryKey, refreshPending: true };
                 renderResourceLists(resourceResultState.result, null, searchOptions.signal);
                 setResourceStatus('正在重新扫描，先显示上次找到的资源…', true, true);
             }
@@ -2732,7 +2765,7 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
         if (!isCurrent()) return;
         const previous = resourceResultState?.queryKey === queryKey ? resourceResultState : null;
         const refreshFailed = Boolean(resourceResult.resourceMeta?.stale);
-        const merged = refreshFailed && previous ? previous : mergeResourceState(previous, resourceResult);
+        const merged = refreshFailed && previous ? previous : mergeResourceState(previous, resourceResult, starredLinks);
         resourceResultState = {
             ...merged, queryKey, refreshFailed, refreshPending: false,
             newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result, previous.pages)
