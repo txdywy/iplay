@@ -899,10 +899,19 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 .link-tag-new { color: var(--color-green-500); }
 .link-tag-unavailable { color: var(--color-accent-red); }
 .link-opened::before { content: "✓ "; }
-.is-opened .link-opened { display: inline-block; }
+.is-opened { --link-open-strength: 50%; }
+.is-opened[data-open-level="2"] { --link-open-strength: 65%; }
+.is-opened[data-open-level="3"] { --link-open-strength: 80%; }
+.is-opened[data-open-level="5"] { --link-open-strength: 95%; }
+.is-opened .link-opened {
+  display: inline-block;
+  background: color-mix(in oklab, var(--res-accent, var(--color-cinema-400)) calc(var(--link-open-strength) * 0.37), var(--color-cinema-950));
+  color: var(--color-cinema-100);
+  font-variant-numeric: tabular-nums;
+}
 .is-opened .link-index {
   border-color: transparent;
-  background: color-mix(in oklab, var(--res-accent, var(--color-cinema-400)) 70%, transparent);
+  background: color-mix(in oklab, var(--res-accent, var(--color-cinema-400)) var(--link-open-strength), var(--color-cinema-600));
   color: var(--color-cinema-950);
 }
 .is-opened .link-row .text-cinema-100 { color: var(--color-cinema-400); }

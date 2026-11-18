@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.61';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.62';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.61';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.61';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.61';
-import { RELEASE_VERSION } from './release.js?v=1.0.61';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.61';
+} from './scorer.js?v=1.0.62';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.62';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.62';
+import { RELEASE_VERSION } from './release.js?v=1.0.62';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.62';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.61';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.61';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.61';
+} from './match.js?v=1.0.62';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.62';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.62';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1407,14 +1407,18 @@ function pickSafeImageUrl(...values) {
 const OPENED_LINKS_KEY = 'iplay_opened_links';
 const OPENED_LINKS_LIMIT = 1000;
 const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
-const openedLinks = new Set();
+const openedLinks = new Map();
 
 function syncOpenedLinks() {
     try {
         const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
         if (!Array.isArray(stored)) return;
         openedLinks.clear();
-        stored.filter(value => typeof value === 'string').slice(-OPENED_LINKS_LIMIT).forEach(value => openedLinks.add(value));
+        for (const entry of stored.slice(-OPENED_LINKS_LIMIT)) {
+            // Earlier versions stored only the URL after the first opening.
+            const [url, count] = typeof entry === 'string' ? [entry, 1] : Array.isArray(entry) ? entry : [];
+            if (typeof url === 'string' && Number.isSafeInteger(count) && count > 0) openedLinks.set(url, count);
+        }
     } catch {
         // Keep the marks for this page view only.
     }
@@ -1426,8 +1430,9 @@ function updateOpenedLinks(change) {
     const update = () => {
         syncOpenedLinks();
         const result = change(openedLinks);
+        if (openedLinks.size > OPENED_LINKS_LIMIT) openedLinks.delete(openedLinks.keys().next().value);
         try {
-            window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks].slice(-OPENED_LINKS_LIMIT)));
+            window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks]));
         } catch {
             // Keep the marks for this page view only.
         }
@@ -1571,6 +1576,13 @@ document.getElementById('resourceToolbar')?.addEventListener('click', async even
     }
 });
 
+function renderLinkOpenCount(row, badge) {
+    const count = openedLinks.get(row.dataset.linkUrl) || 0;
+    row.classList.toggle('is-opened', count > 0);
+    row.dataset.openLevel = count >= 5 ? '5' : count >= 3 ? '3' : count === 2 ? '2' : '1';
+    badge.textContent = count ? `已打开 ${count} 次` : '';
+}
+
 function renderLinkCards(container, items, options) {
     const {
         emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
@@ -1647,7 +1659,6 @@ function renderLinkCards(container, items, options) {
         shownItems.slice(0, visibleLimit).forEach(item => {
             const li = document.createElement('li');
             li.className = itemClass;
-            li.classList.toggle('is-opened', openedLinks.has(item.url));
             li.dataset.linkUrl = item.url;
 
             const resolvedActionLabel = typeof actionLabel === 'function' ? actionLabel(item) : actionLabel;
@@ -1716,16 +1727,17 @@ function renderLinkCards(container, items, options) {
             // a click never moves the row out from under the pointer.
             const opened = document.createElement('span');
             opened.className = 'link-opened';
-            opened.textContent = '已打开';
+            renderLinkOpenCount(li, opened);
             title.appendChild(opened);
             const markOpened = async () => {
                 await updateOpenedLinks(marks => {
+                    const count = marks.get(item.url) || 0;
                     marks.delete(item.url);
-                    marks.add(item.url);
+                    marks.set(item.url, Math.min(count + 1, Number.MAX_SAFE_INTEGER));
                 });
                 // The same share can be listed in more than one column.
                 for (const row of document.querySelectorAll('#resourcesSection .link-item')) {
-                    if (row.dataset.linkUrl === item.url) row.classList.add('is-opened');
+                    if (row.dataset.linkUrl === item.url) renderLinkOpenCount(row, row.querySelector('.link-opened'));
                 }
                 updateResourceToolbar();
             };
