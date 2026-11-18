@@ -1441,11 +1441,24 @@ async function assertOpenedLinkFilter() {
     const before = await evaluate("[...document.querySelectorAll('#quarkUrlList .link-index')].map(node => node.textContent)");
     assert.deepEqual(before.slice(0, 2), ['01', '02']);
     await evaluate(`(() => {
-        // Keep the test page in place; the app's own click handler still runs.
-        window.addEventListener('click', event => event.preventDefault(), { once: true });
-        document.querySelector('#quarkUrlList .link-item a').click();
+        const otherPage = document.createElement('iframe');
+        otherPage.hidden = true;
+        document.body.appendChild(otherPage);
+        const link = document.querySelector('#quarkUrlList .link-item a');
+        otherPage.contentWindow.localStorage.setItem('iplay_opened_links', JSON.stringify([link.href]));
+        otherPage.remove();
     })()`);
-    await waitFor("document.querySelector('#quarkUrlList .link-item').classList.contains('is-opened')");
+    await waitFor("document.querySelector('#quarkUrlList .link-opened')?.textContent === '已打开 1 次'");
+    const accentBefore = await evaluate("getComputedStyle(document.querySelector('#quarkUrlList .link-index')).backgroundColor");
+    await evaluate(`(() => {
+        const link = document.querySelector('#quarkUrlList .link-item a');
+        link.addEventListener('click', event => event.preventDefault(), { once: true });
+        link.click();
+        link.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }));
+    })()`);
+    await waitFor("document.querySelector('#quarkUrlList .link-opened')?.textContent === '已打开 3 次'");
+    assert.notEqual(await evaluate("getComputedStyle(document.querySelector('#quarkUrlList .link-index')).backgroundColor"), accentBefore);
+    assert.equal(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))[0][1]"), 3);
     assert.match(await evaluate("document.getElementById('resourceOpenedSummary').textContent"), /^已打开 1 \/ \d+$/u);
     await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').click()");
     await waitFor("document.querySelector('#quarkUrlList .link-index')?.textContent === '02'");
@@ -1462,7 +1475,7 @@ async function assertOpenedLinkFilter() {
         otherPage.remove();
     })()`);
     await waitFor("document.querySelectorAll('#quarkUrlList .is-opened').length === 0");
-    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), ['https://pan.quark.cn/s/other-work']);
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), [['https://pan.quark.cn/s/other-work', 1]]);
     await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
 }
 

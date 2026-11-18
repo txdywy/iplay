@@ -50,5 +50,5 @@ test('resource links are numbered, remember being opened and can hide opened one
     assert.match(main, /link\.addEventListener\('auxclick'/);
     assert.match(main, /const RESOURCE_FILTER_KEY = 'iplay_resource_filter'/);
     assert.doesNotMatch(main, /trackOpened/);
-    assert.match(css, /\.is-opened \.link-opened \{ display: inline-block; \}/);
+    assert.match(css, /\.is-opened \.link-opened \{\s*display: inline-block;/);
 });
