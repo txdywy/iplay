@@ -1436,7 +1436,7 @@ async function runDesktopReducedMotionFlow() {
 // Opening a link numbers and marks it; "只看未打开" hides it but keeps the
 // other links' numbers.
 async function assertOpenedLinkFilter() {
-    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
+    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_opened_link_counts_v1'); localStorage.removeItem('iplay_resource_filter')");
     await waitFor("document.querySelectorAll('#quarkUrlList .link-index').length >= 2");
     const before = await evaluate("[...document.querySelectorAll('#quarkUrlList .link-index')].map(node => node.textContent)");
     assert.deepEqual(before.slice(0, 2), ['01', '02']);
@@ -1458,7 +1458,7 @@ async function assertOpenedLinkFilter() {
     })()`);
     await waitFor("document.querySelector('#quarkUrlList .link-opened')?.textContent === '已打开 3 次'");
     assert.notEqual(await evaluate("getComputedStyle(document.querySelector('#quarkUrlList .link-index')).backgroundColor"), accentBefore);
-    assert.equal(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))[0][1]"), 3);
+    assert.equal(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1'))[0][1]"), 3);
     assert.match(await evaluate("document.getElementById('resourceOpenedSummary').textContent"), /^已打开 1 \/ \d+$/u);
     await evaluate("document.querySelector('[data-resource-filter=\"unopened\"]').click()");
     await waitFor("document.querySelector('#quarkUrlList .link-index')?.textContent === '02'");
@@ -1470,13 +1470,18 @@ async function assertOpenedLinkFilter() {
         document.body.appendChild(otherPage);
         const storage = otherPage.contentWindow.localStorage;
         const key = 'iplay_opened_links';
-        storage.setItem(key, JSON.stringify([...JSON.parse(storage.getItem(key)), 'https://pan.quark.cn/s/other-work']));
-        document.getElementById('resourceClearOpened').click();
+        // v1.0.61 filters out non-string entries before rewriting the history.
+        const olderMarks = JSON.parse(storage.getItem(key)).filter(value => typeof value === 'string');
+        storage.setItem(key, JSON.stringify([...olderMarks, 'https://pan.quark.cn/s/other-work']));
         otherPage.remove();
     })()`);
+    await waitFor("JSON.parse(localStorage.getItem('iplay_opened_links')).includes('https://pan.quark.cn/s/other-work')");
+    await waitFor("document.querySelector('#quarkUrlList .link-opened')?.textContent === '已打开 3 次'");
+    await evaluate("document.getElementById('resourceClearOpened').click()");
     await waitFor("document.querySelectorAll('#quarkUrlList .is-opened').length === 0");
-    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), [['https://pan.quark.cn/s/other-work', 1]]);
-    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_resource_filter')");
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), ['https://pan.quark.cn/s/other-work']);
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1'))"), [['https://pan.quark.cn/s/other-work', 1]]);
+    await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_opened_link_counts_v1'); localStorage.removeItem('iplay_resource_filter')");
 }
 
 async function runActorCandidateRaceFlow() {
@@ -1828,22 +1833,51 @@ async function runCompleteResourceVisibilityFlow() {
     const pinnedUrl = 'https://pan.quark.cn/s/large-99';
     await evaluate(`(() => {
         const button = document.querySelector('#quarkUrlList [data-link-url="${pinnedUrl}"] .link-star');
+        button.scrollIntoView({ block: 'center' });
         button.focus();
         button.click();
     })()`);
     await waitFor(firstUrl + " === " + JSON.stringify(pinnedUrl));
     assert.equal(await evaluate(firstStar + ".getAttribute('aria-pressed')"), 'true');
     assert.equal(await evaluate('document.activeElement === ' + firstStar), true, 'pinning keeps focus on the star');
+    const focusInView = "document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight";
+    await waitFor(focusInView);
     assert.equal(await evaluate("localStorage.getItem('iplay_opened_links')"), null, 'pinning does not open a link');
+    // v1.0.62 and v1.0.63 persisted URL/count pairs in the original key.
+    await evaluate("localStorage.setItem('iplay_opened_links', JSON.stringify([['https://pan.quark.cn/s/older-tuple', 7]]))");
     await command('Page.navigate', { url: baseUrl });
     await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await waitFor("JSON.parse(localStorage.getItem('iplay_opened_links'))?.[0] === 'https://pan.quark.cn/s/older-tuple'");
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1'))"), [['https://pan.quark.cn/s/older-tuple', 7]]);
     await evaluate("window.__smoke.resourceMode = 'large'");
     await search('Test Movie');
     await assertSearchReady('Test Movie');
     await waitFor(firstUrl + " === " + JSON.stringify(pinnedUrl));
-    await evaluate(firstStar + '.click()');
+    await evaluate(firstStar + '.focus(); ' + firstStar + '.click()');
     await waitFor(firstUrl + " === 'https://pan.quark.cn/s/large-0'");
+    assert.equal(await evaluate("document.querySelectorAll('#quarkUrlList a').length"), 6);
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#quarkUrlList button[aria-expanded]')"), true);
+    await waitFor(focusInView);
     assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_starred_links'))"), []);
+
+    await evaluate(`(() => {
+        const setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) {
+            if (['iplay_opened_link_counts_v1', 'iplay_starred_links'].includes(key)) {
+                throw new DOMException('Test storage quota', 'QuotaExceededError');
+            }
+            return setItem.call(this, key, value);
+        };
+        const link = document.querySelector('#quarkUrlList a');
+        link.addEventListener('click', event => event.preventDefault());
+        link.click();
+        link.click();
+    })()`);
+    await waitFor("document.querySelector('#quarkUrlList .link-opened')?.textContent === '已打开 2 次'");
+    await evaluate(firstStar + '.click()');
+    await waitFor(firstStar + ".getAttribute('aria-pressed') === 'true'");
+    await evaluate(firstStar + '.click()');
+    await waitFor(firstStar + ".getAttribute('aria-pressed') === 'false'");
 }
 
 async function runUnscannedResourceStatusFlow() {

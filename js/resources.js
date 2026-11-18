@@ -70,7 +70,7 @@ function combineShares(pages, preferredUrls) {
         for (const item of asArray(page.quarkUrls)) {
             if (!item?.url) continue;
             if (!byUrl.has(item.url)) {
-                // Reserve space for current scan results even when the retained
+                // Reserve space for prioritized links even when the retained
                 // pages already contain a full list.
                 if (!preferredUrls.delete(item.url) && byUrl.size + preferredUrls.size >= MAX_QUARK_LINKS) continue;
                 byUrl.set(item.url, { known: null, unknown: [], first: null });
@@ -113,7 +113,7 @@ function combineShares(pages, preferredUrls) {
 
 // Keep page evidence separate from the deduplicated display result. Otherwise a
 // conflict hidden in one scan can resurrect an older password on the next retry.
-export function mergeResourceState(previous, incoming) {
+export function mergeResourceState(previous, incoming, starredUrls = null) {
     const partial = Boolean(incoming.partial || incoming.resourceMeta?.partial);
     const providers = incoming.resourceMeta?.providers || {};
     const hasPageEvidence = Array.isArray(incoming.resourceMeta?.pages);
@@ -153,8 +153,19 @@ export function mergeResourceState(previous, incoming) {
     const evidencePages = [...pages.values()];
     const currentUrls = new Set(currentPages.filter(page => page.status === 'ok')
         .flatMap(page => asArray(page.quarkUrls).map(item => item.url)));
-    const preferredUrls = new Set(asArray(incoming.quarkUrls).filter(item => currentUrls.has(item?.url))
-        .slice(0, MAX_QUARK_LINKS).map(item => item.url));
+    const preferredUrls = new Set();
+    if (starredUrls?.size) {
+        const eligibleStars = new Set(evidencePages.flatMap(page => page.quarkUrls)
+            .filter(item => starredUrls.has(item?.url)).map(item => item.url));
+        for (const url of [...starredUrls].reverse()) {
+            if (eligibleStars.has(url)) preferredUrls.add(url);
+            if (preferredUrls.size === MAX_QUARK_LINKS) break;
+        }
+    }
+    for (const item of asArray(incoming.quarkUrls)) {
+        if (preferredUrls.size === MAX_QUARK_LINKS) break;
+        if (currentUrls.has(item?.url)) preferredUrls.add(item.url);
+    }
     return {
         pages: evidencePages,
         result: { ...incoming, ...lists, quarkUrls: combineShares(evidencePages, preferredUrls) }
