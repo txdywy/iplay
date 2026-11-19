@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.64';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.65';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,19 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.64';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.64';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.64';
-import { RELEASE_VERSION } from './release.js?v=1.0.64';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.64';
+} from './scorer.js?v=1.0.65';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.65';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.65';
+import { RELEASE_VERSION } from './release.js?v=1.0.65';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.65';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.64';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.64';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.64';
+} from './match.js?v=1.0.65';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.65';
+import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.65';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -218,8 +218,19 @@ function hideActorResults() {
     if (els.actorLoadMore) els.actorLoadMore.classList.add('hidden');
 }
 
+// Set when the search box is edited after a search was submitted: a result
+// that arrives later must not pull focus away from someone typing again.
+let searchInputEditedSinceSubmit = false;
+
+function userIsTypingElsewhere() {
+    const focused = document.activeElement;
+    if (focused === els.input) return searchInputEditedSinceSubmit;
+    return Boolean(focused && focused !== document.body && focused.matches?.('input, textarea, select, [contenteditable="true"]'));
+}
+
 function focusActorHeading() {
     requestAnimationFrame(() => {
+        if (userIsTypingElsewhere()) return;
         if (els.actorTitle && typeof els.actorTitle.focus === 'function') {
             els.actorTitle.focus({ preventScroll: true });
         }
@@ -1347,6 +1358,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
         button.className = 'min-h-11 shrink-0 rounded-full border border-accent-gold/60 px-4 py-2 font-mono text-xs text-cinema-100 transition-colors hover:border-accent-gold hover:bg-accent-gold/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-red disabled:cursor-wait disabled:opacity-60';
         button.textContent = '重试补全资源';
         button.addEventListener('click', async () => {
+            keepFocusInResources(button);
             button.disabled = true;
             try {
                 await onRetry();
@@ -1581,7 +1593,9 @@ function updateResourceToolbar() {
         button.setAttribute('aria-pressed', String(button.dataset.resourceFilter === resourceFilter));
     }
     const summary = document.getElementById('resourceOpenedSummary');
-    if (summary) summary.textContent = `已打开 ${opened} / ${urls.size}`;
+    // A live region re-announces every write; write only when the count changes.
+    const summaryText = `已打开 ${opened} / ${urls.size}`;
+    if (summary && summary.textContent !== summaryText) summary.textContent = summaryText;
     const clear = document.getElementById('resourceClearOpened');
     if (clear) clear.hidden = opened === 0;
 }
@@ -1672,6 +1686,7 @@ function renderLinkCards(container, items, options, revealFocus = false) {
             li.tabIndex = -1;
             li.focus({ preventScroll: true });
         }
+        updateResourceToolbar();
         return;
     }
     const starOrder = new Map([...starredLinks].map((url, index) => [url, index + 1]));
@@ -1707,6 +1722,7 @@ function renderLinkCards(container, items, options, revealFocus = false) {
             li.tabIndex = -1;
             li.focus({ preventScroll: true });
         }
+        updateResourceToolbar();
         return;
     }
 
@@ -1821,7 +1837,6 @@ function renderLinkCards(container, items, options, revealFocus = false) {
                 button.type = 'button';
                 button.className = 'link-copy ui-button mt-3 text-xs';
                 button.textContent = resolvedActionLabel;
-                button.setAttribute('aria-live', 'polite');
                 button.addEventListener('click', async () => {
                     button.disabled = true;
                     try {
@@ -1931,6 +1946,12 @@ function setResourceCount(container, count) {
     else counter.removeAttribute('aria-label');
 }
 
+// These actions redraw the panel that holds their button. Hand keyboard focus
+// to the section first so it is not dropped to the top of the page.
+function keepFocusInResources(button) {
+    if (document.activeElement === button) els.resourcesSection?.focus({ preventScroll: true });
+}
+
 function renderResourceStatus(container, { title, detail, iconName, iconClass, isLoading = true, actionLabel = '', onAction = null }) {
     if (!container) return;
     clearNode(container);
@@ -1982,6 +2003,7 @@ function renderResourceStatus(container, { title, detail, iconName, iconClass, i
         button.className = 'ui-button mt-3 text-xs';
         button.textContent = actionLabel;
         button.addEventListener('click', async () => {
+            keepFocusInResources(button);
             button.disabled = true;
             try {
                 await onAction();
@@ -2389,6 +2411,7 @@ function renderViewModel(viewModel, posterContext, { isUpdate = false } = {}) {
 
 function focusResultHeading() {
     requestAnimationFrame(() => {
+        if (userIsTypingElsewhere()) return;
         if (els.title && typeof els.title.focus === 'function') {
             els.title.focus({ preventScroll: true });
         }
@@ -2481,6 +2504,19 @@ function getAppHistoryUrl(url) {
     return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
 }
 
+// A search that stops at a candidate list or "no match" gets its own entry,
+// so the address bar no longer names the previous work, Back returns to it,
+// and the link reproduces the search.
+function recordSearchEntry(query, historyMode) {
+    if (historyMode !== 'push' && historyMode !== 'replace') return;
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('q', query);
+    if (url.search === window.location.search) return;
+    setAppHistoryState(historyMode === 'replace' ? 'replaceState' : 'pushState', { kind: 'search', query }, getAppHistoryUrl(url));
+}
+
 function pushActorHistory(query, personId) {
     const url = new URL(window.location.href);
     url.search = '';
@@ -2547,6 +2583,8 @@ function showEmptySearchError() {
     setAmbient(DEFAULT_AMBIENT);
     setText(els.errorMsg, '请输入电影、剧集或演员名称');
     setText(els.errorHint, '输入片名后按 Enter 或点击搜索。');
+    // There is nothing to retry; the input already has focus.
+    els.retrySearchButton?.classList.add('hidden');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
@@ -2577,6 +2615,7 @@ function showSearchError(error, query, searchId, onRetry = null) {
     // Searching the same words again cannot find a title that does not match.
     searchRetryEdits = !onRetry && error?.noMatch === true;
     setText(els.retrySearchButton, onRetry ? '重试演员作品' : searchRetryEdits ? '修改关键词' : '重试搜索');
+    els.retrySearchButton?.classList.remove('hidden');
     els.error.classList.remove('hidden');
     els.loading.classList.add('hidden');
     els.results.classList.add('hidden');
@@ -3163,9 +3202,13 @@ function renderFavorites() {
             url.searchParams.set('id', String(item.id));
             url.searchParams.set('type', item.mediaType);
             url.searchParams.set('title', item.title);
-            // Opening the title already on screen must not add a history entry.
-            if (url.search === window.location.search) return;
-            setAppHistoryState('pushState', { kind: 'detail', id: item.id, mediaType: item.mediaType, season: null, title: item.title }, getAppHistoryUrl(url));
+            // Opening the work already on screen needs nothing. Judge by what is
+            // shown, not the address: a later search may have replaced the view.
+            const shown = activeDetailState?.candidate;
+            if (shown && Number(shown.id) === Number(item.id) && shown.mediaType === item.mediaType
+                && document.body.classList.contains('has-content')) return;
+            const method = url.search === window.location.search ? 'replaceState' : 'pushState';
+            setAppHistoryState(method, { kind: 'detail', id: item.id, mediaType: item.mediaType, season: null, title: item.title }, getAppHistoryUrl(url));
             void restoreUrlState();
         });
         row.appendChild(chip);
@@ -3306,6 +3349,7 @@ function focusCandidateHeading(heading, query, originalFocus) {
 
 async function handleSearch({ historyMode = 'push' } = {}) {
     const query = els.input.value.trim();
+    searchInputEditedSinceSubmit = false;
     if (!query) {
         activeDetailState = null;
         currentSearchId += 1;
@@ -3396,6 +3440,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             hideCandidatePicker();
             setSearching(false);
             setSearchStatus(`找到 ${Math.min(actorCandidates.length, 6)} 位可能的演员，请确认身份`);
+            recordSearchEntry(query, historyMode);
             scrollToVisible(els.actorCandidatePicker);
             focusCandidateHeading(els.actorCandidatePickerTitle, query, originalFocus);
             return;
@@ -3423,6 +3468,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
             els.loading.classList.add('hidden');
             setSearching(false);
             setSearchStatus(`找到 ${Math.min(rankedCandidates.length, 6)} 个候选，请确认要查看的影视条目`);
+            recordSearchEntry(query, historyMode);
             scrollToVisible(els.candidatePicker);
             focusCandidateHeading(els.candidatePickerTitle, query, originalFocus);
             return;
@@ -3438,6 +3484,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
     } catch (err) {
         if (err?.name === 'AbortError') return;
         showSearchError(err, query, searchId);
+        if (err?.noMatch && isActiveSearch(searchId)) recordSearchEntry(query, historyMode);
     } finally {
         if (searchId === currentSearchId) setSearching(false);
     }
@@ -3461,6 +3508,7 @@ function showQuickSearches() {
 
 els.input.addEventListener('focus', showQuickSearches);
 els.input.addEventListener('input', showQuickSearches);
+els.input.addEventListener('input', () => { searchInputEditedSinceSubmit = true; });
 els.input.addEventListener('click', showQuickSearches);
 els.quickSearches?.parentElement.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing
@@ -3575,6 +3623,13 @@ async function restoreUrlState() {
             await loadActorCandidate({ id: personId }, actor, searchId, searchOptions, { historyMode: 'none' });
             return;
         }
+        await handleSearch({ historyMode: 'none' });
+        return;
+    }
+
+    const searchQuery = params.get('q')?.trim().slice(0, 100);
+    if (searchQuery && !params.has('id')) {
+        els.input.value = searchQuery;
         await handleSearch({ historyMode: 'none' });
         return;
     }

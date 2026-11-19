@@ -146,6 +146,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
         window.requestIdleCallback = undefined;
         window.cancelIdleCallback = undefined;
         if (new URL(location.href).searchParams.has('fallback')) window.IntersectionObserver = undefined;
+        // Read test modes at load: the page may rewrite its address (?q=) later.
+        window.__smoke.actorRetry = new URL(location.href).searchParams.has('actor-retry');
         window.fetch = async (rawUrl, options = {}) => {
             const url = new URL(rawUrl, location.href);
             window.__smoke.calls.push(url.pathname + url.search);
@@ -321,7 +323,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     });
                 }
                 if (url.searchParams.get('id') === '901') {
-                    if (new URL(location.href).searchParams.has('actor-retry')) {
+                    if (window.__smoke.actorRetry) {
                         window.__smoke.actorSelectionAttempts = (window.__smoke.actorSelectionAttempts || 0) + 1;
                         if (window.__smoke.actorSelectionAttempts === 1) return json({ error: 'temporary selected actor outage' }, 503);
                     }
@@ -731,6 +733,25 @@ async function runSearchAndFavoritesControlsFlow({ fallback = false } = {}) {
     await evaluate(`${trigger}.click(); document.querySelector('#favoriteList button').click()`);
     await assertSearchReady('Test Movie');
     assert.equal(await evaluate(open), false);
+
+    // A search that finds nothing records its own entry, so the favorite for
+    // the work it replaced still opens and Back returns to that work.
+    await evaluate(`(() => {
+        const input = document.querySelector('#searchInput');
+        input.value = 'No Reliable Match';
+        input.form.requestSubmit();
+    })()`);
+    await waitFor("!document.querySelector('#errorState').classList.contains('hidden')");
+    await waitFor("new URL(location.href).searchParams.get('q') === 'No Reliable Match'");
+    assert.equal(await evaluate("new URL(location.href).searchParams.has('id')"), false);
+    await evaluate(`${trigger}.click(); document.querySelector('#favoriteList button').click()`);
+    await assertSearchReady('Test Movie');
+    await waitFor("new URL(location.href).searchParams.get('id') === '100'");
+    await evaluate('history.back()');
+    await waitFor("new URL(location.href).searchParams.get('q') === 'No Reliable Match'");
+    await waitFor("!document.querySelector('#errorState').classList.contains('hidden')");
+    await evaluate('history.forward()');
+    await assertSearchReady('Test Movie');
     await waitFor("!document.querySelector('#favoriteToggle').disabled");
     await evaluate("document.querySelector('#favoriteToggle').click()");
     assert.equal(await evaluate("document.querySelector('#favoriteCount').hidden"), true);
@@ -1402,6 +1423,23 @@ async function runActorCandidateFlow() {
     assert.equal(await evaluate("window.__smoke.calls.some(call => call.startsWith('/api/tmdb/search'))"), false);
 }
 
+// A result that arrives while the visitor is typing a new query leaves the
+// focus in the search box.
+async function runTypingDuringSearchFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await search('Slow Movie');
+    await evaluate(`(() => {
+        const input = document.querySelector('#searchInput');
+        input.focus();
+        input.value = 'Slow Movie 2';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await assertSearchReady('Slow Movie');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#searchInput')"), true,
+        'a late result must not take focus from someone typing');
+}
+
 async function runDeepLinkFlow() {
     await command('Page.navigate', { url: `${baseUrl}?id=109&type=movie&title=Wrong%20Title` });
     await waitFor("window.__smoke?.detailCalls === 1");
@@ -2055,6 +2093,7 @@ async function runDetailRetryRecoveryIdentityFlow() {
 
 try {
     await runResourceKeyboardAndLongTitleFlow();
+    await runTypingDuringSearchFlow();
     await runCompleteResourceVisibilityFlow();
     await runUnscannedResourceStatusFlow();
     await runActorResponsivePosterFlow();

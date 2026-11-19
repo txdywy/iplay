@@ -214,7 +214,7 @@ All API endpoints return JSON. CORS headers echo an allowed request Origin and r
 - **Config:** `wrangler.toml`
   - `name = "iplay"`
   - `main = "worker/_worker.js"`
-  - `compatibility_date = "2024-04-23"`
+  - `compatibility_date = "2026-10-01"`
 - **Secrets:** Set via Cloudflare Dashboard or `npm run wrangler -- secret put`:
   - `TMDB_ACCESS_TOKEN` (v4 bearer, preferred)
   - `TMDB_API_KEY` (v3 query param, fallback)
@@ -284,7 +284,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
 - `/api/resource` returns available results during individual source outages and returns `502` when every source fails.
-- The optional `WPZY_COOKIE` secret supplies `bbs_token` and `bbs_sid` only to read-only HTTPS search and thread requests on the exact WPZY host. An internal SHA-256 login-state fingerprint scopes the v17 resource cache and in-flight requests. Each search selects up to six WPZY threads. Responses identify login failures, gated posts and maintenance pages so the frontend can retain available results and offer a retry.
+- The optional `WPZY_COOKIE` secret supplies `bbs_token` and `bbs_sid` only to read-only HTTPS search and thread requests on the exact WPZY host. An internal SHA-256 login-state fingerprint scopes the v19 resource cache and in-flight requests. Each search selects up to six WPZY threads. Responses identify login failures, gated posts and maintenance pages so the frontend can retain available results and offer a retry.
 
 ---
 

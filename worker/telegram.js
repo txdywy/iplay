@@ -77,9 +77,16 @@ export function getTelegramToken(env) {
  * the bot token so one Cloudflare secret configures the bot; an explicit
  * TELEGRAM_WEBHOOK_SECRET overrides it.
  */
+let warnedInvalidWebhookSecret = false;
+
 export async function getTelegramWebhookSecret(env) {
     const configured = typeof env?.TELEGRAM_WEBHOOK_SECRET === "string" ? env.TELEGRAM_WEBHOOK_SECRET.trim() : "";
     if (/^[A-Za-z0-9_-]{16,256}$/.test(configured)) return configured;
+    // A set but malformed value must not silently fall back unnoticed.
+    if (configured && !warnedInvalidWebhookSecret) {
+        warnedInvalidWebhookSecret = true;
+        logEvent("warn", "telegram_webhook_secret_invalid", { reason: "expected 16-256 letters, digits, _ or -; using the token-derived secret" });
+    }
     const token = getTelegramToken(env);
     if (!token) return "";
     const digest = await globalThis.crypto.subtle.digest("SHA-256", new globalThis.TextEncoder().encode(`iplay-telegram-webhook:${token}`));
@@ -124,6 +131,10 @@ export async function handleTelegramWebhook(request, env, ctx) {
         return jsonResponse({ error: "Invalid update" }, 400);
     }
 
+    // Telegram resends an update it believes failed. Skip one this isolate has
+    // already taken so the user does not get two replies or two scans.
+    if (isDuplicateUpdate(update?.update_id)) return jsonResponse({ ok: true, duplicate: true });
+
     // Answer Telegram at once: a slow reply makes it resend the update.
     const work = processTelegramUpdate(update, env, ctx).catch(error => {
         logEvent("error", "telegram_update_failed", { error: logErrorMessage(error) });
@@ -133,16 +144,42 @@ export async function handleTelegramWebhook(request, env, ctx) {
     return jsonResponse({ ok: true });
 }
 
+const SEEN_UPDATE_TTL_MS = 10 * 60 * 1000;
+const SEEN_UPDATE_LIMIT = 1000;
+const seenUpdates = new Map();
+
+function isDuplicateUpdate(updateId) {
+    if (!Number.isSafeInteger(updateId)) return false;
+    const now = Date.now();
+    for (const [id, seenAt] of seenUpdates) {
+        if (now - seenAt < SEEN_UPDATE_TTL_MS && seenUpdates.size <= SEEN_UPDATE_LIMIT) break;
+        seenUpdates.delete(id);
+    }
+    if (seenUpdates.has(updateId)) return true;
+    seenUpdates.set(updateId, now);
+    return false;
+}
+
+export function resetSeenTelegramUpdates() {
+    seenUpdates.clear();
+}
+
 /**
  * POST /telegram/setup registers the webhook and command menu.
  * Authenticate with a separate operator secret so the bot token stays server-side.
  */
+const MIN_SETUP_SECRET_LENGTH = 16;
+
 export async function handleTelegramSetup(request, env) {
     if (request.method !== "POST") return jsonResponse({ error: "Method Not Allowed" }, 405, { Allow: "POST" });
     const token = getTelegramToken(env);
     const adminSecret = typeof env?.TELEGRAM_SETUP_SECRET === "string" ? env.TELEGRAM_SETUP_SECRET.trim() : "";
     if (!token || !adminSecret || adminSecret === token) {
         return jsonResponse({ error: "Telegram setup is not configured" }, 503);
+    }
+    // The setup secret can repoint the webhook; refuse one short enough to guess.
+    if (adminSecret.length < MIN_SETUP_SECRET_LENGTH) {
+        return jsonResponse({ error: `TELEGRAM_SETUP_SECRET must be at least ${MIN_SETUP_SECRET_LENGTH} characters` }, 503);
     }
 
     const authorization = request.headers.get("Authorization") || "";
@@ -967,7 +1004,7 @@ function renderActorPage(chat, messageId, data, filter) {
             truncate(`${candidateLabel(credit)}${credit.character ? ` 饰 ${credit.character}` : ""}`, 60),
             "d", credit.mediaType, credit.id
         )]),
-        paginationRow(Math.min(page, totalPages), totalPages, next => callbackData("a", person.id, next * ACTOR_PAGE_SIZE, filter)),
+        paginationRow(Math.max(0, Math.min(page, totalPages - 1)), totalPages, next => callbackData("a", person.id, next * ACTOR_PAGE_SIZE, filter)),
         [filterButton("全部", ""), filterButton("电影", "movie"), filterButton("剧集", "tv")]
     ]);
     return messageId ? chat.edit(messageId, text, markup) : chat.send(text, markup);

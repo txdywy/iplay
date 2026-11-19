@@ -14,6 +14,7 @@
   --color-cinema-500: oklch(63% 0.015 62);
   --color-cinema-400: oklch(72% 0.017 65);
   --color-cinema-300: oklch(83% 0.015 67);
+  --color-cinema-200: oklch(90% 0.014 70);
   --color-cinema-100: oklch(96% 0.012 73);
 
   --color-accent-red: oklch(72% 0.15 35);
@@ -1329,6 +1330,14 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   }
   .work-main { grid-area: main; }
   .score-panel { grid-area: side; position: sticky; top: calc(var(--header-height, 4.5rem) + 1.5rem); }
+  /* With the preference form open the panel can outgrow the screen; scroll it
+     rather than leave its save button below the fold. */
+  .score-panel {
+    max-height: calc(100dvh - var(--header-height, 4.5rem) - 3rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
   .score-summary { flex-direction: column; align-items: flex-start; gap: 1rem; }
   .score-summary > .min-w-0 { width: 100%; }
   .score-ring { width: 7.5rem; }

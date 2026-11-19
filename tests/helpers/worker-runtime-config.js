@@ -10,7 +10,8 @@ export function loadProductionRuntimeConfig(configPath) {
     const ratelimits = Object.fromEntries(config.ratelimits.map(binding => [binding.name, binding]));
     for (const [name, namespace, limit] of [
         ['API_RATE_LIMITER', '1001', 60],
-        ['RESOURCE_RATE_LIMITER', '1002', 10]
+        ['RESOURCE_RATE_LIMITER', '1002', 10],
+        ['QUARK_STATUS_RATE_LIMITER', '1003', 30]
     ]) {
         const binding = ratelimits[name];
         assert.ok(binding, `Production configuration is missing ${name}`);

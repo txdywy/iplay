@@ -6,6 +6,7 @@ import { RELEASE_VERSION } from '../js/release.js';
 import {
     checkRateLimit,
     errorResponse,
+    rateLimitClientKey,
     forEachWithConcurrency,
     getErrorStatus,
     isObject,
@@ -129,7 +130,7 @@ export default {
 
         const url = new URL(request.url);
         const path = url.pathname.replace(/\/+$/, "") || url.pathname;
-        const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
+        const clientIp = rateLimitClientKey(request.headers.get("cf-connecting-ip"));
         try {
             const rateLimitDecision = await checkRateLimit(clientIp, path, env);
             if (rateLimitDecision === null) {

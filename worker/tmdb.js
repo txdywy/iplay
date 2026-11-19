@@ -376,7 +376,9 @@ async function fetchTmdbJsonUncoalesced(path, params, env, ctx, options = {}) {
             status: response.status,
             headers: {
                 "Content-Type": "application/json;charset=UTF-8",
-                "Cache-Control": "public, max-age=86400"
+                // An empty search may be a title TMDB has not indexed yet:
+                // keep that answer for an hour rather than a day.
+                "Cache-Control": `public, max-age=${Array.isArray(data?.results) && data.results.length === 0 ? 3600 : 86400}`
             }
         });
         scheduleCachePut(ctx, cacheKey, cacheResponse);

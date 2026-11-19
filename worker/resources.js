@@ -310,6 +310,15 @@ function collectQuarkEntries(text, maxEntries = Number.POSITIVE_INFINITY, tracke
         if (!isValidQuarkPassword(match[1])) continue;
 
         const passwordIndex = match.index;
+        // "解压密码" and similar label an archive, account or unzip code, not
+        // the share's passcode.
+        if (/(?:解压|压缩包?|解码|登录|登陆|会员|账号|帐号|开箱|rar|zip|7z)\s*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 8), passwordIndex))) {
+            continue;
+        }
+        // "www" in "密码：www.site.com" is the start of a domain, not a code.
+        if (/^\.[a-z0-9]/i.test(normalizedText.slice(passwordIndex + match[0].length, passwordIndex + match[0].length + 2))) {
+            continue;
+        }
         if (/(?:百度(?:网盘)?|迅雷|阿里(?:云盘|网盘)?|天翼(?:云盘)?|UC(?:网盘)?|115(?:网盘)?|123(?:云盘)?)(?=[\s:：()（）【】\x5B\x5D，、,]|$)[\s:：()（）【】\x5B\x5D，、,]*$/i.test(normalizedText.slice(Math.max(0, passwordIndex - 24), passwordIndex))) {
             continue;
         }
@@ -583,7 +592,10 @@ function parseWpzysResources(html, query, releaseYear = "", mediaType = null, ma
     const resources = [];
     let hasResultItems = false;
     const seenUrls = new Set();
-    const itemPattern = /<li\b[^<>]*\bdata-href=["']([^"'<>]*thread-\d+\.htm[^"'<>]*)["'][^<>]*>/gi;
+    // Capture the attribute in one bounded run and check for a thread link
+    // afterwards: two unbounded runs around "thread-N.htm" backtrack
+    // super-linearly on an unterminated attribute.
+    const itemPattern = /<li\b[^<>]{0,512}?\bdata-href=["']([^"'<>]{1,2048})["'][^<>]*>/gi;
     const itemEndPattern = /<\/li\s*>/gi;
     let match;
 
@@ -605,7 +617,8 @@ function parseWpzysResources(html, query, releaseYear = "", mediaType = null, ma
 
         const threadPath = rawUrl.replace(/^\.\//, "").replace(/^\/+/, "").split("#")[0];
         const titlePattern = new RegExp(`<a\\b[^<>]*\\bhref=["'](?:\\./|/)?${threadPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^<>]*>`, "i");
-        const titleMatch = titlePattern.exec(block) || /<a\b[^<>]*\bhref=["'][^"'<>]*thread-\d+\.htm[^"'<>]*["'][^<>]*>/i.exec(block);
+        const titleMatch = titlePattern.exec(block)
+            || [...block.matchAll(/<a\b[^<>]{0,512}?\bhref=["']([^"'<>]{1,2048})["'][^<>]*>/gi)].find(link => /thread-\d+\.htm/.test(link[1]));
         const titleEndPattern = /<\/a\s*>/gi;
         titleEndPattern.lastIndex = titleMatch ? titleMatch.index + titleMatch[0].length : block.length;
         const titleEnd = titleEndPattern.exec(block);
@@ -1026,7 +1039,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
     let cacheKey = keyForGeneration(generation);
     let cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) {
-        const latestGeneration = sessionState ? await sessionState() : generation;
+        // The generation was read moments ago; if coordination drops out in
+        // between, that reading still stands and the cached answer is served.
+        const latestGeneration = sessionState ? await sessionState().catch(() => generation) : generation;
         if (latestGeneration === generation) return cached;
         if (!cacheOnly) return handleResourceSearchUncoalesced(query, ctx, {
             refresh: true, wpzySession, identity, env, sessionState, generation: latestGeneration
@@ -1162,7 +1177,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         result.resourceMeta.cacheExpiresAt = now + maxAge * 1000;
         return cacheJson(ctx, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
-        if (refresh && cached && (!sessionState || generation === await sessionState())) return withStaleMarker(cached);
+        if (refresh && cached && (!sessionState || generation === await sessionState().catch(() => generation))) return withStaleMarker(cached);
         return errorResponse(e);
     }
 }

@@ -1128,7 +1128,7 @@ test('TMDB detail does not retry another media type after upstream rate limiting
         { waitUntil() {} }
     );
 
-    assert.equal(response.status, 429);
+    assert.equal(response.status, 503);
     assert.equal(fetchCalls, 1);
 });
 

@@ -59,6 +59,20 @@ test('resource search pairs each following password with its own link, not the n
     ]);
 });
 
+test('archive and account passwords are not taken as the share passcode', async t => {
+    assert.deepEqual(await searchQuarkPages(t, [
+        '<p>链接：https://pan.quark.cn/s/abc123def<br>解压密码：123456</p>'
+        + '<p>链接：https://pan.quark.cn/s/def456ghi 提取码：8k2d 解压密码：www.site.com</p>'
+        + '<p>链接：https://pan.quark.cn/s/ghi789jkl 压缩包密码：9999 提取码：x7Yz</p>'
+        + '<p>链接：https://pan.quark.cn/s/jkl012mno 密码：www.example.org</p>'
+    ]), [
+        { url: 'https://pan.quark.cn/s/abc123def' },
+        { url: 'https://pan.quark.cn/s/def456ghi', password: '8k2d' },
+        { url: 'https://pan.quark.cn/s/ghi789jkl', password: 'x7Yz' },
+        { url: 'https://pan.quark.cn/s/jkl012mno' }
+    ]);
+});
+
 test('near-limit pages retain late shares and their leading passwords after many foreign URLs', async t => {
     assert.deepEqual(await searchQuarkPages(t, [
         'https://x '.repeat(200000)

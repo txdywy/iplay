@@ -28,7 +28,7 @@ iPlay 采用前端静态托管 + Cloudflare Worker 边缘代理的部署方式�
    - `WPZY_COOKIE`（可选；wpzy.org 专用只读账号的登录 Cookie，配置前确认站点允许此用途）
    - `CORS_ALLOWED_ORIGINS`（可选；额外允许的前端 Origin，以英文逗号分隔）
    - `ENVIRONMENT=production`（必填；缺少生产限流 binding 时让 Worker fail closed）
-5. 到 **Settings → Bindings** 配置两个 Rate Limiting bindings，名称必须分别为 `API_RATE_LIMITER` 和 `RESOURCE_RATE_LIMITER`，并与 `wrangler.toml` 中的 namespace ID 保持一致。
+5. 到 **Settings → Bindings** 配置两个 Rate Limiting bindings，名称分别为 `API_RATE_LIMITER`、`RESOURCE_RATE_LIMITER` 和 `QUARK_STATUS_RATE_LIMITER`，并与 `wrangler.toml` 中的 namespace ID 保持一致（第三个缺失时夸克有效性检查会共用资源扫描的额度）。
 6. 保存运行时配置。
 7. 如需与 `wrangler.toml` 保持一致，在 **Triggers** 中添加 `0 */6 * * *` Cron Trigger；它只用于缓存预热，不影响普通请求。
 
@@ -57,7 +57,7 @@ TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `E
 
 手动回退使用本机 Wrangler OAuth，不把 Cloudflare API Token 放入仓库或 GitHub Actions。`deploy:worker:dry-run` 会在上传前验证 Worker 配置；`deploy:worker` 使用固定版本的 Wrangler 和 `--keep-vars` 发布，并保留 Cloudflare Dashboard 中已有的变量和密钥。
 
-仓库锁定 Wrangler 4.155.0 与匹配的 Miniflare；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
+仓库通过 `package-lock.json` 锁定 Wrangler 与用于运行时测试的 Miniflare 版本；需要 Node.js >= 22.13.0，请使用 `npm ci` 重现发布依赖。可观测性配置采样 10% 日志和 1% 追踪，并通过 `redact_query_string=true` 隐藏 URL 查询参数；应用日志也会遮盖常见凭据参数。配置说明见 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/wrangler/configuration/#observability)。
 
 `wrangler.toml` 已声明 `ENVIRONMENT=production`，缺少分布式限流 binding 时拒绝请求；部署时保留两个 Rate Limiting bindings，不能依赖仅本地生效的隔离实例计数器。CI 的 Node 22 作业也会检查生产 Worker 打包。
 
@@ -75,7 +75,7 @@ TMDB 两种凭据选择一种即可。生产环境请在部署配置中设置 `E
 ```toml
 name = "iplay"
 main = "worker/_worker.js"
-compatibility_date = "2024-04-23"
+compatibility_date = "2026-10-01"
 ```
 
 ---
