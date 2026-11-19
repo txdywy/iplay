@@ -37,7 +37,7 @@ iPlay 的 Telegram bot 运行在同一个 Cloudflare Worker 里，提供和网�
 
 ### 3. 注册 webhook
 
-生成独立的高强度管理密钥（例如使用 `openssl rand -hex 32`），通过 `npm run wrangler -- secret put TELEGRAM_SETUP_SECRET` 配置为 Worker Secret。将同一密钥载入本地环境变量 `TELEGRAM_SETUP_SECRET`，然后执行：
+生成独立的高强度管理密钥（至少 16 位，推荐使用 `openssl rand -hex 32`），通过 `npm run wrangler -- secret put TELEGRAM_SETUP_SECRET` 配置为 Worker Secret。将同一密钥载入本地环境变量 `TELEGRAM_SETUP_SECRET`，然后执行：
 
 ```sh
 printf 'Authorization: Bearer %s\n' "$TELEGRAM_SETUP_SECRET" |
@@ -66,7 +66,7 @@ printf 'Authorization: Bearer %s\n' "$TELEGRAM_SETUP_SECRET" |
 |------|------|------|
 | `TELEGRAM_BOT_TOKEN` | 启用 bot 时必需 | BotFather 提供的 token。未配置时 `/telegram/*` 路由返回 `404` / `503`，网页功能不受影响 |
 | `TELEGRAM_ALLOWED_USERS` | 可选 | 逗号分隔的用户 ID 白名单；为空时公开使用 |
-| `TELEGRAM_SETUP_SECRET` | 注册时必需 | 独立管理密钥，用于注册 webhook |
+| `TELEGRAM_SETUP_SECRET` | 注册时必需 | 独立管理密钥（至少 16 位，不能与 token 相同），用于注册 webhook |
 | `TELEGRAM_WEBHOOK_SECRET` | 可选 | 自定义 webhook 校验密钥（16–256 位字母、数字、`_`、`-`）。默认由 token 派生，修改后需重新执行第 3 步 |
 
 ## 路由
@@ -82,13 +82,17 @@ printf 'Authorization: Bearer %s\n' "$TELEGRAM_SETUP_SECRET" |
 - 日志会把 Telegram API 路径中的 token 替换为 `[REDACTED]`；Worker 的可观测性配置也会隐藏查询字符串。
 - 所有消息使用 HTML 格式并转义标题、简介等外部文本；链接只输出 `http(s)` 地址。
 - 资源扫描结果来自公开论坛，bot 只展示链接，不下载或转存文件。
+- Telegram 重发的同一条更新（相同 `update_id`）在同一实例内只处理一次，避免重复回复或重复扫描。
 
 ## 排查
 
 | 现象 | 处理 |
 |------|------|
-| setup 返回 `TELEGRAM_BOT_TOKEN is not configured` | Secret 名称或值有误，或配置后尚未 Deploy |
-| setup 返回 `401` | URL 中的 token 与 Secret 不一致 |
-| bot 不回复 | 重新打开 setup 地址，查看返回的 `webhook` 与 `pendingUpdates`；在 Cloudflare Workers 日志中搜索 `telegram_` 事件 |
+| setup 返回 `503` `Telegram setup is not configured` | `TELEGRAM_BOT_TOKEN` 或 `TELEGRAM_SETUP_SECRET` 未配置、配置后尚未 Deploy，或两者填成了同一个值 |
+| setup 返回 `503` `TELEGRAM_SETUP_SECRET must be at least 16 characters` | 管理密钥太短，用 `openssl rand -hex 32` 重新生成并更新 Secret |
+| setup 返回 `401` | `Authorization: Bearer …` 中的密钥与 Worker 的 `TELEGRAM_SETUP_SECRET` 不一致（不要把 bot token 放进 URL 或请求头） |
+| setup 返回 `405` | 必须用 `POST`，在浏览器地址栏打开不会生效 |
+| bot 不回复 | 按第 3 步重新执行 setup 命令，查看返回的 `webhook` 与 `pendingUpdates`；在 Cloudflare Workers 日志中搜索 `telegram_` 事件 |
+| 日志出现 `telegram_webhook_secret_invalid` | `TELEGRAM_WEBHOOK_SECRET` 格式不符（需 16–256 位字母、数字、`_`、`-`），当前使用由 token 派生的密钥；修正后重新执行 setup |
 | 回复“仅对授权用户开放” | 把回复中的用户 ID 加入 `TELEGRAM_ALLOWED_USERS` |
 | 回复“操作太频繁” | 每分钟最多 10 次资源扫描，稍后再试 |

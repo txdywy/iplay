@@ -246,7 +246,9 @@ try {
     checks.push('native-quark-status-and-redirect-handling');
 
     const gateway = await request('/api/tmdb/search?q=Runtime%20Gateway', 'runtime-tmdb-gateway');
-    assert.equal(gateway.status, 429);
+    // TMDB throttling the Worker reaches the visitor as an outage, not as their own limit.
+    assert.equal(gateway.status, 503);
+    assert.equal(gateway.headers.get('retry-after'), '60');
     assert.equal(gateway.headers.get('cache-control'), 'no-store');
     await gateway.json();
     assert.equal(gatewayRequests, 1, 'HTML rate-limit responses must stop the native fallback chain');

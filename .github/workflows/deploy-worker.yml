@@ -19,9 +19,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    # Cloudflare credentials are given only to the steps that need them, not
+    # to dependency install scripts or the test suite.
 
     steps:
       - name: Check out repository
@@ -38,6 +37,9 @@ jobs:
 
       - name: Verify Cloudflare credentials
         shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
             echo "::error::Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub Actions secrets before deploying."
@@ -45,6 +47,9 @@ jobs:
           fi
 
       - name: Validate Worker upload
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npm run wrangler -- deploy --dry-run --strict
 
       - name: Test, lint, and build before deployment
@@ -54,4 +59,7 @@ jobs:
         run: npm run test:runtime
 
       - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npm run wrangler -- deploy --strict --keep-vars --message "GitHub Actions ${GITHUB_SHA}"

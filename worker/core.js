@@ -93,13 +93,21 @@ export function createHttpError(message, status = 500, publicMessage = message) 
 
 // Upstream credential statuses describe the Worker's own requests, not the
 // visitor's: a revoked TMDB key must not reach the browser as its own 401/403.
-function toClientErrorStatus(status) {
-    return status === 401 || status === 403 || status === 407 ? 502 : status;
+// Likewise a provider's 429 is its throttle on the Worker, not this site's
+// rate limit on the visitor, and its 5xx is a bad gateway from here. Only a
+// status carried on the error (a provider's or one set deliberately) is
+// remapped; an unexpected exception stays a 500.
+export function toClientErrorStatus(status) {
+    if (status === 401 || status === 403 || status === 407) return 502;
+    if (status === 429) return 503;
+    if (status >= 500 && ![502, 503, 504].includes(status)) return 502;
+    return status;
 }
 
 export function errorResponse(error, fallbackStatus = 502) {
+    const hasStatus = Number.isInteger(error?.status);
     const upstreamStatus = getErrorStatus(error, fallbackStatus);
-    const status = toClientErrorStatus(upstreamStatus);
+    const status = hasStatus ? toClientErrorStatus(upstreamStatus) : upstreamStatus;
     const publicMessage = error && typeof error === "object" ? publicHttpErrors.get(error) : null;
     return jsonResponse({ error: publicMessage || (status === 504
         ? "Upstream request timed out"
@@ -298,6 +306,21 @@ export function isObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// One IPv6 subscriber usually holds a whole /64, so counting each address
+// would let a client rotate its way past the limit. Key IPv6 on its /64.
+export function rateLimitClientKey(ip) {
+    const value = typeof ip === "string" ? ip.trim().toLowerCase() : "";
+    if (!value.includes(":")) return value || "unknown";
+    const [head, tail = ""] = value.split("::");
+    const headParts = head ? head.split(":") : [];
+    const tailParts = tail ? tail.split(":") : [];
+    // An embedded IPv4 tail occupies the last 32 bits, after the /64.
+    const missing = value.includes("::") ? Math.max(0, 8 - headParts.length - tailParts.length) : 0;
+    const groups = [...headParts, ...Array(missing).fill("0"), ...tailParts];
+    if (groups.length < 4 || groups.slice(0, 4).some(group => !/^[0-9a-f]{1,4}$/.test(group))) return value;
+    return `${groups.slice(0, 4).map(group => group.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
 const _rateLimitMap = new Map();
 
 const RATE_LIMIT = 60;
@@ -339,7 +362,11 @@ export async function checkRateLimit(ip, path, env) {
     const isQuarkStatus = path === "/api/resource/quark-status";
     const useResourceLimiter = isResourceRoute || isQuarkStatus;
     const routeKey = isQuarkStatus ? "quark-status" : isResourceRoute ? "resource" : "api";
-    const binding = useResourceLimiter ? env?.RESOURCE_RATE_LIMITER : env?.API_RATE_LIMITER;
+    // Quark checks have their own binding; until it is deployed they share
+    // the resource budget rather than failing closed.
+    const binding = isQuarkStatus
+        ? env?.QUARK_STATUS_RATE_LIMITER || env?.RESOURCE_RATE_LIMITER
+        : useResourceLimiter ? env?.RESOURCE_RATE_LIMITER : env?.API_RATE_LIMITER;
 
     if (binding) {
         if (typeof binding.limit !== "function") {
@@ -366,7 +393,7 @@ export async function checkRateLimit(ip, path, env) {
         return null;
     }
 
-    return checkLocalRateLimit(`${routeKey}:${ip}`, useResourceLimiter ? 10 : RATE_LIMIT);
+    return checkLocalRateLimit(`${routeKey}:${ip}`, isQuarkStatus ? 30 : useResourceLimiter ? 10 : RATE_LIMIT);
 }
 
 export async function forEachWithConcurrency(items, concurrency, task) {

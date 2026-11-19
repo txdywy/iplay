@@ -189,7 +189,7 @@ export async function handleDoubanDetail(id, ctx) {
             logEvent("warn", "douban_detail_rejected", { id, status: res.status });
             await releaseUpstreamResponse(res);
             if (res.status === 403 || res.status === 429) return markDoubanBlocked(ctx, `status_${res.status}`);
-            return jsonResponse({ error: `Douban rejected with status ${res.status}` }, res.status);
+            return errorResponse(createHttpError(`Douban rejected with status ${res.status}`, res.status, "Douban unavailable"));
         }
 
         const result = {

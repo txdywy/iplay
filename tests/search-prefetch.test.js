@@ -135,6 +135,7 @@ test('an upstream that asks to stop gets no follow-up lookup', async t => {
 
     const { response } = await search('Rate Limited Title');
 
-    assert.equal(response.status, 429);
+    // TMDB throttling the Worker is an outage for the visitor, not their own rate limit.
+    assert.equal(response.status, 503);
     assert.deepEqual(paths(calls), ['/3/search/multi']);
 });

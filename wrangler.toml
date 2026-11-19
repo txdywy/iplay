@@ -39,6 +39,16 @@ namespace_id = "1002"
 limit = 10
 period = 60
 
+# Quark share checks come in batches of 12, so one long result list needs
+# several requests; they get their own, larger budget.
+[[ratelimits]]
+name = "QUARK_STATUS_RATE_LIMITER"
+namespace_id = "1003"
+
+[ratelimits.simple]
+limit = 30
+period = 60
+
 [triggers]
 crons = ["0 */6 * * *"]
 
@@ -78,4 +88,12 @@ namespace_id = "1102"
 
 [previews.ratelimits.simple]
 limit = 10
+period = 60
+
+[[previews.ratelimits]]
+name = "QUARK_STATUS_RATE_LIMITER"
+namespace_id = "1103"
+
+[previews.ratelimits.simple]
+limit = 30
 period = 60

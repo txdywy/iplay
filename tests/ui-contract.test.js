@@ -71,3 +71,20 @@ test('result enrichment keeps the critical path independent from resource scanni
     assert.doesNotMatch(enrichmentBlock, /loadResources\(/);
     assert.doesNotMatch(mainJs, /document\.createElement\('i'\)/);
 });
+
+test('the CSP lets the page reach the Worker that js/api.js calls', async () => {
+    const api = await readFile(new URL('../js/api.js', import.meta.url), 'utf8');
+    const production = /const API_BASE = [^;]*?:\s*'(https:\/\/[^']+)'/s.exec(api)?.[1];
+    assert.ok(production, 'js/api.js must name a production Worker origin');
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(indexHtml)?.[1] || '';
+    const connectSrc = /(?:^|;)\s*connect-src ([^;]+)/.exec(csp)?.[1].split(/\s+/) || [];
+    assert.ok(connectSrc.includes(new URL(production).origin), `connect-src must allow ${production}`);
+});
+
+test('the page requests every font weight the stylesheet uses', async () => {
+    const css = await readFile(new URL('../css/input.css', import.meta.url), 'utf8');
+    const used = [...css.matchAll(/font-weight:\s*(\d{3})/g)].map(match => Number(match[1]));
+    const [, min, max] = /Instrument\+Sans:wght@(\d{3})\.\.(\d{3})/.exec(indexHtml) || [];
+    assert.ok(min && max);
+    for (const weight of used) assert.ok(weight >= Number(min) && weight <= Number(max), `weight ${weight} is not loaded`);
+});

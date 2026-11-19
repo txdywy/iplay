@@ -1,3 +1,5 @@
+import { createHttpError } from './core.js';
+
 // One object per credential fingerprint coordinates cache keys across edge
 // locations. The cache itself remains in the Worker Cache API.
 export class WpzyCacheSession {
@@ -19,12 +21,20 @@ export class WpzyCacheSession {
 
 export function getWpzyCacheSession(binding, fingerprint) {
     const stub = binding.getByName(fingerprint);
+    // A coordination outage is a temporary 503 for the visitor, not a 500.
     return async (generation, revoked) => {
-        const response = await stub.fetch('https://wpzy-cache.internal/', generation === undefined ? undefined : {
-            method: 'POST',
-            body: JSON.stringify({ generation, revoked: Number(revoked) })
-        });
-        if (!response.ok) throw new Error('WPZY cache coordination unavailable');
-        return response.json();
+        let response;
+        try {
+            response = await stub.fetch('https://wpzy-cache.internal/', generation === undefined ? undefined : {
+                method: 'POST',
+                body: JSON.stringify({ generation, revoked: Number(revoked) })
+            });
+        } catch {
+            throw createHttpError('WPZY cache coordination unavailable', 503);
+        }
+        if (!response.ok) throw createHttpError('WPZY cache coordination unavailable', 503);
+        const value = await response.json().catch(() => null);
+        if (!Number.isInteger(value)) throw createHttpError('WPZY cache coordination unavailable', 503);
+        return value;
     };
 }

@@ -17,9 +17,11 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `CORS_ALLOWED_ORIGINS` | Optional | — | Comma-separated additional frontend origins. At most 20 configured values are read. |
 | `ENVIRONMENT` | Production required | — | Set to `production` in the deployed Worker. When production rate-limit bindings are missing, requests fail closed with `503` instead of using an isolate-local counter. |
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
+| `WPZY_COOKIE` | Optional | — | Login cookie (`bbs_token`, `bbs_sid`) of a dedicated read-only wpzy.org account, sent only to WPZY search and thread pages. Requires the `WPZY_CACHE_SESSION` Durable Object binding in production. |
+| `CRON_REFRESH_TITLES` | Optional | — | Comma-separated titles whose resource scans the scheduled trigger refreshes. The refresh warms the cache of the data centre the trigger runs in. |
 | `TELEGRAM_BOT_TOKEN` | Optional | — | Enables the Telegram bot. See [TELEGRAM.md](TELEGRAM.md) for setup. |
 | `TELEGRAM_ALLOWED_USERS` | Optional | — | Comma-separated Telegram user IDs allowed to use the bot. Empty means public, rate-limited per user. |
-| `TELEGRAM_SETUP_SECRET` | Required for setup | — | Independent bearer secret for registering the Telegram webhook. |
+| `TELEGRAM_SETUP_SECRET` | Required for setup | — | Independent bearer secret (at least 16 characters, different from the bot token) for registering the Telegram webhook. |
 | `TELEGRAM_WEBHOOK_SECRET` | Optional | Derived from the token | Overrides the webhook secret Telegram must send. Re-run `/telegram/setup` after changing it. |
 
 ### Setting Secrets via Wrangler CLI
@@ -72,7 +74,7 @@ The Worker is configured via `wrangler.toml` in the project root.
 ```toml
 name = "iplay"
 main = "worker/_worker.js"
-compatibility_date = "2024-04-23"
+compatibility_date = "2026-10-01"
 
 [[ratelimits]]
 name = "API_RATE_LIMITER"
@@ -89,15 +91,26 @@ namespace_id = "1002"
 [ratelimits.simple]
 limit = 10
 period = 60
+
+[[ratelimits]]
+name = "QUARK_STATUS_RATE_LIMITER"
+namespace_id = "1003"
+
+[ratelimits.simple]
+limit = 30
+period = 60
 ```
 
 | Field | Value | Description |
 |-------|-------|-------------|
 | `name` | `iplay` | The name of the Worker as it appears in the Cloudflare Dashboard. |
 | `main` | `worker/_worker.js` | Entry point for the Worker script. |
-| `compatibility_date` | `2024-04-23` | Cloudflare Workers runtime compatibility date. Determines which runtime APIs are available. |
+| `compatibility_date` | `2026-10-01` | Cloudflare Workers runtime compatibility date. Determines which runtime APIs are available. |
 | `API_RATE_LIMITER` | `60 / 60s` | Cloudflare Rate Limiting binding for ordinary API routes. The namespace ID is `1001`. |
 | `RESOURCE_RATE_LIMITER` | `10 / 60s` | Cloudflare Rate Limiting binding for `/api/resource`, whose upstream fan-out is more expensive. The namespace ID is `1002`. |
+| `QUARK_STATUS_RATE_LIMITER` | `30 / 60s` | Rate Limiting binding for `/api/resource/quark-status`, which a long result list calls in batches of 12. The namespace ID is `1003`; without it the route shares `RESOURCE_RATE_LIMITER`. |
+
+Limits are counted per client IPv4 address, and per /64 prefix for IPv6 clients, which usually hold a whole /64.
 
 The Worker calls the Cloudflare Rate Limiting bindings when they are available. A process-local limiter remains only as a development/test fallback when bindings are absent. Set `ENVIRONMENT=production` for deployed Workers; if a production binding is malformed or unavailable, requests fail closed with `503` instead of silently falling back to a per-isolate counter. The fallback is not a substitute for the account-wide production counters.
 
@@ -135,7 +148,8 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
        : 'https://iplayw.hackx64.eu.org';
    ```
 3. Replace the URL with your deployed Worker URL (e.g., `https://your-worker.your-subdomain.workers.dev`).
-4. Save the file and run `npm run build` so the generated JavaScript bundle includes the new URL.
+4. Add the same origin to `connect-src` in the Content-Security-Policy `<meta>` tag of `index.html`; otherwise the browser blocks every API call. `tests/ui-contract.test.js` checks that the two match.
+5. Save the files and run `npm run build` so the generated JavaScript bundle includes the new URL.
 
 > **Important:** The Worker allows `https://iplay.hackx64.eu.org`, local Wrangler origins, and `http://localhost:8080` / `http://127.0.0.1:8080` by default. Add other static-host origins through `CORS_ALLOWED_ORIGINS`; responses vary on `Origin` rather than using a wildcard.
 

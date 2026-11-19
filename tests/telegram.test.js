@@ -90,12 +90,15 @@ async function deliver(update, env = ENV, secretOverride = null) {
     return response;
 }
 
+// Each delivery is a new update: the webhook drops a repeated update_id.
+let nextUpdateId = 1000;
+
 function textMessage(text, { userId = 42, chatType = 'private' } = {}) {
-    return { update_id: 1, message: { message_id: 1, text, chat: { id: userId, type: chatType }, from: { id: userId } } };
+    return { update_id: nextUpdateId++, message: { message_id: 1, text, chat: { id: userId, type: chatType }, from: { id: userId } } };
 }
 
 function callback(data, { userId = 42, message = { message_id: 7, caption: 'detail' } } = {}) {
-    return { update_id: 2, callback_query: { id: 'cb1', data, from: { id: userId }, message: { chat: { id: userId, type: 'private' }, ...message } } };
+    return { update_id: nextUpdateId++, callback_query: { id: 'cb1', data, from: { id: userId }, message: { chat: { id: userId, type: 'private' }, ...message } } };
 }
 
 function allCallbackData(markup) {
@@ -362,9 +365,9 @@ test('internal and Telegram errors are not shown to users', async t => {
 
 test('non-text private messages get a hint and bots are ignored', async t => {
     const { sent } = setup(t);
-    await deliver({ update_id: 5, message: { message_id: 3, photo: [{}], chat: { id: 42, type: 'private' }, from: { id: 42 } } });
+    await deliver({ update_id: nextUpdateId++, message: { message_id: 3, photo: [{}], chat: { id: 42, type: 'private' }, from: { id: 42 } } });
     assert.match(sent()[0].body.text, /请发送文字/);
-    await deliver({ update_id: 6, message: { message_id: 4, text: '繁花', chat: { id: 42, type: 'private' }, from: { id: 99, is_bot: true } } });
+    await deliver({ update_id: nextUpdateId++, message: { message_id: 4, text: '繁花', chat: { id: 42, type: 'private' }, from: { id: 99, is_bot: true } } });
     assert.equal(sent().length, 1);
 });
 
@@ -420,4 +423,32 @@ test('resource pagination on a cold cache offers a rescan without contacting pro
         assert.deepEqual(allCallbackData(page.body.reply_markup), ['rf|tv|106841']);
     }
     assert.equal(providerCalls, 0);
+});
+
+test('a redelivered update is answered once', async t => {
+    const { telegram } = setup(t);
+    const update = textMessage('/help');
+    await deliver(update);
+    const sent = telegram.length;
+    assert.ok(sent > 0);
+    const again = await deliver(update);
+    assert.equal(again.status, 200);
+    assert.equal(telegram.length, sent, 'a repeated update_id must not reply twice');
+});
+
+test('setup refuses a guessable operator secret', async t => {
+    setup(t);
+    const response = await worker.fetch(new Request('https://worker.test/telegram/setup', {
+        method: 'POST', headers: { Authorization: 'Bearer admin', 'cf-connecting-ip': 'setup-weak' }
+    }), { ...ENV, TELEGRAM_SETUP_SECRET: 'admin' }, { waitUntil() {} });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /at least 16 characters/);
+});
+
+test('callback queries from users outside the allow list are refused', async t => {
+    const { telegram } = setup(t);
+    await deliver(callback('d|movie|1'), { ...ENV, TELEGRAM_ALLOWED_USERS: '7' });
+    const methods = telegram.map(call => call.method);
+    assert.ok(methods.includes('answerCallbackQuery'));
+    assert.ok(!methods.includes('sendPhoto') && !methods.includes('editMessageText'), 'no detail is shown to a blocked user');
 });
