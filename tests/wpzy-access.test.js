@@ -7,7 +7,7 @@ const LOGIN_COOKIE = 'bbs_token=test-session-a; bbs_sid=test-sid';
 const title = '流浪地球';
 const thread = (id, extra = '') => `<li class="media thread tap" data-href="thread-${id}.htm"><a href="thread-${id}.htm"><span class="text-danger">流浪地球</span> 夸克 ${extra}</a><a href="forum-9-1.htm?tagids=1">夸克</a></li>`;
 
-function setup(t, upstream, { by669, zuidouyin } = {}) {
+function setup(t, upstream, { by669, zuidouyin, session } = {}) {
     const originalFetch = globalThis.fetch;
     const originalCaches = globalThis.caches;
     const requests = [];
@@ -31,7 +31,7 @@ function setup(t, upstream, { by669, zuidouyin } = {}) {
     async function search(cookie = LOGIN_COOKIE, { refresh = false, cacheOnly = false, query = title, identity = '' } = {}) {
         const response = await worker.fetch(new Request(`https://worker.test/api/resource${cacheOnly ? '/cache' : ''}?q=${encodeURIComponent(query)}${identity}${refresh ? '&refresh=1' : ''}`, {
             headers: { 'cf-connecting-ip': t.name, Cookie: 'bbs_token=untrusted-client-cookie' }
-        }), cookie ? { WPZY_COOKIE: cookie } : {}, ctx);
+        }), cookie ? { WPZY_COOKIE: cookie, WPZY_CACHE_SESSION: session } : {}, ctx);
         const body = await response.json();
         await Promise.all(writes.splice(0));
         return { response, body };
@@ -374,4 +374,29 @@ test('resource failure logs redact WPZY login cookie fragments', async t => {
     assert.ok(logs.length > 0);
     assert.ok(logs.every(log => !log.includes('private-token') && !log.includes('private-sid')));
     assert.ok(logs.some(log => log.includes('[REDACTED]')));
+});
+
+
+test('a coordinator outage cannot authorize cached shares after a known WPZY login failure', async t => {
+    let expired = false;
+    let failAfterRead = false;
+    let calls = 0;
+    const session = { getByName: () => ({ async fetch() {
+        if (failAfterRead && ++calls > 1) throw new Error('coordination reset');
+        return Response.json(0);
+    } }) };
+    const { search } = setup(t, url => expired
+        ? new Response(null, { status: 302, headers: { Location: 'user-login.htm' } })
+        : new Response(url.pathname === '/search.htm' ? thread(201) : 'https://pan.quark.cn/s/old-share'), { session });
+    assert.equal((await search()).body.quarkUrls.length, 1);
+    failAfterRead = true;
+    assert.equal((await search(LOGIN_COOKIE, { cacheOnly: true })).response.status, 503);
+    calls = 0;
+    expired = true;
+    const { response, body } = await search(LOGIN_COOKIE, { refresh: true });
+    assert.equal(response.status, 200);
+    assert.equal(body.resourceMeta.providerIssues.wpzys, 'login_required');
+    assert.deepEqual(body.quarkUrls, []);
+    failAfterRead = false;
+    assert.equal((await search(LOGIN_COOKIE, { cacheOnly: true })).response.status, 410);
 });

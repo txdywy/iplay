@@ -995,7 +995,7 @@ function renderActorPage(chat, messageId, data, filter) {
         `电影 ${counts.movie ?? 0} 部 · 剧集 ${counts.tv ?? 0} 部`,
         !total ? `暂无${filterName}。`
             : credits.length ? `${filterName}：第 ${offset + 1}–${offset + credits.length} 部，共 ${total} 部。点击作品查看详情：`
-                : `${filterName}共 ${total} 部，这一页没有内容，请返回上一页。`
+                : `${filterName}共 ${total} 部，这一页没有内容，请重新选择分类。`
     ].join("\n");
 
     const filterButton = (label, value) => button(filter === value ? `· ${label} ·` : label, "a", person.id, 0, value);
@@ -1014,6 +1014,12 @@ function renderActorPage(chat, messageId, data, filter) {
 async function showActorPage(chat, env, ctx, messageId, args) {
     const [personId, offsetText, filter = ""] = args;
     const mediaType = filter === "movie" || filter === "tv" ? filter : "";
-    const data = await getPersonPage(env, ctx, personId, Math.max(0, Number(offsetText) || 0), mediaType);
+    const offset = Math.max(0, Number(offsetText) || 0);
+    let data = await getPersonPage(env, ctx, personId, offset, mediaType);
+    const total = Number(data.totalResults) || 0;
+    if (total > 0 && offset >= total) {
+        const lastOffset = Math.floor((total - 1) / ACTOR_PAGE_SIZE) * ACTOR_PAGE_SIZE;
+        data = await getPersonPage(env, ctx, personId, lastOffset, mediaType);
+    }
     return renderActorPage(chat, messageId, data, mediaType);
 }

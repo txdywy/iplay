@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeResourceSnapshot, mergeResourceState, newResourceUrls, resourceQueryKey } from '../js/resources.js';
+import { mergeResourceSnapshot, mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from '../js/resources.js';
 
 const sourceA = { title: 'A', url: 'https://by669.com/a', source: 'by669' };
 const sourceB = { title: 'B', url: 'https://wpzy.org/thread-1.htm', source: 'wpzys' };
@@ -136,6 +136,8 @@ test('retained stars get a slot in a full refresh, while revoked shares stay rem
     const merged = mergeResourceState(previous, fresh, stars);
     assert.equal(merged.result.quarkUrls.length, 100);
     assert.ok(merged.result.quarkUrls.some(item => item.url === pinned.url));
+    const unpinned = selectResourceShares(merged.pages, merged.preferredScanUrls, new Set());
+    assert.deepEqual(unpinned.map(({ url }) => url), links.map(({ url }) => url));
     const snapshot = mergeResourceSnapshot(previous.result, fresh);
     assert.ok(mergeResourceState(null, snapshot, stars).result.quarkUrls.some(item => item.url === pinned.url));
     fresh.resourceMeta.providerIssues = { wpzys: 'login_required' };

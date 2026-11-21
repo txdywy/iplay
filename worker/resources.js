@@ -1037,11 +1037,14 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
 
     const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}`);
     let cacheKey = keyForGeneration(generation);
+    const invalidateSession = () => sessionState(generation, true).catch(async error => {
+        logEvent("warn", "wpzy_cache_revocation_failed", { error: logErrorMessage(error) });
+        await deleteCachedResponse(cacheKey);
+        return null;
+    });
     let cached = await serveCachedJson(cacheKey);
     if (cached && !refresh) {
-        // The generation was read moments ago; if coordination drops out in
-        // between, that reading still stands and the cached answer is served.
-        const latestGeneration = sessionState ? await sessionState().catch(() => generation) : generation;
+        const latestGeneration = sessionState ? await sessionState() : generation;
         if (latestGeneration === generation) return cached;
         if (!cacheOnly) return handleResourceSearchUncoalesced(query, ctx, {
             refresh: true, wpzySession, identity, env, sessionState, generation: latestGeneration
@@ -1084,9 +1087,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         }
         let currentGeneration = generation;
         if (loginRequired) {
-            if (sessionState) currentGeneration = await sessionState(generation, true);
             if (cached && !sessionState) await deleteCachedResponse(cacheKey);
             cached = null;
+            if (sessionState) currentGeneration = await invalidateSession();
         }
 
         const resources = by669Result.value ?? [];
@@ -1100,8 +1103,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         );
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
         if (detailResult.loginRequiredPages && sessionState) {
-            currentGeneration = await sessionState(generation, true);
+            cached = null;
             loginRequired = true;
+            currentGeneration = await invalidateSession();
         } else if (!loginRequired && sessionState) {
             currentGeneration = wpzysResult.status === "fulfilled"
                 ? await sessionState(generation, false) : await sessionState();
@@ -1151,7 +1155,9 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             result.resourceMeta.pages = result.resourceMeta.pages.filter(page => page.source !== "wpzys" || page.status !== "ok");
             result.quarkUrls = [];
             result = mergeResourceState(null, result).result;
-            if (!loginRequired && superseded) return jsonResponse(result);
+            if (currentGeneration === null || (!loginRequired && superseded)) {
+                return cacheJson(null, cacheKey, result, 0, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
+            }
             cacheKey = keyForGeneration(currentGeneration);
         }
         // Links for a new release appear within hours: recheck an empty scan sooner.
@@ -1177,7 +1183,13 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         result.resourceMeta.cacheExpiresAt = now + maxAge * 1000;
         return cacheJson(ctx, cacheKey, result, maxAge, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
     } catch (e) {
-        if (refresh && cached && (!sessionState || generation === await sessionState().catch(() => generation))) return withStaleMarker(cached);
+        if (refresh && cached) {
+            try {
+                if (!sessionState || generation === await sessionState()) return withStaleMarker(cached);
+            } catch (coordinationError) {
+                return errorResponse(coordinationError);
+            }
+        }
         return errorResponse(e);
     }
 }

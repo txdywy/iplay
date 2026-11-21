@@ -153,23 +153,29 @@ export function mergeResourceState(previous, incoming, starredUrls = null) {
     const evidencePages = [...pages.values()];
     const currentUrls = new Set(currentPages.filter(page => page.status === 'ok')
         .flatMap(page => asArray(page.quarkUrls).map(item => item.url)));
+    const preferredScanUrls = asArray(incoming.quarkUrls).filter(item => currentUrls.has(item?.url)).map(item => item.url);
+    return {
+        pages: evidencePages,
+        preferredScanUrls,
+        result: { ...incoming, ...lists, quarkUrls: selectResourceShares(evidencePages, preferredScanUrls, starredUrls) }
+    };
+}
+
+export function selectResourceShares(pages, preferredScanUrls, starredUrls) {
     const preferredUrls = new Set();
     if (starredUrls?.size) {
-        const eligibleStars = new Set(evidencePages.flatMap(page => page.quarkUrls)
+        const eligibleStars = new Set(pages.flatMap(page => page.quarkUrls)
             .filter(item => starredUrls.has(item?.url)).map(item => item.url));
         for (const url of [...starredUrls].reverse()) {
             if (eligibleStars.has(url)) preferredUrls.add(url);
             if (preferredUrls.size === MAX_QUARK_LINKS) break;
         }
     }
-    for (const item of asArray(incoming.quarkUrls)) {
+    for (const url of preferredScanUrls) {
         if (preferredUrls.size === MAX_QUARK_LINKS) break;
-        if (currentUrls.has(item?.url)) preferredUrls.add(item.url);
+        preferredUrls.add(url);
     }
-    return {
-        pages: evidencePages,
-        result: { ...incoming, ...lists, quarkUrls: combineShares(evidencePages, preferredUrls) }
-    };
+    return combineShares(pages, preferredUrls);
 }
 
 export function mergeResourceSnapshot(previous, incoming) {

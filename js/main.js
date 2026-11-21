@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.65';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.66';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,19 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.65';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.65';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.65';
-import { RELEASE_VERSION } from './release.js?v=1.0.65';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.65';
+} from './scorer.js?v=1.0.66';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.66';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.66';
+import { RELEASE_VERSION } from './release.js?v=1.0.66';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.66';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.65';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.65';
-import { mergeResourceState, newResourceUrls, resourceQueryKey } from './resources.js?v=1.0.65';
+} from './match.js?v=1.0.66';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.66';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.66';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.66';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1417,100 +1418,31 @@ function pickSafeImageUrl(...values) {
 
 // Share links already opened in this browser, so a returning visitor can tell
 // which ones were tried.
-const OPENED_LINKS_KEY = 'iplay_opened_links';
-const OPENED_LINK_COUNTS_KEY = 'iplay_opened_link_counts_v1';
-const OPENED_LINKS_LIMIT = 1000;
 const RESOURCE_FILTER_KEY = 'iplay_resource_filter';
-const STARRED_LINKS_KEY = 'iplay_starred_links';
-const STARRED_LINKS_LIMIT = 1000;
-let starredLinks = new Set();
-const openedLinks = new Map();
-let openedLinksUnsaved = false;
-let starredLinksUnsaved = false;
-
-function syncOpenedLinks() {
-    if (openedLinksUnsaved) return false;
-    try {
-        const stored = JSON.parse(window.localStorage.getItem(OPENED_LINKS_KEY) || '[]');
-        const storedCounts = JSON.parse(window.localStorage.getItem(OPENED_LINK_COUNTS_KEY) || '[]');
-        if (!Array.isArray(stored)) return false;
-        const counts = new Map(Array.isArray(storedCounts) ? storedCounts.filter(Array.isArray) : []);
-        openedLinks.clear();
-        for (const entry of stored.slice(-OPENED_LINKS_LIMIT)) {
-            const [url, previousCount] = typeof entry === 'string' ? [entry, 1] : Array.isArray(entry) ? entry : [];
-            if (typeof url !== 'string') continue;
-            const count = counts.get(url);
-            openedLinks.set(url, Math.max(
-                Number.isSafeInteger(previousCount) ? previousCount : 1,
-                Number.isSafeInteger(count) ? count : 1,
-                1
-            ));
-        }
-        return stored.some(Array.isArray);
-    } catch {
-        return false;
-    }
-}
-
-function saveOpenedLinks() {
-    try {
-        // Keep the URL list readable by tabs still running older releases.
-        window.localStorage.setItem(OPENED_LINK_COUNTS_KEY, JSON.stringify([...openedLinks]));
-        window.localStorage.setItem(OPENED_LINKS_KEY, JSON.stringify([...openedLinks.keys()]));
-        openedLinksUnsaved = false;
-    } catch {
-        openedLinksUnsaved = true;
-    }
-}
-
-if (syncOpenedLinks()) {
-    void withResourceStorageLock(OPENED_LINKS_KEY, () => {
-        if (syncOpenedLinks()) saveOpenedLinks();
-    });
-}
-
-function updateOpenedLinks(change) {
-    return withResourceStorageLock(OPENED_LINKS_KEY, () => {
-        syncOpenedLinks();
-        const result = change(openedLinks);
-        if (openedLinks.size > OPENED_LINKS_LIMIT) openedLinks.delete(openedLinks.keys().next().value);
-        saveOpenedLinks();
-        return result;
-    });
-}
+const resourceHistory = createResourceHistory(() => window.localStorage);
+let openedLinks = resourceHistory.syncOpens().marks;
+let starredLinks = resourceHistory.syncStars();
 
 function withResourceStorageLock(key, update) {
     const locks = window.navigator.locks;
     return locks ? locks.request(key, update).catch(update) : update();
 }
 
-function syncStarredLinks() {
-    if (starredLinksUnsaved) return;
-    try {
-        const stored = JSON.parse(window.localStorage.getItem(STARRED_LINKS_KEY) || '[]');
-        if (Array.isArray(stored)) {
-            starredLinks = new Set(stored.filter(url => typeof url === 'string').slice(-STARRED_LINKS_LIMIT));
-        }
-    } catch {
-        // Keep the stars available for this page view.
-    }
-}
-
-syncStarredLinks();
-
-function toggleStarredLink(url) {
-    return withResourceStorageLock(STARRED_LINKS_KEY, () => {
-        syncStarredLinks();
-        if (!starredLinks.delete(url)) starredLinks.add(url);
-        if (starredLinks.size > STARRED_LINKS_LIMIT) starredLinks.delete(starredLinks.keys().next().value);
-        try {
-            window.localStorage.setItem(STARRED_LINKS_KEY, JSON.stringify([...starredLinks]));
-            starredLinksUnsaved = false;
-        } catch {
-            starredLinksUnsaved = true;
-        }
+function syncResourceOpens(options) {
+    return withResourceStorageLock(OPENED_LINKS_KEY, () => {
+        const { marks, cleared } = resourceHistory.syncOpens({ ...options, persist: true });
+        openedLinks = marks;
+        return cleared;
     });
 }
+
+function syncResourceStars(url) {
+    return withResourceStorageLock(STARRED_LINKS_KEY, () => {
+        starredLinks = resourceHistory.syncStars(url);
+    });
+}
+
+void syncResourceOpens();
 
 // "unopened" hides links already opened, so a second visit shows what is left
 // to try. The choice is a per-browser convenience.
@@ -1600,7 +1532,21 @@ function updateResourceToolbar() {
     if (clear) clear.hidden = opened === 0;
 }
 
-function rerenderResourceLists(revealFocusIn = null) {
+function rerenderResourceLists(revealFocusIn = null, starsChanged = false) {
+    if (starsChanged && resourceResultState) {
+        const { result, pages, preferredScanUrls, comparedWith } = resourceResultState;
+        result.quarkUrls = selectResourceShares(pages, preferredScanUrls, starredLinks);
+        const quarkRender = linkListRenders.get(els.quarkUrlList);
+        if (quarkRender) quarkRender.items = result.quarkUrls;
+        if (comparedWith) {
+            resourceResultState.newUrls = newResourceUrls(comparedWith.result, result, comparedWith.pages);
+            for (const id of RESOURCE_LIST_IDS) {
+                const render = linkListRenders.get(els[id]);
+                if (render) render.options.newUrls = resourceResultState.newUrls;
+            }
+            updateCompletedResourceStatus(resourceResultState);
+        }
+    }
     for (const id of RESOURCE_LIST_IDS) {
         const render = linkListRenders.get(els[id]);
         if (render) renderLinkCards(els[id], render.items, render.options, els[id] === revealFocusIn);
@@ -1618,13 +1564,16 @@ function setResourceFilter(value) {
     rerenderResourceLists();
 }
 
-window.addEventListener('storage', event => {
+window.addEventListener('storage', async event => {
     if (event.storageArea !== window.localStorage) return;
     const openedChanged = event.key === OPENED_LINKS_KEY || event.key === OPENED_LINK_COUNTS_KEY || event.key === null;
     const starredChanged = event.key === STARRED_LINKS_KEY || event.key === null;
-    if (openedChanged) syncOpenedLinks();
-    if (starredChanged) syncStarredLinks();
-    if (openedChanged || starredChanged) rerenderResourceLists();
+    if (openedChanged) await syncResourceOpens({ legacyChange: event.key === OPENED_LINKS_KEY ? event : null });
+    if (starredChanged) await syncResourceStars();
+    if (openedChanged || starredChanged) {
+        const focusedList = starredChanged ? document.activeElement?.closest('.link-list') : null;
+        rerenderResourceLists(focusedList, starredChanged);
+    }
 });
 
 document.getElementById('resourceToolbar')?.addEventListener('click', async event => {
@@ -1636,11 +1585,7 @@ document.getElementById('resourceToolbar')?.addEventListener('click', async even
     if (event.target.closest('#resourceClearOpened')) {
         // Only this work's links: other works keep their marks.
         const urls = resourceLinkUrls();
-        const cleared = await updateOpenedLinks(marks => {
-            let count = 0;
-            urls.forEach(url => { if (marks.delete(url)) count += 1; });
-            return count;
-        });
+        const cleared = await syncResourceOpens({ clear: urls });
         const clearButton = document.getElementById('resourceClearOpened');
         if (document.activeElement === clearButton) {
             document.querySelector('#resourceToolbar [aria-pressed="true"]')?.focus();
@@ -1808,11 +1753,7 @@ function renderLinkCards(container, items, options, revealFocus = false) {
             renderLinkOpenCount(li, opened);
             title.appendChild(opened);
             const markOpened = async () => {
-                await updateOpenedLinks(marks => {
-                    const count = marks.get(item.url) || 0;
-                    marks.delete(item.url);
-                    marks.set(item.url, Math.min(count + 1, Number.MAX_SAFE_INTEGER));
-                });
+                await syncResourceOpens({ increment: item.url });
                 // The same share can be listed in more than one column.
                 for (const row of document.querySelectorAll('#resourcesSection .link-item')) {
                     if (row.dataset.linkUrl === item.url) renderLinkOpenCount(row, row.querySelector('.link-opened'));
@@ -1862,8 +1803,9 @@ function renderLinkCards(container, items, options, revealFocus = false) {
             star.title = starred ? '取消星标' : '星标并置顶';
             star.appendChild(createIcon('star'));
             star.addEventListener('click', async () => {
-                await toggleStarredLink(item.url);
-                rerenderResourceLists(document.activeElement === star ? container : null);
+                await syncResourceStars(item.url);
+                const focusedList = document.activeElement?.closest('.link-list');
+                rerenderResourceLists(focusedList, true);
             });
             li.append(card, star);
             frag.appendChild(li);
@@ -2710,18 +2652,22 @@ function renderResourceResult({ result: resourceResult, newUrls, refreshFailed }
         renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFailed });
         return;
     }
+    if (resourceResult.partial || resourceResult.resourceMeta?.partial) renderResourceNotice(resourceResult, totalSources, onRetry);
+    else hideResourceNotice();
+    updateCompletedResourceStatus({ result: resourceResult, newUrls });
+}
+
+function updateCompletedResourceStatus({ result, newUrls, refreshPending, refreshFailed }) {
+    if (refreshPending || refreshFailed) return;
     const update = newUrls?.size ? `，本次新增 ${newUrls.size} 条` : '，暂无新增';
-    if (resourceResult.partial || resourceResult.resourceMeta?.partial) {
-        setResourceStatus('资源扫描部分完成' + (newUrls ? update : '，已保留可用结果'), false, Boolean(newUrls));
-        renderResourceNotice(resourceResult, totalSources, onRetry);
-    } else {
-        hideResourceNotice();
-        const attemptedPages = Number(resourceResult.resourceMeta?.attemptedPages);
-        const completion = Number.isFinite(attemptedPages) && attemptedPages < totalSources
-            ? `已扫描 ${attemptedPages}/${totalSources} 个来源，未扫描的帖子仍可直接打开`
+    const partial = result.partial || result.resourceMeta?.partial;
+    const totalSources = result.resources.length + result.zuidouyinResources.length + result.wpzysResources.length;
+    const attempted = Number(result.resourceMeta?.attemptedPages);
+    const completion = partial ? '资源扫描部分完成'
+        : Number.isFinite(attempted) && attempted < totalSources
+            ? `已扫描 ${attempted}/${totalSources} 个来源，未扫描的帖子仍可直接打开`
             : '资源扫描完成';
-        setResourceStatus(completion + (newUrls ? update : ''), false, Boolean(newUrls));
-    }
+    setResourceStatus(completion + (newUrls ? update : partial ? '，已保留可用结果' : ''), false, Boolean(newUrls));
 }
 
 function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
@@ -2805,8 +2751,9 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
         const previous = resourceResultState?.queryKey === queryKey ? resourceResultState : null;
         const refreshFailed = Boolean(resourceResult.resourceMeta?.stale);
         const merged = refreshFailed && previous ? previous : mergeResourceState(previous, resourceResult, starredLinks);
+        const comparedWith = refreshFailed ? previous?.comparedWith : previous && { result: previous.result, pages: previous.pages };
         resourceResultState = {
-            ...merged, queryKey, refreshFailed, refreshPending: false,
+            ...merged, queryKey, comparedWith, refreshFailed, refreshPending: false,
             newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result, previous.pages)
         };
         for (const check of quarkChecksBySignal.get(searchOptions.signal)?.checks.values() || []) {
@@ -2980,7 +2927,7 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
         viewModel.posterFallbackPending = false;
         if (viewModel.failedPosterUrls.has(viewModel.posterUrl)) viewModel.posterUrl = null;
     }
-    activeDetailState = { searchId, candidate: selectedCandidate, viewModel, detailConfirmed: Boolean(viewModel.detail) };
+    activeDetailState = { searchId, candidate: selectedCandidate, viewModel, requestedSeason, detailConfirmed: Boolean(viewModel.detail) };
     renderFavoriteToggle();
     const enrichmentQuery = selectedCandidate.title || selectedCandidate.originalTitle || query;
     const posterContext = createPosterContext(selectedCandidate, enrichmentQuery, viewModel, searchId, candidateOptions, loadId);
@@ -3206,6 +3153,7 @@ function renderFavorites() {
             // shown, not the address: a later search may have replaced the view.
             const shown = activeDetailState?.candidate;
             if (shown && Number(shown.id) === Number(item.id) && shown.mediaType === item.mediaType
+                && activeDetailState.detailConfirmed && activeDetailState.requestedSeason === null
                 && document.body.classList.contains('has-content')) return;
             const method = url.search === window.location.search ? 'replaceState' : 'pushState';
             setAppHistoryState(method, { kind: 'detail', id: item.id, mediaType: item.mediaType, season: null, title: item.title }, getAppHistoryUrl(url));
