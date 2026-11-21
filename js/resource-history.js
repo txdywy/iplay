@@ -61,21 +61,21 @@ export function createResourceHistory(getStorage) {
         const records = new Map(readArray(storage.getItem(OPENED_LINK_COUNTS_KEY)).filter(Array.isArray));
         const snapshot = records.get(SNAPSHOT_KEY);
         records.delete(SNAPSHOT_KEY);
-        if (snapshot && (raw === snapshot.observed || raw === JSON.stringify([...records.keys()]))) {
-            // A queued clear followed by a reopening can leave the same URL
-            // list. Honor the removal observed by the storage event.
-            if (legacyChange?.oldValue === raw && legacyChange.newValue !== raw) {
-                const remaining = readMarks(legacyChange.newValue);
-                const removed = [...readMarks(raw).keys()].filter(url => !remaining.has(url));
-                if (removed.length) {
-                    for (const url of removed) records.set(url, 1);
-                    savedOpens = records;
-                    return { raw, changed: true };
-                }
-            }
-            savedOpens = records;
-            return { raw, changed: false };
+        const mirror = JSON.stringify([...records.keys()]);
+        const matchesSnapshot = snapshot && (raw === snapshot.observed || raw === mirror);
+        // The old tab may already have reopened the link by the time this
+        // event arrives. Compare the clear with the last committed URL list.
+        let removed = [];
+        if (legacyChange?.oldValue === mirror && legacyChange.newValue !== raw) {
+            const remaining = readMarks(legacyChange.newValue);
+            removed = [...records.keys()].filter(url => !remaining.has(url));
         }
+        if (matchesSnapshot) {
+            for (const url of removed) records.set(url, 1);
+            savedOpens = records;
+            return { raw, changed: removed.length > 0 };
+        }
+        for (const url of removed) records.delete(url);
 
         savedOpens = readMarks(raw);
         for (const [url, count] of savedOpens) {

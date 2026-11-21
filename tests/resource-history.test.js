@@ -32,6 +32,15 @@ test('legacy clear and tuple writes reconcile with migrated counts exactly once'
     right.syncOpens({ increment: 'C', persist: true });
     write(OPENED_LINKS_KEY, ['B', 'A']);
     assert.ok(!left.syncOpens({ persist: true }).marks.has('C'));
+
+    left.syncOpens({ increment: 'A', persist: true });
+    left.syncOpens({ increment: 'B', persist: true });
+    const beforeReorder = storage.getItem(OPENED_LINKS_KEY);
+    assert.equal(beforeReorder, '["A","B"]');
+    write(OPENED_LINKS_KEY, ['B', 'A']);
+    assert.deepEqual([...left.syncOpens({
+        legacyChange: { oldValue: beforeReorder, newValue: '["B"]' }, persist: true
+    }).marks], [['B', 4], ['A', 1]]);
 });
 
 test('quota recovery replays pending operations without replacing sibling edits', () => {
