@@ -452,3 +452,16 @@ test('callback queries from users outside the allow list are refused', async t =
     assert.ok(methods.includes('answerCallbackQuery'));
     assert.ok(!methods.includes('sendPhoto') && !methods.includes('editMessageText'), 'no detail is shown to a blocked user');
 });
+
+test('an old actor pagination button reopens the last available page', async t => {
+    const { sent } = setup(t, { tmdb: {
+        '/person/1001': { id: 1001, name: '胡歌', combined_credits: {
+            cast: [{ id: 31, media_type: 'movie', title: 'Available credit', release_date: '2024-01-01' }]
+        } }
+    } });
+    await deliver(callback(callbackData('a', 1001, 16, 'movie'), { message: { message_id: 7, text: '旧作品页' } }));
+    const page = sent().find(call => call.method === 'editMessageText');
+    assert.ok(page);
+    assert.match(page.body.text, /第 1–1 部/);
+    assert.ok(page.body.reply_markup.inline_keyboard.flat().some(button => button.text.includes('Available credit')));
+});

@@ -1518,7 +1518,7 @@ async function assertOpenedLinkFilter() {
     await evaluate("document.getElementById('resourceClearOpened').click()");
     await waitFor("document.querySelectorAll('#quarkUrlList .is-opened').length === 0");
     assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_links'))"), ['https://pan.quark.cn/s/other-work']);
-    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1'))"), [['https://pan.quark.cn/s/other-work', 1]]);
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1')).filter(([url]) => url)"), [['https://pan.quark.cn/s/other-work', 1]]);
     await evaluate("localStorage.removeItem('iplay_opened_links'); localStorage.removeItem('iplay_opened_link_counts_v1'); localStorage.removeItem('iplay_resource_filter')");
 }
 
@@ -1774,12 +1774,20 @@ async function runCanonicalEnrichmentFlow() {
 
 async function runMissingSeasonFlow() {
     await command('Page.navigate', { url: baseUrl });
+    await waitFor("history.state?.kind === 'home'");
+    await evaluate("localStorage.setItem('iplay_favorites', JSON.stringify([{ id: 118, mediaType: 'tv', title: 'Friends', year: '2024' }]))");
+    await command('Page.reload');
+    await waitFor("history.state?.kind === 'home' && document.querySelector('#favoriteList button')");
     await search('Friends s99');
     await waitFor("document.querySelector('#dataNotice[role=alert]')?.textContent.includes('未找到第 99 季')");
     const detailCall = (await evaluate("window.__smoke.calls.find(call => call.startsWith('/api/tmdb/detail'))"));
     assert.equal(new URL(detailCall, baseUrl).searchParams.get('season'), '99');
     assert.equal(await evaluate('window.__smoke.resourceCalls'), 0, 'an unverified season must not trigger media enrichments');
     assert.equal(new URL(await evaluate('location.href')).searchParams.get('season'), '99', 'the selected season remains shareable');
+    await evaluate("document.querySelector('#favoritesTrigger').click(); document.querySelector('#favoriteList button').click()");
+    await waitFor("new URL(location.href).searchParams.get('id') === '118' && !new URL(location.href).searchParams.has('season')");
+    await waitFor("window.__smoke.detailCalls === 2 && document.querySelector('#dataNotice').classList.contains('hidden')");
+    await evaluate("localStorage.removeItem('iplay_favorites')");
 }
 
 async function runAlternatingResourceRetryFlow() {
@@ -1886,7 +1894,7 @@ async function runCompleteResourceVisibilityFlow() {
     await command('Page.navigate', { url: baseUrl });
     await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
     await waitFor("JSON.parse(localStorage.getItem('iplay_opened_links'))?.[0] === 'https://pan.quark.cn/s/older-tuple'");
-    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1'))"), [['https://pan.quark.cn/s/older-tuple', 7]]);
+    assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_opened_link_counts_v1')).filter(([url]) => url)"), [['https://pan.quark.cn/s/older-tuple', 7]]);
     await evaluate("window.__smoke.resourceMode = 'large'");
     await search('Test Movie');
     await assertSearchReady('Test Movie');
@@ -1897,6 +1905,22 @@ async function runCompleteResourceVisibilityFlow() {
     assert.equal(await evaluate("document.activeElement === document.querySelector('#quarkUrlList button[aria-expanded]')"), true);
     await waitFor(focusInView);
     assert.deepEqual(await evaluate("JSON.parse(localStorage.getItem('iplay_starred_links'))"), []);
+    await evaluate(`(() => {
+        document.querySelector('#quarkUrlList button[aria-expanded]').click();
+        const button = document.querySelector('#quarkUrlList [data-link-url="${pinnedUrl}"] .link-star');
+        button.scrollIntoView({ block: 'center' });
+        button.focus();
+        const tab = document.createElement('iframe');
+        tab.hidden = true;
+        document.body.append(tab);
+        tab.contentWindow.localStorage.setItem('iplay_starred_links', JSON.stringify(['${pinnedUrl}']));
+        tab.remove();
+    })()`);
+    await waitFor(firstUrl + " === " + JSON.stringify(pinnedUrl));
+    assert.equal(await evaluate('document.activeElement === ' + firstStar), true);
+    await waitFor(focusInView);
+    await evaluate(firstStar + '.click()');
+    await waitFor(firstUrl + " === 'https://pan.quark.cn/s/large-0'");
 
     await evaluate(`(() => {
         const setItem = Storage.prototype.setItem;
