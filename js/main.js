@@ -1873,7 +1873,16 @@ function renderLinkCards(container, items, options, revealFocus = false) {
         focusTarget = container.querySelector('a');
     }
     focusTarget?.focus({ preventScroll: true });
-    if (revealFocus) focusTarget?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (revealFocus && focusTarget) {
+        requestAnimationFrame(() => {
+            if (document.activeElement !== focusTarget) return;
+            const bounds = focusTarget.getBoundingClientRect();
+            const top = stickyHeaderMedia.matches ? Math.max(0, els.header.getBoundingClientRect().bottom) : 0;
+            if (bounds.top < top || bounds.bottom > window.innerHeight) {
+                focusTarget.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+            }
+        });
+    }
     updateResourceToolbar();
 }
 
