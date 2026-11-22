@@ -311,3 +311,24 @@ test('a share whose first check is inconclusive is checked once more within the 
     assert.equal(body.meta.unknown, 1);
     assert.equal(body.meta.verified, 1);
 });
+
+test('Quark checks allow longer than three seconds, the aggregate module longest', async t => {
+    const delays = [];
+    const realSetTimeout = globalThis.setTimeout;
+    t.mock.method(globalThis, 'setTimeout', (callback, delay, ...rest) => {
+        delays.push(delay);
+        return realSetTimeout(callback, delay, ...rest);
+    });
+    const world = mockWorld(t, {
+        pansou: [post('alive1', '测试剧 (2023)')],
+        shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }
+    });
+    await aggregate(world);
+    assert.ok(delays.includes(6000), 'the aggregate module gives each Quark request six seconds');
+    delays.length = 0;
+    const status = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=alive1', {
+        headers: { 'cf-connecting-ip': '203.0.113.250' }
+    }), {}, world.ctx);
+    assert.equal(status.status, 200);
+    assert.ok(delays.includes(4500) && !delays.includes(3200), 'the shared check no longer cuts Quark off at 3.2 seconds');
+});
