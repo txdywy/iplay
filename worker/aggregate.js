@@ -26,11 +26,14 @@ const DEFAULT_PANSOU_URL = 'https://so.252035.xyz';
 // The community instance sometimes stalls. A second, narrower attempt (the
 // Telegram channels alone answer in about two seconds) rescues most stalls.
 const PANSOU_ATTEMPT_TIMEOUT_MS = 7000;
-const TOTAL_TIMEOUT_MS = 24000;
+const TOTAL_TIMEOUT_MS = 28000;
+// Quark is slow from the edge on some days; the module has a long deadline.
+const QUARK_CHECK_TIMEOUT_MS = 6000;
 const MAX_PANSOU_BYTES = 4 * 1024 * 1024;
 const MAX_ITEMS_SCANNED = 3000;
 const MAX_CANDIDATES = 60;
-const CHECK_CONCURRENCY = 4;
+// Workers keep at most six connections open per request.
+const CHECK_CONCURRENCY = 6;
 // Requests to Quark per invocation (token, passcode retry and folder listing).
 // Together with the search itself this stays well under the platform limit.
 const QUARK_REQUEST_BUDGET = 36;
@@ -150,7 +153,7 @@ async function verifyCandidates(candidates, ctx, deadline) {
     const budget = { remaining: QUARK_REQUEST_BUDGET };
     const checked = new Map();
     const check = candidate => probeQuarkShare(candidate.id, ctx, {
-        passcode: candidate.password, listing: true, budget
+        passcode: candidate.password, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS
     });
     await forEachWithConcurrency(candidates, CHECK_CONCURRENCY, async candidate => {
         if (isDeadlineExpired(deadline) || budget.remaining <= 0) return;

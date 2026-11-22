@@ -7,7 +7,9 @@ import {
 // Both work without an account, and neither is used to download anything.
 const SHARE_TOKEN_URL = 'https://drive-h.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc&uc_param_str=';
 const SHARE_DETAIL_URL = 'https://drive-h.quark.cn/1/clouddrive/share/sharepage/detail';
-const CHECK_TIMEOUT_MS = 3200;
+// Quark answers in two to three seconds from the edge on a slow day, so the
+// default leaves room; a caller with a longer deadline can allow more.
+const CHECK_TIMEOUT_MS = 4500;
 const CHECK_CACHE_SECONDS = 300;
 const MAX_TOKEN_RESPONSE_BYTES = 24 * 1024;
 const MAX_DETAIL_RESPONSE_BYTES = 128 * 1024;
@@ -45,14 +47,14 @@ function spend(budget) {
     return true;
 }
 
-async function requestShareToken(id, passcode, budget) {
+async function requestShareToken(id, passcode, budget, timeoutMs) {
     if (!spend(budget)) return undefined;
     const response = await fetchUpstream(SHARE_TOKEN_URL, {
         method: 'POST',
         redirect: 'manual',
         headers: { ...REQUEST_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({ pwd_id: id, passcode, support_visit_limit_private_share: true })
-    }, CHECK_TIMEOUT_MS);
+    }, timeoutMs);
     if (!response.ok && ![400, 403, 404, 410].includes(response.status)) {
         await releaseUpstreamResponse(response);
         return undefined;
@@ -77,7 +79,7 @@ function cleanName(value) {
 
 // The top level of a share is enough to tell whether it holds the work it is
 // advertised as: a folder named after the series, or a few video files.
-async function listShareTopLevel(id, stoken, budget) {
+async function listShareTopLevel(id, stoken, budget, timeoutMs) {
     if (!spend(budget)) return null;
     const url = new URL(SHARE_DETAIL_URL);
     for (const [key, value] of Object.entries({
@@ -85,7 +87,7 @@ async function listShareTopLevel(id, stoken, budget) {
         _page: '1', _size: String(LISTING_PAGE_SIZE), _fetch_banner: '0', _fetch_share: '0', _fetch_total: '1',
         _sort: 'file_type:asc,updated_at:desc'
     })) url.searchParams.set(key, value);
-    const response = await fetchUpstream(url.href, { redirect: 'manual', headers: REQUEST_HEADERS }, CHECK_TIMEOUT_MS);
+    const response = await fetchUpstream(url.href, { redirect: 'manual', headers: REQUEST_HEADERS }, timeoutMs);
     if (!response.ok) {
         await releaseUpstreamResponse(response);
         return null;
@@ -116,7 +118,7 @@ async function passcodeKey(passcode) {
  * Only the status and a few folder names are cached or returned. The token
  * response (author, credential) never leaves this function.
  */
-export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null } = {}) {
+export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, timeoutMs = CHECK_TIMEOUT_MS } = {}) {
     const extended = Boolean(passcode) || listing;
     const cacheKey = extended
         ? new Request(`https://quark-share-verify-v1-cache.local/${id}?pw=${await passcodeKey(passcode)}&list=${listing ? 1 : 0}`)
@@ -125,12 +127,12 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
         const cached = await serveCachedJson(cacheKey);
         if (cached) return await cached.json();
 
-        const first = await requestShareToken(id, '', budget);
+        const first = await requestShareToken(id, '', budget, timeoutMs);
         let status = classifyToken(first);
         let tokenData = first?.data;
         let passcodeVerified = false;
         if (status === 'passcode_required' && passcode) {
-            const second = await requestShareToken(id, passcode, budget);
+            const second = await requestShareToken(id, passcode, budget, timeoutMs);
             const retried = classifyToken(second);
             if (retried === 'available') {
                 status = 'available';
@@ -150,7 +152,7 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
             const title = cleanName(tokenData?.data?.title);
             if (title) result.shareTitle = title;
             if (listing) {
-                const top = await listShareTopLevel(id, tokenData.data.stoken, budget).catch(() => null);
+                const top = await listShareTopLevel(id, tokenData.data.stoken, budget, timeoutMs).catch(() => null);
                 if (top) Object.assign(result, top);
             }
         }
