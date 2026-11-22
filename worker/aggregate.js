@@ -32,8 +32,7 @@ const QUARK_CHECK_TIMEOUT_MS = 6000;
 const MAX_PANSOU_BYTES = 4 * 1024 * 1024;
 const MAX_ITEMS_SCANNED = 3000;
 const MAX_CANDIDATES = 60;
-// Workers keep at most six connections open per request.
-const CHECK_CONCURRENCY = 6;
+const CHECK_CONCURRENCY = 4;
 // Requests to Quark per invocation (token, passcode retry and folder listing).
 // Together with the search itself this stays well under the platform limit.
 const QUARK_REQUEST_BUDGET = 36;
@@ -162,8 +161,11 @@ async function verifyCandidates(candidates, ctx, deadline) {
         if (result.status !== undefined || budget.remaining > 0) checked.set(candidate.id, result);
     });
     // Quark answers a share now and then with a timeout or a limit. One more
-    // pass, with whatever budget is left, settles most of those.
+    // pass, with whatever budget is left, settles most of those. When most of
+    // the first pass failed, Quark is struggling: more requests would only
+    // wait longer and add load.
     const inconclusive = candidates.filter(candidate => checked.has(candidate.id) && checked.get(candidate.id).status === undefined);
+    if (inconclusive.length * 2 > checked.size) return checked;
     await forEachWithConcurrency(inconclusive, CHECK_CONCURRENCY, async candidate => {
         if (isDeadlineExpired(deadline) || budget.remaining <= 0) return;
         const result = await check(candidate);

@@ -137,9 +137,19 @@ const cacheMiss = await getApi('/api/resource/cache?q=release-check-' + probeId,
 assert.ok(cacheMiss.data.error);
 assert.equal(cacheMiss.response.headers.get('cache-control'), 'no-store');
 results.push({ check: 'resource-cache-miss', status: 'passed' });
-const quark = await getApi('/api/resource/quark-status?id=' + probeId, 200);
+// Quark's share endpoint has a long latency tail from the edge (0.5 s to over
+// 4.5 s in the same minute), and a slow answer is correctly reported as
+// unknown. Ask about a fresh nonexistent share up to three times; the answer
+// that is accepted must still be a definitive one.
+let quarkId = probeId;
+let quark;
+for (let attempt = 1; attempt <= 3; attempt += 1) {
+    quarkId = attempt === 1 ? probeId : randomBytes(6).toString('hex');
+    quark = await getApi('/api/resource/quark-status?id=' + quarkId, 200);
+    if (quark.data.unavailable?.[quarkId]) break;
+}
 assert.equal(quark.response.headers.get('cache-control'), 'no-store');
-assert.ok(['missing', 'invalid', 'deleted'].includes(quark.data.unavailable?.[probeId]), 'Quark must confirm the generated nonexistent share');
+assert.ok(['missing', 'invalid', 'deleted'].includes(quark.data.unavailable?.[quarkId]), 'Quark must confirm the generated nonexistent share');
 assert.deepEqual(quark.data.unknown, []);
 assert.deepEqual(quark.data.available, []);
 assert.deepEqual(quark.data.passcodeRequired, []);
