@@ -1,5 +1,5 @@
 import {
-    cacheJson, fetchUpstream, readJsonWithLimit, releaseUpstreamResponse, serveCachedJson
+    cacheJson, fetchUpstream, isDeadlineExpired, readJsonWithLimit, releaseUpstreamResponse, remainingDeadlineMs, serveCachedJson
 } from './core.js';
 
 // Quark's public share client asks these two endpoints when a visitor opens a
@@ -108,40 +108,75 @@ async function passcodeKey(passcode) {
     return [...new Uint8Array(digest).slice(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// Wrong passcodes a share may take from all callers together in an hour.
+// The check exists to confirm a passcode a page listed, not to guess one.
+const MAX_FAILED_PASSCODES = 2;
+const FAILED_PASSCODE_WINDOW_SECONDS = 3600;
+
+function failedPasscodeKey(id) {
+    return new Request(`https://quark-passcode-failures-v1.local/${id}`);
+}
+
+async function failedPasscodeCount(id) {
+    const cached = await serveCachedJson(failedPasscodeKey(id));
+    const count = Number((await cached?.json().catch(() => null))?.count);
+    return Number.isInteger(count) && count > 0 ? count : 0;
+}
+
 /**
  * Checks a Quark share the way a visitor's browser would.
  *
  * `status` is one of: available, passcode_required, passcode_mismatch, an
  * unavailable reason (see UNAVAILABLE_BY_CODE), or undefined when the check
  * was inconclusive. When the share asks for a passcode and one is supplied,
- * it is submitted once; success is reported as `passcodeVerified`.
- * Only the status and a few folder names are cached or returned. The token
- * response (author, credential) never leaves this function.
+ * it is submitted once, unless the share has already refused
+ * MAX_FAILED_PASSCODES passcodes this hour; success is `passcodeVerified`.
+ * Every request is bounded by `deadline` when one is given; a step that would
+ * start after it is skipped and the check is inconclusive.
+ * Only the status and a few folder names are cached or returned, and only
+ * from a complete check. The token response (author, credential) never
+ * leaves this function.
  */
-export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, timeoutMs = CHECK_TIMEOUT_MS } = {}) {
+export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, timeoutMs = CHECK_TIMEOUT_MS, deadline = null } = {}) {
     const extended = Boolean(passcode) || listing;
     const cacheKey = extended
         ? new Request(`https://quark-share-verify-v1-cache.local/${id}?pw=${await passcodeKey(passcode)}&list=${listing ? 1 : 0}`)
         : new Request('https://quark-share-status-v2-cache.local/' + id);
+    // The time a step may take, or null once the deadline has passed.
+    const stepTimeout = () => (deadline ? (isDeadlineExpired(deadline) ? null : remainingDeadlineMs(deadline, timeoutMs)) : timeoutMs);
     try {
         const cached = await serveCachedJson(cacheKey);
         if (cached) return await cached.json();
 
-        const first = await requestShareToken(id, '', budget, timeoutMs);
+        const firstTimeout = stepTimeout();
+        if (firstTimeout === null) return { status: undefined };
+        const first = await requestShareToken(id, '', budget, firstTimeout);
         let status = classifyToken(first);
         let tokenData = first?.data;
         let passcodeVerified = false;
+        let complete = true;
         if (status === 'passcode_required' && passcode) {
-            const second = await requestShareToken(id, passcode, budget, timeoutMs);
-            const retried = classifyToken(second);
-            if (retried === 'available') {
-                status = 'available';
-                tokenData = second.data;
-                passcodeVerified = true;
-            } else if (retried === 'passcode_required' || second?.data?.code === 41007) {
-                status = 'passcode_mismatch';
-            } else if (retried) {
-                status = retried;
+            if (await failedPasscodeCount(id) >= MAX_FAILED_PASSCODES) {
+                // Not tried: report what Quark said, and do not remember it.
+                complete = false;
+            } else {
+                const secondTimeout = stepTimeout();
+                const second = secondTimeout === null ? undefined : await requestShareToken(id, passcode, budget, secondTimeout);
+                const retried = classifyToken(second);
+                if (retried === 'available') {
+                    status = 'available';
+                    tokenData = second.data;
+                    passcodeVerified = true;
+                } else if (retried === 'passcode_required' || second?.data?.code === 41007) {
+                    status = 'passcode_mismatch';
+                    const failures = await failedPasscodeCount(id);
+                    cacheJson(ctx, failedPasscodeKey(id), { count: failures + 1 }, FAILED_PASSCODE_WINDOW_SECONDS);
+                } else if (retried) {
+                    status = retried;
+                } else {
+                    // The passcode was never answered for: no conclusion.
+                    return { status: undefined };
+                }
             }
         }
         if (!status) return { status: undefined };
@@ -152,12 +187,15 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
             const title = cleanName(tokenData?.data?.title);
             if (title) result.shareTitle = title;
             if (listing) {
-                const top = await listShareTopLevel(id, tokenData.data.stoken, budget, timeoutMs).catch(() => null);
+                const listTimeout = stepTimeout();
+                const top = listTimeout === null ? null : await listShareTopLevel(id, tokenData.data.stoken, budget, listTimeout).catch(() => null);
                 if (top) Object.assign(result, top);
+                else complete = false;
             }
         }
-        // Cache only what is safe to show: a status, a title and folder names.
-        cacheJson(ctx, cacheKey, result, CHECK_CACHE_SECONDS);
+        // Cache only what is safe to show (a status, a title and folder
+        // names), and only when every step it depends on was answered.
+        if (complete) cacheJson(ctx, cacheKey, result, CHECK_CACHE_SECONDS);
         return result;
     } catch {
         return { status: undefined };

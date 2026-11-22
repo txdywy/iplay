@@ -527,7 +527,8 @@ test('the aggregate button lists verified shares with their content, copyable pa
     assert.match(page.body.text, /已隐藏 1 条/);
     assert.match(page.body.text, /✅ 分享可访问 · 内容匹配/);
     assert.match(page.body.text, /📁 繁花/);
-    assert.ok(page.body.text.includes('&lt;b&gt;x&lt;/b&gt;') || !page.body.text.includes('<b>x</b>'), 'folder names are escaped');
+    // Whichever page holds that share, its folder name arrives escaped.
+    assert.ok(!page.body.text.includes('<b>x</b>'), 'a folder name is never raw HTML');
     assert.ok(allCallbackData(page.body.reply_markup).includes('g|tv|106841|1'));
     await deliver(callback('g|tv|106841|1', { message: { message_id: 55, text: '繁花 · 聚合搜索（已核验）' } }));
     const second = sent().at(-1);

@@ -134,3 +134,66 @@ test('Quark status can read what a share holds and verify a listed passcode', as
     }), {}, { waitUntil() {} })).json();
     assert.deepEqual(plain, { unavailable: {}, unknown: [], available: ['full'], passcodeRequired: [] });
 });
+
+test('a share refuses passcode guesses after two wrong ones, whoever asks', async t => {
+    const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
+    t.after(() => Object.assign(globalThis, previous));
+    const entries = new Map();
+    globalThis.caches = { default: {
+        async match(key) { return entries.get(key.url)?.clone(); },
+        async put(key, response) { entries.set(key.url, response); }
+    } };
+    const attempts = [];
+    globalThis.fetch = async (url, options = {}) => {
+        const { pwd_id: id, passcode } = JSON.parse(options.body);
+        if (passcode) attempts.push(passcode);
+        if (passcode !== 'REAL') return Response.json({ code: 41008 }, { status: 400 });
+        return Response.json({ code: 0, data: { stoken: 'tok-' + id } });
+    };
+    const probe = async (code, client) => {
+        const writes = [];
+        const response = await worker.fetch(new Request(`https://worker.test/api/resource/quark-status?id=guessme&pwd=guessme:${code}`, {
+            headers: { 'cf-connecting-ip': client }
+        }), {}, { waitUntil(promise) { writes.push(promise); } });
+        await Promise.all(writes);
+        return response.json();
+    };
+    assert.deepEqual((await probe('aa01', '198.51.100.1')).passcodeMismatch, ['guessme']);
+    assert.deepEqual((await probe('aa02', '198.51.100.2')).passcodeMismatch, ['guessme']);
+    const third = await probe('aa03', '198.51.100.3');
+    assert.deepEqual(third.passcodeMismatch, [], 'a third guess is not submitted');
+    assert.deepEqual(third.passcodeRequired, ['guessme']);
+    assert.deepEqual(attempts, ['aa01', 'aa02'], 'Quark saw only two guesses');
+    const correct = await probe('REAL', '198.51.100.4');
+    assert.deepEqual(correct.passcodeRequired, ['guessme'], 'the cap holds even for the right code, for the rest of the hour');
+});
+
+test('a passcode Quark never answered for is not remembered as needing one', async t => {
+    const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
+    t.after(() => Object.assign(globalThis, previous));
+    const entries = new Map();
+    globalThis.caches = { default: {
+        async match(key) { return entries.get(key.url)?.clone(); },
+        async put(key, response) { entries.set(key.url, response); }
+    } };
+    let fail = true;
+    globalThis.fetch = async (url, options = {}) => {
+        const { passcode } = JSON.parse(options.body);
+        if (!passcode) return Response.json({ code: 41008 }, { status: 400 });
+        if (fail) return new Response('busy', { status: 503 });
+        return Response.json({ code: 0, data: { stoken: 'tok' } });
+    };
+    const probe = async () => {
+        const writes = [];
+        const response = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=busy1&pwd=busy1:Ab12', {
+            headers: { 'cf-connecting-ip': '198.51.100.9' }
+        }), {}, { waitUntil(promise) { writes.push(promise); } });
+        await Promise.all(writes);
+        return response.json();
+    };
+    const first = await probe();
+    assert.deepEqual(first.unknown, ['busy1'], 'an unanswered passcode is inconclusive');
+    assert.ok(![...entries.keys()].some(key => key.includes('quark-share-verify')), 'and nothing is cached');
+    fail = false;
+    assert.deepEqual((await probe()).passcodeVerified, ['busy1'], 'the next check asks again');
+});

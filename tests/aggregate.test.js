@@ -134,7 +134,7 @@ test('the 盘搜索 index contributes verified shares alongside PanSou with the 
 
 test('the indexes remain usable independently during failure, cooldown and configured disablement', async t => {
     const world = mockWorld(t, {
-        pansou: [post('pan-only', '测试剧 (2023)')], pansouFailures: 2,
+        pansou: [post('pan-only', '测试剧 (2023)')], pansouFailures: 4,
         pansousuo: [indexed('index-only', '测试剧 (2023)')],
         shares: { 'index-only': { entries: ['测试剧'] } }
     });
@@ -142,10 +142,13 @@ test('the indexes remain usable independently during failure, cooldown and confi
     const fallback = await (await aggregate(world, '测试剧', { env })).json();
     assert.equal(fallback.meta.providers.pansou.status, 'failed');
     assert.equal(fallback.results.length, 1);
+    // A second, different search must fail too before the index is skipped.
+    const second = await (await aggregate(world, '另一部剧', { env })).json();
+    assert.equal(second.meta.providers.pansou.status, 'failed');
     const duringCooldown = await (await aggregate(world, '测试剧', { env, extra: '&id=2&type=tv&year=2023' })).json();
     assert.equal(duringCooldown.meta.providers.pansou.status, 'cooldown');
     assert.equal(duringCooldown.meta.providers.pansousuo.status, 'ok');
-    assert.equal(world.calls.pansou.length, 2);
+    assert.equal(world.calls.pansou.length, 4);
     const indexOnly = await (await aggregate(world, '测试剧', { env: { ...env, PANSOU_API_URL: 'off' } })).json();
     assert.equal(indexOnly.meta.provider, 'pansousuo');
     const before = world.calls.pansousuo.length;
@@ -242,7 +245,7 @@ test('aggregate search returns only verified shares of this work, with what is i
     assert.deepEqual(byId.alive1.entries, [{ name: '测试剧 (2023) 4K', dir: true }, { name: 'readme.txt', dir: false }]);
     assert.equal(byId.alive1.totalItems, 2);
     assert.equal(byId.alive1.password, 'old1', 'a repost supplies the passcode the newest post lacks');
-    assert.equal(byId.alive1.datetime, '2025-06-01T00:00:00.000Z', 'the newest post names the share');
+    assert.equal(byId.alive1.datetime, '2024-01-01T00:00:00.000Z', 'the post that supplied the passcode names the share');
     assert.equal(byId.alive1.source, 'tg:chan1');
     assert.equal(byId.garbled.contentMatch, undefined, 'a deliberately garbled name cannot be confirmed');
     assert.equal(byId.garbled.source, 'plugin:hunhepan');
@@ -330,9 +333,11 @@ test('a stalled or failing index is a gateway error that is not cached', async t
 });
 
 test('right after the index failed, visitors are told at once; a retry still tries again', async t => {
-    const world = mockWorld(t, { pansou: [post('alive1', '测试剧 (2023)')], shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }, pansouFailures: 2 });
+    const world = mockWorld(t, { pansou: [post('alive1', '测试剧 (2023)')], shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }, pansouFailures: 4 });
     t.mock.method(console, 'warn', () => {});
     assert.equal((await aggregate(world)).status, 502);
+    // One failing search is not enough: it might be the query itself.
+    assert.equal((await aggregate(world, '第二部剧')).status, 502);
     const asked = world.calls.pansou.length;
     const quick = await aggregate(world, '别的剧');
     assert.equal(quick.status, 503);
@@ -344,8 +349,9 @@ test('right after the index failed, visitors are told at once; a retry still tri
     assert.equal((await retried.json()).results.length, 1);
 });
 
-test('the fuller answer is used when it arrives shortly after the faster one, otherwise the faster one', async t => {
-    for (const [allDelay, expectFound] of [[30, 2], [2600, 1]]) {
+test('the Telegram-only source is asked only when the fuller one fails or stalls', async t => {
+    t.mock.method(console, 'warn', () => {});
+    const run = async (label, allBehaviour) => {
         const world = mockWorld(t, {
             pansou: url => url.searchParams.get('src') === 'all'
                 ? [post('alive1', '测试剧 (2023)'), post('alive2', '测试剧 (2023) 4K')]
@@ -353,14 +359,34 @@ test('the fuller answer is used when it arrives shortly after the faster one, ot
             shares: { alive1: { title: '测试剧', entries: ['测试剧'] }, alive2: { title: '测试剧 4K', entries: ['测试剧'] } }
         });
         const answer = globalThis.fetch;
+        const asked = [];
         globalThis.fetch = async (input, options) => {
             const url = new URL(String(input));
-            if (url.searchParams.get('src') === 'all') await new Promise(resolve => globalThis.setTimeout(resolve, allDelay));
+            if (url.searchParams.has('src')) asked.push(url.searchParams.get('src'));
+            if (url.searchParams.get('src') === 'all') {
+                if (allBehaviour === 'fail') {
+                    await answer(input, options);
+                    return new Response('', { status: 503 });
+                }
+                await new Promise(resolve => globalThis.setTimeout(resolve, allBehaviour));
+            }
             return answer(input, options);
         };
-        const body = await (await aggregate(world, `测试剧${allDelay}`)).json();
-        assert.equal(body.meta.found, expectFound, allDelay < 2000 ? 'the fuller answer wins within the grace' : 'a slow fuller answer is not waited for');
-    }
+        const started = Date.now();
+        const body = await (await aggregate(world, `测试剧${label}`)).json();
+        return { body, elapsed: Date.now() - started, sources: asked };
+    };
+    const healthy = await run('healthy', 30);
+    assert.deepEqual(healthy.sources, ['all'], 'a healthy index is asked once');
+    assert.equal(healthy.body.meta.found, 2);
+    const failing = await run('failing', 'fail');
+    assert.deepEqual(failing.sources, ['all', 'tg']);
+    assert.equal(failing.body.meta.found, 1);
+    assert.ok(failing.elapsed < 2000, 'a failed fuller source is replaced at once, not after the hedge delay');
+    const stalled = await run('stalled', 4000);
+    assert.deepEqual(stalled.sources, ['all', 'tg']);
+    assert.equal(stalled.body.meta.found, 1, 'a stalled fuller source is not waited for');
+    assert.ok(stalled.elapsed >= 2400 && stalled.elapsed < 3800);
 });
 
 test('a malformed index response is a provider fault, an empty one is simply empty', async t => {
@@ -400,14 +426,13 @@ test('a verified answer is cached, and refresh checks again', async t => {
         shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }
     });
     assert.equal((await aggregate(world)).status, 200);
-    // Both sources are asked at once.
     const afterFirst = world.calls.pansou.length;
-    assert.equal(afterFirst, 2);
+    assert.equal(afterFirst, 1, 'a healthy index is asked once');
     const cached = await (await aggregate(world)).json();
     assert.equal(world.calls.pansou.length, afterFirst, 'the second search is served from the cache');
     assert.ok(cached.meta.cacheExpiresAt > Date.now());
     await aggregate(world, '测试剧', { extra: '&id=1&type=tv&year=2023&refresh=1' });
-    assert.equal(world.calls.pansou.length, afterFirst + 2, 'refresh asks the index again');
+    assert.equal(world.calls.pansou.length, afterFirst + 1, 'refresh asks the index again');
 });
 
 test('aggregate search validates its request and shares the resource rate limit', async t => {
@@ -509,5 +534,28 @@ test('cacheOnly serves a cached answer and refuses to search when there is none'
     const hit = await lookup();
     assert.equal(hit.status, 200);
     assert.equal((await hit.json()).results.length, 1);
-    assert.equal(world.calls.pansou.length, 2, 'only the one real search asked the index');
+    assert.equal(world.calls.pansou.length, 1, 'only the one real search asked the index');
+});
+
+test('the deadline bounds the Quark checks, not only when each one starts', async t => {
+    const items = Array.from({ length: 10 }, (_, index) => post(`slow${index}`, `测试剧 (2023) 版本${index}`));
+    const shares = Object.fromEntries(items.map((item, index) => [`slow${index}`, { title: `测试剧 ${index}`, entries: ['测试剧'] }]));
+    const world = mockWorld(t, { pansou: items, shares });
+    const answer = globalThis.fetch;
+    globalThis.fetch = async (input, options) => {
+        if (new URL(String(input)).hostname === 'drive-h.quark.cn') {
+            await new Promise(resolve => globalThis.setTimeout(resolve, 700));
+        }
+        return answer(input, options);
+    };
+    const { handleAggregateSearch } = await import('../worker/aggregate.js');
+    const started = Date.now();
+    const response = await handleAggregateSearch('测试剧', {}, world.ctx, { timeoutMs: 1500, id: '1', mediaType: 'tv', year: '2023' });
+    const elapsed = Date.now() - started;
+    await world.flush();
+    assert.equal(response.status, 200);
+    // Unbounded, three rounds of token + listing at 0.7 s each would take over 4 s.
+    assert.ok(elapsed < 2600, `finished in ${elapsed} ms`);
+    const body = await response.json();
+    assert.ok(body.meta.unchecked + body.meta.unknown > 0, 'what the deadline cut short is reported, not cached as final');
 });

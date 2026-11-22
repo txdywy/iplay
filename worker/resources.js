@@ -17,6 +17,7 @@ import {
     errorResponse,
     escapeRegExp,
     fetchUpstream,
+    forEachWithConcurrency,
     getErrorStatus,
     isChallengePage,
     isDeadlineExpired,
@@ -61,6 +62,7 @@ const RESOURCE_MAX_ZUIDOUYIN_POSTS = 4;
 const RESOURCE_MAX_CHANNEL_POSTS = 10;
 const RESOURCE_MAX_POSTS_PER_CHANNEL = 4;
 const RESOURCE_MAX_CHANNELS = 8;
+const CHANNEL_SEARCH_CONCURRENCY = 3;
 
 const ZUIDOUYIN_SEARCH_PAGE_SIZE = 10;
 
@@ -441,7 +443,10 @@ const RESOURCE_SEASON_SUFFIX_PATTERN = /^(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}(?:\s*[
 
 // Quality tags glued to a Han title: "长安的荔枝HDR", "繁花4K".
 const RESOURCE_QUALITY_SUFFIX_PATTERN = /^(?:hdr|uhd|hd|bd|web|dv|4k|8k|1080|2160|720)/u;
-const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:–—-]*\d{1,2}(?![\p{L}\p{N}]|\.\d)/u;
+// A sequel number after a movie's name: "冰雪奇缘 2", "冰雪奇缘.2.2019", "《冰雪奇缘》2",
+// "frozen ii". "1" is the first film itself ("流浪地球 1+2 合集"), and a decimal
+// such as "4.5G" is a size, unless what follows the dot is a year.
+const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:：.·・_》」』）)\]】–—-]*(?:[2-9]|[1-9]\d|i{2,3}|iv)(?![\p{L}\p{N}]|\.(?!(?:19|20)\d{2}(?!\d))\d)/u;
 
 export function createResourceTitleMatcher(names, mediaType = null) {
     const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
@@ -812,7 +817,8 @@ function channelPostTitle(line) {
 
 function parseChannelPosts(html, channel, matchesTitle, releaseYear, mediaType) {
     const posts = [];
-    const idPattern = new RegExp(`^<div\\b[^<>]{0,1024}\\bdata-post="${channel}/(\\d{1,12})"`);
+    // Telegram usernames are case-insensitive; a configured name may differ in case.
+    const idPattern = new RegExp(`^<div\\b[^<>]{0,1024}\\bdata-post="${channel}/(\\d{1,12})"`, "i");
     // A Telegram search page orders posts from oldest to newest.
     const messages = html.split('<div class="tgme_widget_message_wrap js-widget_message_wrap">');
     for (const message of messages.slice(1).reverse()) {
@@ -853,8 +859,16 @@ async function fetchChannelSearch(channel, query, deadline) {
 // fails only when none answered.
 async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, titleMatcher, channels = DEFAULT_QUARK_CHANNELS) {
     const matchesTitle = await titleMatcher;
-    const results = await Promise.allSettled(channels.map(async channel =>
-        parseChannelPosts(await fetchChannelSearch(channel, query, deadline), channel, matchesTitle, releaseYear, mediaType)));
+    // Three at a time: the scan already has other providers in flight, and a
+    // request that waits for a free connection loses its timeout to the queue.
+    const results = new Array(channels.length);
+    await forEachWithConcurrency(channels, CHANNEL_SEARCH_CONCURRENCY, async (channel, index) => {
+        try {
+            results[index] = { status: "fulfilled", value: parseChannelPosts(await fetchChannelSearch(channel, query, deadline), channel, matchesTitle, releaseYear, mediaType) };
+        } catch (reason) {
+            results[index] = { status: "rejected", reason };
+        }
+    });
     const answered = results.filter(result => result.status === "fulfilled");
     if (answered.length === 0) throw results[0]?.reason || createHttpError("Quark channels unavailable", 502);
     const failed = results.length - answered.length;

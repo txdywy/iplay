@@ -128,6 +128,13 @@ npm run wrangler -- dev
 
 ## 环境变量
 
+### 普通变量（`[vars]`，不是 Secret）
+
+| 名称 | 说明 |
+|------|------|
+| `QUARK_CHANNEL_SEARCH` | 设为 `1` 启用 Telegram 公开频道搜索，`wrangler.toml` 中生产和预览环境都已启用。请求只发送搜索片名，无需 Telegram 凭据 |
+| `QUARK_CHANNELS` | 可选，逗号分隔的公开频道用户名，覆盖默认的 6 个频道（`yunpanx`、`hdhhd21`、`yydf_hzl`、`Quark_Movies`、`bdbdndn11`、`baicaoZY`，按标题对得上且带夸克链接的帖子数排序选出）。最多 8 个，非法名称会被忽略，名称不区分大小写 |
+
 ### Cloudflare Worker Secrets
 
 | 名称 | 说明 |
@@ -135,8 +142,6 @@ npm run wrangler -- dev
 | `TMDB_ACCESS_TOKEN` | TMDB v4 访问令牌，推荐优先配置 |
 | `TMDB_API_KEY` | TMDB v3 API Key，作为备用 |
 | `WPZY_COOKIE` | wpzy.org 的 `bbs_token` 与可选 `bbs_sid`，仅放在 Worker Secret；不可公开、写进前端或 GitHub |
-| `QUARK_CHANNEL_SEARCH` | 设为 `1` 启用 Telegram 公开频道搜索，生产配置已启用。请求只发送搜索片名，无需 Telegram 凭据 |
-| `QUARK_CHANNELS` | 可选，逗号分隔的公开频道用户名，覆盖默认的 6 个频道（`yunpanx`、`hdhhd21`、`yydf_hzl`、`Quark_Movies`、`bdbdndn11`、`baicaoZY`，按标题对得上且带夸克链接的帖子数排序选出）。最多 8 个，非法名称会被忽略 |
 | `CORS_ALLOWED_ORIGINS` | 额外允许的前端 Origin，多个值用英文逗号分隔；线上域名与 localhost:8080 已默认允许 |
 
 ### 本地开发
