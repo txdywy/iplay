@@ -18,6 +18,7 @@ import {
     readTextWithLimit,
     releaseUpstreamResponse
 } from './core.js';
+import { handleAggregateSearch } from './aggregate.js';
 import { handleResourceSearch } from './resources.js';
 import { handleTmdbDetail, handleTmdbPersonSearch, handleTmdbSearch } from './tmdb.js';
 import { handleWikiZh } from './wiki.js';
@@ -40,6 +41,9 @@ const MESSAGE_LIMIT = 4096;
 const CAPTION_LIMIT = 1024;
 const CANDIDATE_BUTTONS = 8;
 const QUARK_PAGE_SIZE = 6;
+const AGGREGATE_PAGE_SIZE = 5;
+// A webhook's work may run about thirty seconds after Telegram is answered.
+const AGGREGATE_BOT_TIMEOUT_MS = 20000;
 const POST_PAGE_SIZE = 8;
 const ACTOR_PAGE_SIZE = 8;
 const CAST_BUTTONS = 3;
@@ -59,6 +63,7 @@ const HELP_TEXT = [
     "• <code>/actor 胡歌</code>：查看演员的全部作品",
     "",
     "在详情卡片上点 <b>🔍 夸克资源</b> 扫描网盘分享链接，点 <b>📋</b> 按钮复制提取码。",
+    "点 <b>🌐 聚合搜索</b> 可补充更多夸克分享：每条都已在夸克核验过是否有效、提取码是否可用，并显示里面的文件夹名。",
     `网页版：${SITE_URL}`
 ].join("\n");
 
@@ -561,7 +566,7 @@ async function handleCallbackQuery(query, env, ctx) {
     const editableId = typeof message.text === "string" ? message.message_id : null;
     // Opening or rescanning resources runs a scan and counts against the
     // resource limit; paging a scanned list ("r", "rp") reads its cache.
-    const isScan = action === "ro" || action === "rf";
+    const isScan = action === "ro" || action === "rf" || action === "go" || action === "gf";
 
     const limit = await enforceLimits(env, userId, isScan ? "resource" : "search");
     if (limit === "unauthorized") return answer("仅限授权用户使用", true);
@@ -588,6 +593,15 @@ async function handleCallbackQuery(query, env, ctx) {
             case "rp":
                 await answer();
                 return await showPostPage(chat, env, ctx, editableId, args);
+            case "go":
+                await answer("正在聚合搜索并逐条核验，通常需要 10–20 秒…");
+                return await showAggregatePage(chat, env, ctx, args[0], args[1], 0, { messageId: null });
+            case "gf":
+                await answer("正在重新搜索并核验…");
+                return await showAggregatePage(chat, env, ctx, args[0], args[1], 0, { messageId: editableId, refresh: true });
+            case "g":
+                await answer();
+                return await showAggregatePage(chat, env, ctx, args[0], args[1], Number(args[2]) || 0, { messageId: editableId, cacheOnly: true });
             case "w":
                 await answer();
                 return await sendSynopsis(chat, env, ctx, args[0], args[1]);
@@ -717,7 +731,7 @@ export function buildDetailCaption(detail, season = null, { hasWiki = false } = 
 
 export function buildDetailKeyboard(detail, season = null) {
     const rows = [
-        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id)],
+        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id), button("🌐 聚合搜索", "go", detail.mediaType, detail.id)],
         [button("📖 完整简介", "w", detail.mediaType, detail.id),
             ...(detail.mediaType === "tv" && detail.seasons?.length ? [button("🗂 分季", "ss", detail.id)] : [])],
         (detail.castDetails || []).filter(person => person.id).slice(0, CAST_BUTTONS)
@@ -792,7 +806,8 @@ function getWikiSummary(env, ctx, detail) {
 function followUpKeyboard(detail, extraRows = []) {
     return keyboard([
         ...extraRows,
-        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id), button("↩ 详情卡片", "d", detail.mediaType, detail.id, "")]
+        [button("🔍 夸克资源", "ro", detail.mediaType, detail.id), button("🌐 聚合搜索", "go", detail.mediaType, detail.id)],
+        [button("↩ 详情卡片", "d", detail.mediaType, detail.id, "")]
     ]);
 }
 
@@ -906,7 +921,8 @@ export function buildQuarkPage(detail, result, page, { stale = false } = {}) {
         ...copyRows,
         paginationRow(current, totalPages, next => callbackData("r", detail.mediaType, detail.id, next)),
         [button("🔄 重新扫描", "rf", detail.mediaType, detail.id),
-            ...(posts.length ? [button(`📄 资源帖 (${posts.length})`, "rp", detail.mediaType, detail.id, 0)] : [])]
+            ...(posts.length ? [button(`📄 资源帖 (${posts.length})`, "rp", detail.mediaType, detail.id, 0)] : [])],
+        [button("🌐 聚合搜索（已核验）", "go", detail.mediaType, detail.id)]
     ]);
     return { text: lines.join("\n"), markup };
 }
@@ -945,6 +961,115 @@ async function showQuarkPage(chat, env, ctx, mediaType, id, page, { messageId = 
     } catch (error) {
         logEvent("warn", "telegram_resource_failed", { error: logErrorMessage(error) });
         return show(`${resourceHeader(detail, "夸克资源")}\n\n😵 资源扫描失败：${escapeHtml(describeError(error))}`, retryMarkup);
+    }
+}
+
+const AGGREGATE_STATUS_TEXT = {
+    available: "✅ 分享可访问",
+    passcode_required: "🔒 需要提取码",
+    unknown: "❔ 暂未确认"
+};
+
+function aggregateSourceLabel(source) {
+    const [kind, name] = typeof source === "string" ? source.split(":") : [];
+    if (!name) return "";
+    return kind === "tg" ? `Telegram ${name}` : `聚合 ${name}`;
+}
+
+/**
+ * Quark shares from the aggregate search. Each one has been checked on Quark:
+ * only reachable shares are listed, with the passcode check and what is inside.
+ */
+export function buildAggregatePage(detail, data, page) {
+    const items = Array.isArray(data?.results) ? data.results.filter(item => safeHttpUrl(item?.url)) : [];
+    const meta = data?.meta || {};
+    const totalPages = Math.max(1, Math.ceil(items.length / AGGREGATE_PAGE_SIZE));
+    const current = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
+    const pageItems = items.slice(current * AGGREGATE_PAGE_SIZE, (current + 1) * AGGREGATE_PAGE_SIZE);
+
+    const lines = [resourceHeader(detail, "聚合搜索（已核验）")];
+    const summary = [`聚合源返回 ${Number(meta.found) || 0} 条，标题匹配 ${Number(meta.matched) || 0} 条，通过核验 ${Number(meta.verified) || 0} 条`];
+    if (Number(meta.hiddenCount) > 0) summary.push(`已隐藏 ${Number(meta.hiddenCount)} 条失效、受限或非影视的分享`);
+    if (Number(meta.unknown) > 0) summary.push(`${Number(meta.unknown)} 条暂未确认`);
+    if (Number(meta.unchecked) > 0) summary.push(`${Number(meta.unchecked)} 条待核验`);
+    lines.push(summary.join("；"));
+
+    let shown = 0;
+    if (items.length === 0) {
+        lines.push("", Number(meta.matched) > 0
+            ? "匹配到的分享暂时都无法访问，已为你隐藏。"
+            : "聚合源暂未找到这部作品的夸克分享，可以稍后点“重新搜索”再试。");
+    } else {
+        shown = appendWithinBudget(lines, pageItems.map((item, index) => {
+            const url = safeHttpUrl(item.url);
+            const names = (Array.isArray(item.entries) ? item.entries : []).slice(0, 2)
+                .map(entry => `${truncate(String(entry?.name || ""), 40)}${entry?.dir ? "/" : ""}`).filter(Boolean);
+            const more = Number(item.totalItems) > names.length ? ` 等 ${Number(item.totalItems)} 项` : "";
+            const origin = [aggregateSourceLabel(item.source), typeof item.datetime === "string" ? item.datetime.slice(0, 10) : ""]
+                .filter(Boolean).join(" · ");
+            return [
+                `${current * AGGREGATE_PAGE_SIZE + index + 1}. ${escapeHtml(truncate(item.shareTitle || item.title || "夸克网盘分享", 90))}`,
+                `🔗 ${htmlLink(url, truncate(url, VISIBLE_URL_LENGTH))}`,
+                item.password ? `🔑 提取码：<code>${escapeHtml(item.password)}</code>${item.passcodeVerified ? "（已核验）" : ""}` : null,
+                `${AGGREGATE_STATUS_TEXT[item.status] || AGGREGATE_STATUS_TEXT.unknown}${item.contentMatch ? " · 内容匹配" : ""}`,
+                names.length ? `📁 ${escapeHtml(names.join("、"))}${more}` : null,
+                origin ? `📌 ${escapeHtml(origin)}` : null
+            ].filter(Boolean);
+        }));
+        if (shown < pageItems.length) lines.push("", `（本页另有 ${pageItems.length - shown} 条内容过长未显示）`);
+    }
+
+    const copyButtons = pageItems.slice(0, shown)
+        .map((item, index) => item.password ? { text: `📋 复制提取码 ${current * AGGREGATE_PAGE_SIZE + index + 1}`, copy_text: { text: item.password } } : null)
+        .filter(Boolean);
+    const copyRows = [];
+    for (let index = 0; index < copyButtons.length; index += 2) copyRows.push(copyButtons.slice(index, index + 2));
+    const more = Number(meta.unchecked) > 0 || Number(meta.unknown) > 0;
+    const markup = keyboard([
+        ...copyRows,
+        paginationRow(current, totalPages, next => callbackData("g", detail.mediaType, detail.id, next)),
+        [button(more ? "🔄 继续核验" : "🔄 重新搜索", "gf", detail.mediaType, detail.id),
+            button("🔙 夸克链接", "r", detail.mediaType, detail.id, 0)]
+    ]);
+    return { text: lines.join("\n"), markup };
+}
+
+function aggregateRetryKeyboard(detail) {
+    return keyboard([[button("🔄 重新搜索", "gf", detail.mediaType, detail.id), button("🔙 夸克链接", "r", detail.mediaType, detail.id, 0)]]);
+}
+
+// Opened from a card it posts a message; paging and re-checks edit that message.
+async function showAggregatePage(chat, env, ctx, mediaType, id, page, { messageId = null, refresh = false, cacheOnly = false } = {}) {
+    const detail = await getDetail(env, ctx, mediaType, id);
+    const header = resourceHeader(detail, "聚合搜索（已核验）");
+    const retryMarkup = aggregateRetryKeyboard(detail);
+    let targetId = messageId;
+    if (!targetId && !cacheOnly) {
+        const placeholder = await chat.send(`${header}\n\n⏳ 正在聚合搜索并逐条到夸克核验，通常需要 10–20 秒…`, retryMarkup);
+        targetId = placeholder?.message_id ?? null;
+    } else if (refresh) {
+        await chat.edit(targetId, `${header}\n\n⏳ 正在重新搜索并核验…`, retryMarkup).catch(() => null);
+    }
+    const show = (text, markup) => (targetId ? chat.edit(targetId, text, markup) : chat.send(text, markup));
+
+    try {
+        const response = await handleAggregateSearch(detailTitle(detail), env, ctx, {
+            refresh, cacheOnly, timeoutMs: AGGREGATE_BOT_TIMEOUT_MS,
+            id: String(detail.id), mediaType: detail.mediaType, year: detail.year ? String(detail.year) : null
+        });
+        if (response.status === 410) {
+            const { error } = await response.json();
+            return await show(`${header}\n\n${escapeHtml(error)}`, retryMarkup);
+        }
+        const data = await readHandler(response);
+        if (data?.enabled === false) {
+            return await show(`${header}\n\n聚合搜索未启用。`, keyboard([[button("🔙 夸克链接", "r", detail.mediaType, detail.id, 0)]]));
+        }
+        const { text, markup } = buildAggregatePage(detail, data, page);
+        return await show(text, markup);
+    } catch (error) {
+        logEvent("warn", "telegram_aggregate_failed", { error: logErrorMessage(error) });
+        return show(`${header}\n\n😵 聚合搜索失败：${escapeHtml(describeError(error))}`, retryMarkup);
     }
 }
 

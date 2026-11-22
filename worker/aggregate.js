@@ -246,7 +246,9 @@ function buildResponse(candidates, checked, { found, matched }, matchesTitle) {
     };
 }
 
-export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = false, id = null, mediaType = null, year = null } = {}) {
+// `cacheOnly` answers 410 instead of searching (paging a result already shown);
+// `timeoutMs` lets a caller with less time, such as the Telegram bot, shorten the deadline.
+export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = false, cacheOnly = false, timeoutMs = TOTAL_TIMEOUT_MS, id = null, mediaType = null, year = null } = {}) {
     const request = validateResourceRequest(rawQuery, id, mediaType, year);
     if (request.error) return request.error;
     const { query, identity } = request;
@@ -257,9 +259,12 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
 
     const cacheKey = new Request(`https://aggregate-search-v1-cache.local/?base=${encodeURIComponent(base)}&src=${sources.join('+')}&q=${encodeURIComponent(query)}&id=${identity.id || ''}&type=${identity.mediaType || ''}&year=${identity.year || ''}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
+    if (cacheOnly && !cached) {
+        return jsonResponse({ error: '聚合结果已过期，请重新搜索。' }, 410, { 'Cache-Control': 'no-store' });
+    }
     const response = cached || await withInFlight(ctx, `aggregate:${cacheKey.url}:${refresh ? 'refresh' : ''}`, async () => {
         try {
-            const deadline = createDeadline(TOTAL_TIMEOUT_MS);
+            const deadline = createDeadline(Math.min(timeoutMs, TOTAL_TIMEOUT_MS));
             // The alias lookup is bounded and cached; it must not delay the search.
             const [items, aliases] = await Promise.all([
                 fetchPansou(base, query, sources, deadline),

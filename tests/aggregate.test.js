@@ -344,3 +344,24 @@ test('Quark checks allow longer than three seconds, the aggregate module longest
     assert.equal(status.status, 200);
     assert.ok(delays.includes(4500) && !delays.includes(3200), 'the shared check no longer cuts Quark off at 3.2 seconds');
 });
+
+test('cacheOnly serves a cached answer and refuses to search when there is none', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('alive1', '测试剧 (2023)')],
+        shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }
+    });
+    const lookup = async () => {
+        const { handleAggregateSearch } = await import('../worker/aggregate.js');
+        const response = await handleAggregateSearch('测试剧', {}, world.ctx, { cacheOnly: true, id: '1', mediaType: 'tv', year: '2023' });
+        await world.flush();
+        return response;
+    };
+    const miss = await lookup();
+    assert.equal(miss.status, 410);
+    assert.equal(world.calls.pansou.length, 0, 'a cache-only request never searches');
+    await aggregate(world);
+    const hit = await lookup();
+    assert.equal(hit.status, 200);
+    assert.equal((await hit.json()).results.length, 1);
+    assert.equal(world.calls.pansou.length, 1);
+});

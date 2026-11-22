@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
 import { logErrorMessage } from '../worker/core.js';
 import {
+    buildAggregatePage,
     buildQuarkPage,
     callbackData,
     buildPostPage,
@@ -397,7 +398,7 @@ test('the card score counts a Chinese Wikipedia article and follow-ups lead back
     await deliver(callback('w|tv|106841'));
     const synopsis = sent().at(-1);
     assert.match(synopsis.body.text, /中文 Wikipedia/);
-    assert.deepEqual(allCallbackData(synopsis.body.reply_markup), ['ro|tv|106841', 'd|tv|106841|']);
+    assert.deepEqual(allCallbackData(synopsis.body.reply_markup), ['ro|tv|106841', 'go|tv|106841', 'd|tv|106841|']);
 
     await deliver(callback('ss|106841'));
     assert.ok(allCallbackData(sent().at(-1).body.reply_markup).includes('d|tv|106841|'));
@@ -464,4 +465,135 @@ test('an old actor pagination button reopens the last available page', async t =
     assert.ok(page);
     assert.match(page.body.text, /第 1–1 部/);
     assert.ok(page.body.reply_markup.inline_keyboard.flat().some(button => button.text.includes('Available credit')));
+});
+
+// The aggregate index and Quark, as the bot sees them.
+function aggregateWorld(shares, { items = null, indexStatus = 200 } = {}) {
+    const posts = items || Object.keys(shares).map((id, index) => ({
+        url: `https://pan.quark.cn/s/${id}`, password: shares[id].password || '', note: `繁花 (2023) 4K 版本${index}`,
+        datetime: `2025-0${(index % 9) + 1}-01T00:00:00Z`, source: 'tg:chan'
+    }));
+    return parsed => {
+        if (parsed.hostname === 'so.252035.xyz') {
+            if (indexStatus !== 200) return new Response('down', { status: indexStatus });
+            return Response.json({ code: 0, data: { total: posts.length, merged_by_type: { quark: posts } } });
+        }
+        if (parsed.hostname === 'drive-h.quark.cn') return null;
+        return Response.json([]);
+    };
+}
+
+function quarkAnswers(shares) {
+    // Quark's endpoints, keyed by share id.
+    return async (url, options = {}) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith('/token')) {
+            const { pwd_id: id, passcode } = JSON.parse(options.body);
+            const share = shares[id];
+            if (!share || share.dead) return Response.json({ code: 41011 }, { status: 400 });
+            if (share.code && share.code !== 0 && passcode !== share.password) return Response.json({ code: 41008 }, { status: 400 });
+            return Response.json({ code: 0, data: { stoken: 'tok', title: share.title } });
+        }
+        const id = parsed.searchParams.get('pwd_id');
+        return Response.json({ code: 0, data: { list: (shares[id].entries || []).map(name => ({ file_name: name, dir: true })) }, metadata: { _total: (shares[id].entries || []).length } });
+    };
+}
+
+test('the aggregate button lists verified shares with their content, copyable passcodes and paging from the cache', async t => {
+    const shares = {
+        live0: { title: '繁花 (2023) 4K', entries: ['繁花 (2023) 4K'] },
+        live1: { title: '繁花 全30集', entries: ['繁花 S01'], code: 41008, password: 'Ab12' },
+        dead1: { dead: true },
+        live2: { title: '繁花 HDR', entries: ['繁花 HDR <b>x</b>'] },
+        live3: { title: '繁花 4K 内封', entries: ['繁花 内封'] },
+        live4: { title: '繁花 国语', entries: ['繁花 国语'] },
+        live5: { title: '繁花 1080P', entries: ['繁花 1080P'] },
+        live6: { title: '繁花 蓝光', entries: ['繁花 蓝光'] }
+    };
+    const { sent } = setup(t, { resources: aggregateWorld(shares) });
+    const base = globalThis.fetch;
+    const answer = quarkAnswers(shares);
+    globalThis.fetch = async (url, options) => (new URL(String(url)).hostname === 'drive-h.quark.cn' ? answer(url, options) : base(url, options));
+
+    await deliver(callback('go|tv|106841'));
+    const messages = sent();
+    assert.match(messages[0].body.text, /正在聚合搜索/);
+    assert.deepEqual(allCallbackData(messages[0].body.reply_markup), ['gf|tv|106841', 'r|tv|106841|0'], 'the placeholder can always be retried');
+    const page = messages.at(-1);
+    assert.equal(page.method, 'editMessageText');
+    assert.equal(page.body.message_id, messages[0].result.message_id, 'the result replaces its placeholder');
+    assert.match(page.body.text, /聚合搜索（已核验）/);
+    assert.match(page.body.text, /标题匹配 8 条，通过核验 7 条/);
+    assert.match(page.body.text, /已隐藏 1 条/);
+    assert.match(page.body.text, /✅ 分享可访问 · 内容匹配/);
+    assert.match(page.body.text, /📁 繁花/);
+    assert.ok(page.body.text.includes('&lt;b&gt;x&lt;/b&gt;') || !page.body.text.includes('<b>x</b>'), 'folder names are escaped');
+    assert.ok(allCallbackData(page.body.reply_markup).includes('g|tv|106841|1'));
+    await deliver(callback('g|tv|106841|1', { message: { message_id: 55, text: '繁花 · 聚合搜索（已核验）' } }));
+    const second = sent().at(-1);
+    assert.equal(second.method, 'editMessageText');
+    assert.equal(second.body.message_id, 55, 'paging edits the message in place');
+    assert.match(second.body.text, /\n6\. /);
+    // The share that needs a passcode shows the one Quark accepted, on one page or the other.
+    assert.match(page.body.text + second.body.text, /🔑 提取码：<code>Ab12<\/code>（已核验）/);
+    const copied = [page, second].flatMap(call => call.body.reply_markup.inline_keyboard.flat()).filter(entry => entry.copy_text);
+    assert.deepEqual(copied.map(entry => entry.copy_text.text), ['Ab12']);
+});
+
+test('a passcode that Quark accepts is shown as verified and can be copied', () => {
+    const detail = { id: 106841, mediaType: 'tv', title: '繁花', year: 2023 };
+    const data = {
+        enabled: true,
+        results: [
+            { title: '帖子', url: 'https://pan.quark.cn/s/aaa111', password: 'Ab12', status: 'available', passcodeVerified: true, contentMatch: true,
+                shareTitle: '繁花 <全集>', entries: [{ name: '繁花', dir: true }, { name: 'readme.txt', dir: false }], totalItems: 5, source: 'tg:chan', datetime: '2025-06-01T00:00:00.000Z' },
+            { title: '需要码', url: 'https://pan.quark.cn/s/bbb222', status: 'passcode_required' },
+            { title: '未确认', url: 'javascript:alert(1)', status: 'unknown' }
+        ],
+        meta: { found: 40, matched: 9, verified: 2, unknown: 1, unchecked: 3, hiddenCount: 6 }
+    };
+    const { text, markup } = buildAggregatePage(detail, data, 0);
+    assert.match(text, /聚合源返回 40 条，标题匹配 9 条，通过核验 2 条；已隐藏 6 条失效、受限或非影视的分享；1 条暂未确认；3 条待核验/);
+    assert.match(text, /1\. 繁花 &lt;全集&gt;/);
+    assert.match(text, /🔑 提取码：<code>Ab12<\/code>（已核验）/);
+    assert.match(text, /🔒 需要提取码/);
+    assert.match(text, /📁 繁花\/、readme\.txt 等 5 项/);
+    assert.match(text, /📌 Telegram chan · 2025-06-01/);
+    assert.ok(!text.includes('javascript:'), 'only http(s) links are shown');
+    const copy = markup.inline_keyboard.flat().filter(entry => entry.copy_text);
+    assert.deepEqual(copy.map(entry => entry.copy_text.text), ['Ab12']);
+    assert.ok(allCallbackData(markup).includes('gf|tv|106841'), 'unchecked shares offer to continue checking');
+    for (const data of allCallbackData(markup)) assert.ok(new globalThis.TextEncoder().encode(data).length <= 64);
+});
+
+test('an empty or unavailable aggregate search says so and can be retried', async t => {
+    const empty = buildAggregatePage({ id: 1, mediaType: 'movie', title: 'X' }, { enabled: true, results: [], meta: { found: 12, matched: 4, hiddenCount: 4 } }, 0);
+    assert.match(empty.text, /匹配到的分享暂时都无法访问/);
+    const none = buildAggregatePage({ id: 1, mediaType: 'movie', title: 'X' }, { enabled: true, results: [], meta: { found: 0, matched: 0 } }, 0);
+    assert.match(none.text, /聚合源暂未找到/);
+    assert.ok(allCallbackData(none.markup).includes('gf|movie|1'));
+
+    const { sent } = setup(t, { resources: aggregateWorld({}, { indexStatus: 502 }) });
+    t.mock.method(console, 'warn', () => {});
+    await deliver(callback('go|tv|106841'));
+    const failure = sent().at(-1);
+    assert.match(failure.body.text, /聚合搜索失败/);
+    assert.deepEqual(allCallbackData(failure.body.reply_markup), ['gf|tv|106841', 'r|tv|106841|0']);
+
+    // Paging an expired result asks for a new search instead of running one.
+    await deliver(callback('g|tv|106841|0', { message: { message_id: 60, text: '繁花 · 聚合搜索（已核验）' } }));
+    assert.match(sent().at(-1).body.text, /聚合结果已过期/);
+});
+
+test('opening or re-checking the aggregate search counts as a resource scan', async t => {
+    const { sent } = setup(t, { resources: aggregateWorld({}) });
+    const limits = [];
+    const limiter = { async limit({ key }) { limits.push(key); return { success: true }; } };
+    const env = { ...ENV, API_RATE_LIMITER: limiter, RESOURCE_RATE_LIMITER: limiter };
+    await deliver(callback('go|tv|106841'), env);
+    await deliver(callback('gf|tv|106841'), env);
+    await deliver(callback('g|tv|106841|0', { message: { message_id: 61, text: '聚合搜索' } }), env);
+    assert.ok(sent().length >= 3);
+    // Paging reads the cache, so it only needs the ordinary limit.
+    assert.deepEqual(limits.map(key => key.split(':').at(-1)), ['resource', 'resource', 'api']);
 });
