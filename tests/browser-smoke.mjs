@@ -521,6 +521,12 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const mode = window.__smoke.aggregateMode;
                 if (!mode) return json({ enabled: false, results: [], meta: {} });
                 if (mode === 'error-then-ok' && aggregateCalls.length === 1) return json({ error: 'Aggregate search unavailable' }, 502);
+                if (mode === 'thin') return json({ enabled: true, results: [], meta: { provider: 'pansou', found: 1, matched: 0, verified: 0, unknown: 0, unchecked: 0, hidden: {}, hiddenCount: 0 } });
+                if (mode === 'duplicates') return json({
+                    enabled: true,
+                    results: [{ title: 'Agg Duplicate', url: 'https://pan.quark.cn/s/large-3', status: 'available' }],
+                    meta: { provider: 'pansou', found: 30, matched: 1, verified: 1, unknown: 0, unchecked: 0, hidden: {}, hiddenCount: 0 }
+                });
                 return json({
                     enabled: true,
                     results: [
@@ -1521,6 +1527,17 @@ async function runAggregateModuleFlow() {
         'the forum scan is unaffected by an unavailable aggregate source');
     await evaluate("document.querySelector('#aggregateList button').click()");
     await waitFor("document.querySelectorAll('#aggregateList .link-item').length === 3");
+
+    await open('duplicates', 'Test Movie');
+    await waitFor("document.querySelector('#aggregateList')?.textContent.includes('都已在上方夸克直链中')");
+    assert.equal(await evaluate("document.querySelector('#aggregateActions button') === null"), true);
+
+    // A thin answer from the index offers a fresh search.
+    await open('thin', 'Fresh Movie');
+    await waitFor("document.querySelector('#aggregateActions button')?.textContent === '聚合源返回偏少，重新搜索'");
+    assert.ok((await evaluate("document.querySelector('#aggregateList').textContent")).includes('暂未找到'));
+    await evaluate("document.querySelector('#aggregateActions button').click()");
+    await waitFor("window.__smoke.aggregateCalls.length === 2 && window.__smoke.aggregateCalls[1].includes('refresh=1')");
 
     await open('', 'Retry Detail Movie');
     await waitFor("document.querySelector('#quarkUrlList a')");
