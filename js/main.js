@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.70';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.71';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.70';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.70';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.70';
-import { RELEASE_VERSION } from './release.js?v=1.0.70';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.70';
+} from './scorer.js?v=1.0.71';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.71';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.71';
+import { RELEASE_VERSION } from './release.js?v=1.0.71';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.71';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.70';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.70';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.70';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.70';
+} from './match.js?v=1.0.71';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.71';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.71';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.71';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -2769,8 +2769,12 @@ function renderAggregate(retry) {
     const items = all.filter(item => !direct.has(item.url));
     const meta = data.meta || {};
     setText(els.aggregateSummary, aggregateSummaryText(meta, all.length - items.length));
+    // Say why the list is empty: every share may already be listed above.
+    const emptyLabel = all.length > 0 ? '聚合源找到的分享都已在上方夸克直链中'
+        : meta.matched ? '匹配到的分享暂时都无法访问，已为你隐藏'
+            : '聚合源暂未找到这部作品的夸克分享';
     const options = {
-        emptyLabel: meta.matched ? '匹配到的分享暂时都无法访问，已为你隐藏' : '聚合源暂未找到这部作品的夸克分享',
+        emptyLabel,
         itemClass: 'link-item',
         cardClass: 'link-row',
         iconName: 'globe',
@@ -2787,6 +2791,8 @@ function renderAggregate(retry) {
     };
     renderLinkCards(els.aggregateList, items, options);
     const actions = [];
+    // The public index answers with very different amounts from one call to the next.
+    if ((meta.found ?? 0) < 5 && retry) actions.push({ label: '聚合源返回偏少，重新搜索', onClick: () => retry({ refresh: true }) });
     if (meta.unchecked > 0 && retry) actions.push({ label: `继续核验剩余 ${meta.unchecked} 条`, onClick: () => retry({ refresh: true }) });
     if (meta.unknown > 0 && retry) actions.push({ label: `重新核验 ${meta.unknown} 条未确认`, onClick: () => retry({ refresh: true }) });
     setAggregateActions(...actions);
