@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.68';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.69';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.68';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.68';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.68';
-import { RELEASE_VERSION } from './release.js?v=1.0.68';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.68';
+} from './scorer.js?v=1.0.69';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.69';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.69';
+import { RELEASE_VERSION } from './release.js?v=1.0.69';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.69';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.68';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.68';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.68';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.68';
+} from './match.js?v=1.0.69';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.69';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.69';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.69';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -95,6 +95,10 @@ const els = {
     resourceList: document.getElementById('resourceList'),
     zuidouyinResourceList: document.getElementById('zuidouyinResourceList'),
     quarkChannelResourceList: document.getElementById('quarkChannelResourceList'),
+    aggregatePanel: document.getElementById('aggregatePanel'),
+    aggregateList: document.getElementById('aggregateList'),
+    aggregateSummary: document.getElementById('aggregateSummary'),
+    aggregateActions: document.getElementById('aggregateActions'),
     wpzysResourceList: document.getElementById('wpzysResourceList'),
     quarkUrlList: document.getElementById('quarkUrlList'),
     preferenceForm: document.getElementById('preferenceForm'),
@@ -747,6 +751,7 @@ const ICON_PATHS = Object.freeze({
     cloud: 'M7 18a4 4 0 1 1 .6-7.95A5.5 5.5 0 0 1 18 12.5h.5a3.5 3.5 0 1 1 0 7H7Z',
     comments: 'M5 5h14v10H9l-4 3v-3H5V5Z',
     external: 'M14 4h6v6m0-6-8 8M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4',
+    globe: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17Zm0 0c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5S9.4 5.9 12 3.5ZM3.5 12h17',
     link: 'M10 13a5 5 0 0 0 7.07 0l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15m3.15 5.93a5 5 0 0 0-7.07 0l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15',
     minus: 'M5 12h14',
     plus: 'M12 5v14M5 12h14',
@@ -1455,7 +1460,7 @@ try {
     // Default to every link.
 }
 
-const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'zuidouyinResourceList', 'quarkChannelResourceList', 'wpzysResourceList'];
+const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'zuidouyinResourceList', 'quarkChannelResourceList', 'wpzysResourceList', 'aggregateList'];
 const ORIGINAL_POST_LISTS = ['resourceList', 'zuidouyinResourceList'];
 // The arguments each list was last rendered with, so the filter can redraw it.
 const linkListRenders = new WeakMap();
@@ -1467,6 +1472,7 @@ const QUARK_UNAVAILABLE_LABELS = new Map([
     ['missing', '分享不存在'],
     ['deleted', '分享已删除'],
     ['blocked', '分享已受限'],
+    ['restricted', '分享者账号受限'],
     ['invalid', '分享已失效'],
     ['cancelled', '分享已取消'],
     ['expired', '分享已过期']
@@ -1616,7 +1622,7 @@ function renderLinkOpenCount(row, badge) {
 function renderLinkCards(container, items, options, revealFocus = false) {
     const {
         emptyLabel, itemClass, cardClass, iconName, iconClass, metaClass, metaText, titleText,
-        detailText, sourceText, actionLabel, onAction, newUrls, probeSignal, initialLimit = 6
+        detailText, sourceText, actionLabel, onAction, newUrls, probeSignal, tags, initialLimit = 6
     } = options;
     if (!container) return;
     const wasExpanded = container.dataset.expanded === 'true';
@@ -1723,6 +1729,13 @@ function renderLinkCards(container, items, options, revealFocus = false) {
                 const badge = document.createElement('span');
                 badge.className = 'link-tag link-tag-new';
                 badge.textContent = '本次新增';
+                title.appendChild(badge);
+            }
+            // Static badges for results the Worker has already verified.
+            for (const { text, tone } of (tags ? tags(item) : [])) {
+                const badge = document.createElement('span');
+                badge.className = `link-tag link-tag-${tone}`;
+                badge.textContent = text;
                 title.appendChild(badge);
             }
             const shareId = probeSignal && quarkShareId(item.url);
@@ -2665,6 +2678,177 @@ function createResourceRetry(candidate, searchId, searchOptions, loadId) {
     };
 }
 
+// ---- Aggregate search: a separate module of Quark shares found through a public
+// search index and verified on Quark. It loads on its own so a slow or
+// unavailable index never delays the forum scan.
+const AGGREGATE_HIDDEN_LABELS = [
+    ['失效或已取消', ['missing', 'missing_files', 'deleted', 'invalid', 'cancelled', 'expired']],
+    ['分享者受限', ['restricted', 'blocked']],
+    ['提取码不符', ['passcode_mismatch']],
+    ['非影视内容', ['not_video']]
+];
+let aggregateState = null;
+
+function setAggregateActions(...buttons) {
+    clearNode(els.aggregateActions);
+    for (const { label, onClick } of buttons) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ui-button text-xs';
+        button.textContent = label;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await onClick();
+            } finally {
+                button.disabled = false;
+            }
+        });
+        els.aggregateActions.appendChild(button);
+    }
+}
+
+function resetAggregateModule() {
+    aggregateState = null;
+    if (!els.aggregatePanel) return;
+    els.aggregatePanel.hidden = true;
+    linkListRenders.delete(els.aggregateList);
+    clearNode(els.aggregateList);
+    clearNode(els.aggregateActions);
+    setText(els.aggregateSummary, '');
+    setResourceCount(els.aggregateList, 0);
+    updateResourceToolbar();
+}
+
+function aggregateSummaryText(meta, shown, duplicates) {
+    const parts = [`聚合源返回 ${meta.found ?? 0} 条`, `标题匹配 ${meta.matched ?? 0} 条`, `通过核验 ${shown + duplicates} 条`];
+    if (duplicates) parts.push(`${duplicates} 条已在上方夸克直链中`);
+    const hidden = AGGREGATE_HIDDEN_LABELS
+        .map(([label, reasons]) => [label, reasons.reduce((sum, reason) => sum + (Number(meta.hidden?.[reason]) || 0), 0)])
+        .filter(([, count]) => count > 0)
+        .map(([label, count]) => `${label} ${count}`);
+    if (hidden.length) parts.push(`已隐藏：${hidden.join('、')}`);
+    if (meta.unchecked) parts.push(`${meta.unchecked} 条待核验`);
+    return parts.join(' · ');
+}
+
+function aggregateSourceLabel(source) {
+    const [kind, name] = typeof source === 'string' ? source.split(':') : [];
+    if (!name) return '';
+    return kind === 'tg' ? `Telegram ${name}` : `聚合 ${name}`;
+}
+
+function aggregateTags(item) {
+    const tags = [];
+    if (item.status === 'available') tags.push({ text: item.passcodeVerified ? '提取码已核验' : '分享可访问', tone: 'available' });
+    else if (item.status === 'passcode_required') tags.push({ text: '需要提取码', tone: 'status' });
+    else tags.push({ text: '暂未确认', tone: 'status' });
+    if (item.contentMatch) tags.push({ text: '内容匹配', tone: 'match' });
+    return tags;
+}
+
+function aggregateContentText(item) {
+    const entries = Array.isArray(item.entries) ? item.entries : [];
+    const names = entries.slice(0, 2).map(entry => (entry.dir ? `${entry.name}/` : entry.name));
+    const extra = Number(item.totalItems) > names.length ? ` 等 ${item.totalItems} 项` : '';
+    return [
+        names.length ? `内容：${names.join('、')}${extra}` : '',
+        aggregateSourceLabel(item.source),
+        typeof item.datetime === 'string' ? item.datetime.slice(0, 10) : ''
+    ].filter(Boolean).join(' · ');
+}
+
+function renderAggregate(retry) {
+    const data = aggregateState?.data;
+    if (!els.aggregatePanel || !data) return;
+    els.aggregatePanel.hidden = false;
+    // The forum scan lists its own Quark links; show only what is new here.
+    const direct = new Set(linkListRenders.get(els.quarkUrlList)?.urls || []);
+    const all = Array.isArray(data.results) ? data.results : [];
+    const items = all.filter(item => !direct.has(item.url));
+    const meta = data.meta || {};
+    setText(els.aggregateSummary, aggregateSummaryText(meta, items.length, all.length - items.length));
+    const options = {
+        emptyLabel: meta.matched ? '匹配到的分享暂时都无法访问，已为你隐藏' : '聚合源暂未找到这部作品的夸克分享',
+        itemClass: 'link-item',
+        cardClass: 'link-row',
+        iconName: 'globe',
+        iconClass: 'res-icon h-4 w-4 shrink-0 mt-1',
+        metaClass: 'mt-2 text-xs font-mono text-cinema-400 break-all',
+        metaText: item => item.url.replace(/^https?:\/\//, ''),
+        titleText: item => item.shareTitle || item.title || 'Quark link',
+        detailText: item => (formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : ''),
+        sourceText: aggregateContentText,
+        tags: aggregateTags,
+        actionLabel: item => (formatQuarkCopyText(item) ? '复制密码' : ''),
+        onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
+        initialLimit: 9
+    };
+    renderLinkCards(els.aggregateList, items, options);
+    const actions = [];
+    if (meta.unchecked > 0 && retry) actions.push({ label: `继续核验剩余 ${meta.unchecked} 条`, onClick: () => retry({ refresh: true }) });
+    if (meta.unknown > 0 && retry) actions.push({ label: `重新核验 ${meta.unknown} 条未确认`, onClick: () => retry({ refresh: true }) });
+    setAggregateActions(...actions);
+}
+
+function renderAggregateLoading() {
+    if (!els.aggregatePanel) return;
+    els.aggregatePanel.hidden = false;
+    setText(els.aggregateSummary, '正在聚合搜索并逐条核验分享，通常需要几秒…');
+    clearNode(els.aggregateActions);
+    renderResourceStatus(els.aggregateList, {
+        title: '正在核验夸克分享', detail: '检查链接是否有效、提取码能否通过，并读取分享内容',
+        iconName: 'globe', iconClass: 'text-accent-gold'
+    });
+}
+
+function renderAggregateError(retry) {
+    if (!els.aggregatePanel) return;
+    els.aggregatePanel.hidden = false;
+    setText(els.aggregateSummary, '');
+    clearNode(els.aggregateActions);
+    renderResourceStatus(els.aggregateList, {
+        title: '聚合搜索暂时不可用', detail: '第三方聚合源没有响应，不影响上面的资源；稍后重试通常即可恢复',
+        iconName: 'globe', iconClass: 'text-accent-gold', isLoading: false,
+        actionLabel: '重试聚合搜索', onAction: () => retry({ refresh: true })
+    });
+}
+
+async function loadAggregate(candidate, searchId, searchOptions, loadId, { refresh = false } = {}) {
+    if (!els.aggregatePanel || !isActiveSearch(searchId, loadId)) return;
+    const query = candidate.title || candidate.originalTitle;
+    const queryKey = resourceQueryKey(candidate);
+    const identity = { mediaId: candidate.id, mediaType: candidate.mediaType, year: candidate.year };
+    const isCurrent = () => isActiveSearch(searchId, loadId) && resourceQueryKey(candidate) === queryKey;
+    const retry = options => loadAggregate(candidate, searchId, searchOptions, loadId, options);
+    // A retry of the forum scan keeps a good result instead of searching
+    // again; its retry control moves to the current request.
+    if (!refresh && aggregateState?.queryKey === queryKey && aggregateState.data) {
+        aggregateState.retry = retry;
+        renderAggregate(retry);
+        return;
+    }
+    aggregateState = { queryKey, data: aggregateState?.queryKey === queryKey ? aggregateState.data : null };
+    if (!aggregateState.data) renderAggregateLoading();
+    try {
+        const data = await ResourceAPI.aggregate(query, searchOptions, { refresh, identity });
+        if (!isCurrent()) return;
+        if (!data || data.enabled === false) {
+            resetAggregateModule();
+            return;
+        }
+        aggregateState = { queryKey, data, retry };
+        renderAggregate(retry);
+        updateResourceToolbar();
+    } catch (error) {
+        if (error?.name === 'AbortError' || !isCurrent()) return;
+        console.debug('Aggregate search skipped:', error);
+        // Keep an earlier result if a refresh fails.
+        if (aggregateState?.data) renderAggregate(retry);
+        else renderAggregateError(retry);
+    }
+}
+
 function renderResourceLists(resourceResult, newUrls, signal) {
     const { resources, zuidouyinResources, wpzysResources, quarkChannelResources, resourceMeta } = resourceResult;
     renderResourceList(els.resourceList, resources, newUrls, resourceMeta?.providers?.by669 === 'failed');
@@ -2673,6 +2857,8 @@ function renderResourceLists(resourceResult, newUrls, signal) {
     renderResourceList(els.quarkChannelResourceList, quarkChannelResources, newUrls);
     renderWpzysResourceList(wpzysResources, resourceMeta, newUrls);
     renderQuarkUrls(resourceResult.quarkUrls, newUrls, signal);
+    // The forum scan's Quark links decide which aggregate results are new.
+    if (aggregateState?.data) renderAggregate(aggregateState.retry);
     return resources.length + zuidouyinResources.length + wpzysResources.length + quarkChannelResources.length;
 }
 
@@ -2713,9 +2899,11 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
         // Detail retries rotate the load ID and abort signal. Bind the
         // retained data and its retry controls to the current request.
         renderResourceResult(resourceResultState, createResourceRetry(candidate, searchId, searchOptions, loadId), searchOptions.signal);
+        void loadAggregate(candidate, searchId, searchOptions, loadId);
         return;
     }
     resourceLoadStarted = false;
+    if (aggregateState?.queryKey !== resourceQueryKey(candidate)) resetAggregateModule();
     for (const id of RESOURCE_LIST_IDS) {
         const container = els[id];
         if (container) delete container.dataset.expanded;
@@ -2764,6 +2952,8 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
     const identity = { mediaId: candidate.id, mediaType: candidate.mediaType, year: candidate.year };
     const isCurrent = () => isActiveSearch(searchId, loadId) && resourceQueryKey(candidate) === queryKey;
     const retry = createResourceRetry(candidate, searchId, searchOptions, loadId);
+    // The aggregate module loads on its own, in parallel with the forum scan.
+    void loadAggregate(candidate, searchId, searchOptions, loadId);
 
     try {
         if (useCache && resourceResultState?.queryKey !== queryKey) {

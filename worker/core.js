@@ -360,8 +360,10 @@ function checkLocalRateLimit(key, limit = RATE_LIMIT) {
 export async function checkRateLimit(ip, path, env) {
     const isResourceRoute = path === "/api/resource";
     const isQuarkStatus = path === "/api/resource/quark-status";
-    const useResourceLimiter = isResourceRoute || isQuarkStatus;
-    const routeKey = isQuarkStatus ? "quark-status" : isResourceRoute ? "resource" : "api";
+    // The aggregate search fans out to a search API and several Quark checks.
+    const isAggregate = path === "/api/resource/aggregate";
+    const useResourceLimiter = isResourceRoute || isQuarkStatus || isAggregate;
+    const routeKey = isQuarkStatus ? "quark-status" : isAggregate ? "aggregate" : isResourceRoute ? "resource" : "api";
     // Quark checks have their own binding; until it is deployed they share
     // the resource budget rather than failing closed.
     const binding = isQuarkStatus

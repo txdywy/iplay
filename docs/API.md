@@ -450,7 +450,40 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 ### 6.1 夸克分享状态
 
-`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
+`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`restricted`（分享者账号被限制）、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
+
+#### 聚合搜索（独立模块）
+
+```text
+GET /api/resource/aggregate?q={query}&id={id}&type={movie|tv}&year={year}&refresh=1
+```
+
+与论坛扫描分开：它向 PanSou 兼容的公开聚合搜索接口（默认 `https://so.252035.xyz`，可用 `PANSOU_API_URL` 换成自建实例）查询夸克分享，再逐条到夸克核对。参数与 `/api/resource` 相同，`id` 与 `type` 必须同时提供（用于加入 TMDB 别名匹配）。
+
+处理步骤：
+
+1. 先用 `src=all` 查询，失败或超时后改用更快的 `src=tg`（Telegram 频道）重试一次。
+2. 保留标题（含别名）和年份与作品相符的结果，丢弃小说、有声书、原声、解说等非影视内容，按分享去重，新帖优先。
+3. 对每个分享向夸克公开分享接口取令牌：已列出提取码且分享要求提取码时只提交一次该提取码；令牌有效再读取顶层文件夹名（最多 4 项）。每次调用最多向夸克发 36 个请求，超出的候选记为 `unchecked`。
+4. 只返回可访问的分享；已失效、被取消、分享者受限、提取码不符和非影视内容只计入 `meta.hidden`。
+
+```json
+{
+  "enabled": true,
+  "results": [{
+    "title": "帖子标题", "url": "https://pan.quark.cn/s/…", "password": "abcd",
+    "status": "available", "passcodeVerified": true, "contentMatch": true,
+    "shareTitle": "分享标题", "entries": [{"name": "文件夹", "dir": true}], "totalItems": 3,
+    "source": "tg:channel", "datetime": "2025-06-01T00:00:00.000Z"
+  }],
+  "meta": {"provider": "pansou", "found": 136, "matched": 14, "verified": 1, "unknown": 0, "unchecked": 0,
+           "hidden": {"invalid": 9, "cancelled": 1, "restricted": 3}, "hiddenCount": 13, "cacheExpiresAt": 0}
+}
+```
+
+`status` 为 `available`（令牌已颁发；`passcodeVerified` 表示提取码经验证可用）、`passcode_required`（需要提取码但没有可验证的提取码）或 `unknown`（检查没有结论）。`contentMatch` 表示分享自己的标题或文件夹名对得上作品名；刻意混淆的名字无法确认，仅不带这个标记。令牌、分享者等夸克返回的其他字段不会缓存或返回。
+
+成功结果缓存 10 分钟（有 `unknown` 或 `unchecked` 时 2 分钟），失败不缓存；`refresh=1` 重新查询聚合源，已核验的单个分享状态仍使用 5 分钟缓存，因此重复「继续核验」会逐步核对剩余的分享。聚合源不可用返回 `502`/`504`，`PANSOU_API_URL=off` 或 `AGGREGATE_SEARCH=0` 时返回 `{"enabled": false}`。与 `/api/resource` 共用每分钟 10 次的资源限流额度。
 
 ---
 

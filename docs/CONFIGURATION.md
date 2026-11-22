@@ -19,6 +19,9 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
 | `WPZY_COOKIE` | Optional | — | Login cookie (`bbs_token`, `bbs_sid`) of a dedicated read-only wpzy.org account, sent only to WPZY search and thread pages. Requires the `WPZY_CACHE_SESSION` Durable Object binding in production. |
 | `CRON_REFRESH_TITLES` | Optional | — | Comma-separated titles whose resource scans the scheduled trigger refreshes. The refresh warms the cache of the data centre the trigger runs in. |
+| `PANSOU_API_URL` | Optional | `https://so.252035.xyz` | Base URL of a [PanSou](https://github.com/fish2018/pansou)-compatible search API used by the aggregate module. The default is a public community instance that can be slow or unavailable; self-hosting your own is more dependable. Must be `https` without credentials; `off` disables the module. |
+| `PANSOU_SOURCE` | Optional | `all`, then `tg` | Pins the index source (`all`, `tg` or `plugin`). By default `all` is tried first and `tg` (Telegram channels only, faster) is the fallback. |
+| `AGGREGATE_SEARCH` | Optional | enabled | Set to `0` to disable the aggregate module. |
 | `TELEGRAM_BOT_TOKEN` | Optional | — | Enables the Telegram bot. See [TELEGRAM.md](TELEGRAM.md) for setup. |
 | `TELEGRAM_ALLOWED_USERS` | Optional | — | Comma-separated Telegram user IDs allowed to use the bot. Empty means public, rate-limited per user. |
 | `TELEGRAM_SETUP_SECRET` | Required for setup | — | Independent bearer secret (at least 16 characters, different from the bot token) for registering the Telegram webhook. |
