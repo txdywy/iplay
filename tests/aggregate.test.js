@@ -296,9 +296,11 @@ test('a thin answer from the index is cached only briefly, a full one for longer
 
 test('a share whose first check is inconclusive is checked once more within the same request', async t => {
     const world = mockWorld(t, {
-        pansou: [post('flaky1', '测试剧 (2023) 4K'), post('down1', '测试剧 (2023) 1080P')],
+        pansou: [post('ok1', '测试剧 (2023) 4K'), post('ok2', '测试剧 (2023) HDR'), post('flaky1', '测试剧 (2023) 全集'), post('down1', '测试剧 (2023) 1080P')],
         shares: {
-            flaky1: { throwsOnce: true, title: '测试剧 4K', entries: ['测试剧'] },
+            ok1: { title: '测试剧 4K', entries: ['测试剧'] },
+            ok2: { title: '测试剧 HDR', entries: ['测试剧'] },
+            flaky1: { throwsOnce: true, title: '测试剧 全集', entries: ['测试剧'] },
             down1: { throws: true }
         }
     });
@@ -309,7 +311,17 @@ test('a share whose first check is inconclusive is checked once more within the 
     assert.equal(world.calls.token.filter(call => call.id === 'flaky1').length, 2);
     assert.equal(world.calls.token.filter(call => call.id === 'down1').length, 2);
     assert.equal(body.meta.unknown, 1);
-    assert.equal(body.meta.verified, 1);
+    assert.equal(body.meta.verified, 3);
+});
+
+test('when most first-pass checks fail, Quark is not asked again', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('down1', '测试剧 (2023) 4K'), post('down2', '测试剧 (2023) 1080P'), post('down3', '测试剧 (2023) HDR')],
+        shares: { down1: { throws: true }, down2: { throws: true }, down3: { throws: true } }
+    });
+    const body = await (await aggregate(world)).json();
+    assert.equal(body.meta.unknown, 3);
+    assert.equal(world.calls.token.length, 3, 'one attempt each: no second pass while Quark is failing');
 });
 
 test('Quark checks allow longer than three seconds, the aggregate module longest', async t => {
