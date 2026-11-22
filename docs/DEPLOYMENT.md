@@ -206,3 +206,26 @@ Cloudflare Workers Builds 已连接此仓库：main 推送运行 Wrangler 生产
 - 生产环境更新后，先验证一个中文片名，再验证一个英文片名
 - 发布时同步更新 `VERSION`、`package.json` / lockfile、`js/release.js`、`index.html` 和 `js/` 中的 `?v=`，再运行 `npm run build` 生成对应版本的单文件入口；版本契约测试与 CI 产物检查共同防止新旧文件混用。
 - GitHub Pages 和 Worker 均部署完成后运行 `npm run test:live`；只有 HTML、`assets/app.min.js`、全部源码模块、CSS、VERSION 与本地发布逐字相同，Worker 的 `X-iPlay-Version` 一致且核心 API 校验成功，才算本次发布验证完成。可选数据源可用性会单独报告。
+
+
+## 自建 PanSou（让聚合搜索稳定）
+
+「聚合搜索」默认使用 PanSou 的公共演示实例 `so.252035.xyz`。它由社区维护、所有人共用，经常过载：2026-11-22 实测，从 Worker 发出的 5 次请求全部超时，直连时也有一半请求卡满 30 秒或返回 400。iPlay 已经做了这些处理：
+
+- 两个来源并行请求，谁先成功用谁。
+- 源头失败后 90 秒内直接提示「暂时不可用」，不让每个访客干等。
+- 失败不影响其他来源的结果。
+
+要稳定可用，需要自己部署一个实例。PanSou 是开源项目（<https://github.com/fish2018/pansou>），提供 Docker 镜像：
+
+```sh
+# 纯 API 版，默认监听 8888 端口
+docker run -d --name pansou --restart unless-stopped -p 8888:8888 ghcr.io/fish2018/pansou:latest
+```
+
+1. 在任意有公网的服务器或容器平台上运行上面的镜像。频道、插件、代理等选项见项目 README 的环境变量说明。
+2. 通过 HTTPS 对外提供服务，例如反向代理或 Cloudflare Tunnel。Worker 只接受 `https` 地址。
+3. 在 Worker 的变量中设置 `PANSOU_API_URL=https://你的域名`，然后重新部署。缓存键包含这个地址，切换后会立即使用新实例。
+4. 用 `curl "https://你的域名/api/search?kw=繁花&cloud_types=quark&res=merge"` 确认能返回 `merged_by_type.quark`。
+
+不想使用聚合搜索时，设置 `PANSOU_API_URL=off` 即可关闭这个模块，其他来源不受影响。

@@ -214,8 +214,44 @@ test('a stalled or failing index is a gateway error that is not cached', async t
     assert.equal(response.status, 502);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.deepEqual(await response.json(), { error: 'Aggregate search unavailable' });
-    assert.equal(world.cache.entries.size, 0);
-    assert.deepEqual(world.calls.pansou.map(url => url.searchParams.get('src')), ['all', 'tg']);
+    const keys = [...world.cache.entries.keys()];
+    assert.ok(!keys.some(key => key.startsWith('https://aggregate-search-')), 'no search result is cached');
+    assert.ok(keys.some(key => key.startsWith('https://aggregate-index-down-')), 'the outage is remembered briefly');
+    assert.deepEqual(world.calls.pansou.map(url => url.searchParams.get('src')).sort(), ['all', 'tg'], 'both sources were asked at once');
+});
+
+test('right after the index failed, visitors are told at once; a retry still tries again', async t => {
+    const world = mockWorld(t, { pansou: [post('alive1', '测试剧 (2023)')], shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }, pansouFailures: 2 });
+    t.mock.method(console, 'warn', () => {});
+    assert.equal((await aggregate(world)).status, 502);
+    const asked = world.calls.pansou.length;
+    const quick = await aggregate(world, '别的剧');
+    assert.equal(quick.status, 503);
+    assert.equal(quick.headers.get('retry-after'), '60');
+    assert.match((await quick.json()).error, /聚合源刚刚没有响应/);
+    assert.equal(world.calls.pansou.length, asked, 'nobody waits on an index that just failed');
+    const retried = await aggregate(world, '测试剧', { extra: '&id=1&type=tv&year=2023&refresh=1' });
+    assert.equal(retried.status, 200, 'an explicit retry asks the index again');
+    assert.equal((await retried.json()).results.length, 1);
+});
+
+test('the fuller answer is used when it arrives shortly after the faster one, otherwise the faster one', async t => {
+    for (const [allDelay, expectFound] of [[30, 2], [2600, 1]]) {
+        const world = mockWorld(t, {
+            pansou: url => url.searchParams.get('src') === 'all'
+                ? [post('alive1', '测试剧 (2023)'), post('alive2', '测试剧 (2023) 4K')]
+                : [post('alive1', '测试剧 (2023)')],
+            shares: { alive1: { title: '测试剧', entries: ['测试剧'] }, alive2: { title: '测试剧 4K', entries: ['测试剧'] } }
+        });
+        const answer = globalThis.fetch;
+        globalThis.fetch = async (input, options) => {
+            const url = new URL(String(input));
+            if (url.searchParams.get('src') === 'all') await new Promise(resolve => globalThis.setTimeout(resolve, allDelay));
+            return answer(input, options);
+        };
+        const body = await (await aggregate(world, `测试剧${allDelay}`)).json();
+        assert.equal(body.meta.found, expectFound, allDelay < 2000 ? 'the fuller answer wins within the grace' : 'a slow fuller answer is not waited for');
+    }
 });
 
 test('a malformed index response is a provider fault, an empty one is simply empty', async t => {
@@ -255,13 +291,14 @@ test('a verified answer is cached, and refresh checks again', async t => {
         shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }
     });
     assert.equal((await aggregate(world)).status, 200);
+    // Both sources are asked at once.
     const afterFirst = world.calls.pansou.length;
-    assert.equal(afterFirst, 1);
+    assert.equal(afterFirst, 2);
     const cached = await (await aggregate(world)).json();
     assert.equal(world.calls.pansou.length, afterFirst, 'the second search is served from the cache');
     assert.ok(cached.meta.cacheExpiresAt > Date.now());
     await aggregate(world, '测试剧', { extra: '&id=1&type=tv&year=2023&refresh=1' });
-    assert.equal(world.calls.pansou.length, afterFirst + 1, 'refresh asks the index again');
+    assert.equal(world.calls.pansou.length, afterFirst + 2, 'refresh asks the index again');
 });
 
 test('aggregate search validates its request and shares the resource rate limit', async t => {
@@ -363,5 +400,5 @@ test('cacheOnly serves a cached answer and refuses to search when there is none'
     const hit = await lookup();
     assert.equal(hit.status, 200);
     assert.equal((await hit.json()).results.length, 1);
-    assert.equal(world.calls.pansou.length, 1);
+    assert.equal(world.calls.pansou.length, 2, 'only the one real search asked the index');
 });
