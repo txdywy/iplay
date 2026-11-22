@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.80';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.81';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.80';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.80';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.80';
-import { RELEASE_VERSION } from './release.js?v=1.0.80';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.80';
+} from './scorer.js?v=1.0.81';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.81';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.81';
+import { RELEASE_VERSION } from './release.js?v=1.0.81';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.81';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.80';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.80';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.80';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.80';
+} from './match.js?v=1.0.81';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.81';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.81';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.81';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
