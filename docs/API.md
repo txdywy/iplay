@@ -452,6 +452,8 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 `GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`restricted`（分享者账号被限制）、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
 
+可选参数：`content=1` 同时读取每个可访问分享的顶层内容，响应多一个 `content` 对象（分享 ID → `{items, names}`，`items` 为 0 表示空分享）；`pwd={shareId}:{提取码}` 提交页面上列出的提取码（只在夸克要求提取码时尝试一次），响应多 `passcodeVerified`（提取码可用）和 `passcodeMismatch`（提取码不符）。不带这些参数时响应与之前完全相同。
+
 #### 聚合搜索（独立模块）
 
 ```text

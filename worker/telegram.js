@@ -842,7 +842,7 @@ async function sendSeasons(chat, env, ctx, id) {
 function describeResourceProviders(meta) {
     const providers = meta?.providers || {};
     const failed = Object.entries(providers).filter(([, status]) => status === "failed").map(([name]) => ({
-        by669: "By669", wpzys: "WPZY", zuidouyin: "醉都音", quarkChannel: "Telegram 夸克影视"
+        by669: "By669", wpzys: "WPZY", zuidouyin: "醉都音", quarkChannel: "Telegram 频道"
     }[name] || name));
     return failed.length ? `⚠️ ${failed.join("、")} 暂时不可用，结果可能不完整。` : meta?.partial ? "⚠️ 部分资源页未能读取，结果可能不完整。" : "";
 }

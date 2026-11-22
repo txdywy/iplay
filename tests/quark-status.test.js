@@ -77,3 +77,60 @@ test('Quark status distinguishes accessible, protected, unavailable and unknown 
         assert.ok(!/secret-token|private/.test(await entry.text()));
     }
 });
+
+test('Quark status can read what a share holds and verify a listed passcode', async t => {
+    const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
+    t.after(() => Object.assign(globalThis, previous));
+    const entries = new Map();
+    globalThis.caches = { default: {
+        async match(key) { return entries.get(key.url)?.clone(); },
+        async put(key, response) { entries.set(key.url, response); }
+    } };
+    const passcodeAttempts = [];
+    const shares = {
+        full: { items: ['繁花 (2023) 4K', 'readme.txt'] },
+        empty: { items: [] },
+        locked: { passcode: 'Ab12', items: ['繁花 全30集'] },
+        wrongcode: { passcode: 'REAL' },
+        nocode: { passcode: 'zz99' }
+    };
+    globalThis.fetch = async (url, options = {}) => {
+        const parsed = new URL(url);
+        if (parsed.pathname.endsWith('/token')) {
+            const { pwd_id: id, passcode } = JSON.parse(options.body);
+            if (passcode) passcodeAttempts.push([id, passcode]);
+            const share = shares[id];
+            if (share.passcode && passcode !== share.passcode) return Response.json({ code: 41008 }, { status: 400 });
+            return Response.json({ code: 0, data: { stoken: 'tok-' + id, author: 'private' } });
+        }
+        const id = parsed.searchParams.get('pwd_id');
+        assert.equal(parsed.searchParams.get('stoken'), 'tok-' + id);
+        return Response.json({ code: 0, data: { list: shares[id].items.map(name => ({ file_name: name, dir: !name.includes('.') })) }, metadata: { _total: shares[id].items.length } });
+    };
+    const params = new globalThis.URLSearchParams([
+        ...Object.keys(shares).map(id => ['id', id]),
+        ['pwd', 'locked:Ab12'], ['pwd', 'wrongcode:nope'], ['pwd', 'bogus:<script>'], ['content', '1']
+    ]);
+    const response = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?' + params, {
+        headers: { 'cf-connecting-ip': 'quark-content' }
+    }), {}, { waitUntil() {} });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.available, ['full', 'empty', 'locked']);
+    assert.deepEqual(body.passcodeRequired, ['nocode'], 'no listed passcode: the share still asks for one');
+    assert.deepEqual(body.passcodeVerified, ['locked']);
+    assert.deepEqual(body.passcodeMismatch, ['wrongcode']);
+    assert.deepEqual(body.content, {
+        full: { items: 2, names: ['繁花 (2023) 4K', 'readme.txt'] },
+        empty: { items: 0, names: [] },
+        locked: { items: 1, names: ['繁花 全30集'] }
+    });
+    assert.deepEqual(passcodeAttempts.sort(), [['locked', 'Ab12'], ['wrongcode', 'nope']], 'only listed, well-formed passcodes are tried, once');
+    assert.ok(!JSON.stringify(body).includes('tok-') && !JSON.stringify(body).includes('private'));
+
+    // Without the new parameters the answer is unchanged.
+    const plain = await (await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=full', {
+        headers: { 'cf-connecting-ip': 'quark-plain' }
+    }), {}, { waitUntil() {} })).json();
+    assert.deepEqual(plain, { unavailable: {}, unknown: [], available: ['full'], passcodeRequired: [] });
+});

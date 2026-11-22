@@ -203,6 +203,11 @@ function buildResponse(candidates, checked, { found, matched }, matchesTitle) {
             continue;
         }
         const { status } = result;
+        // Reachable but holding nothing is as useless as a dead link.
+        if (status === 'available' && result.totalItems === 0) {
+            hidden.empty = (hidden.empty || 0) + 1;
+            continue;
+        }
         if (status === 'available' && isNonVideoShare(result)) {
             hidden.not_video = (hidden.not_video || 0) + 1;
             continue;

@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.75';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.76';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.75';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.75';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.75';
-import { RELEASE_VERSION } from './release.js?v=1.0.75';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.75';
+} from './scorer.js?v=1.0.76';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.76';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.76';
+import { RELEASE_VERSION } from './release.js?v=1.0.76';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.76';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.75';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.75';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.75';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.75';
+} from './match.js?v=1.0.76';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.76';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.76';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.76';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1315,7 +1315,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
 
     const meta = resourceResult?.resourceMeta || {};
     const providers = meta.providers || {};
-    const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音', quarkChannel: 'Telegram 夸克影视' };
+    const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音', quarkChannel: 'Telegram 频道' };
     const failedProviders = Object.entries(providers)
         .filter(([, status]) => status === 'failed')
         .map(([provider]) => providerLabels[provider] || provider);
@@ -1478,6 +1478,39 @@ const QUARK_UNAVAILABLE_LABELS = new Map([
     ['expired', '分享已过期']
 ]);
 
+// One standard for every Quark link on the page: reachable or not, whether a
+// listed passcode works, and whether the share holds anything.
+function describeQuarkCheck(result, id) {
+    const reason = Object.hasOwn(result?.unavailable || {}, id) ? result.unavailable[id] : undefined;
+    if (QUARK_UNAVAILABLE_LABELS.has(reason)) return { status: reason, label: QUARK_UNAVAILABLE_LABELS.get(reason), tone: 'unavailable' };
+    if (Array.isArray(result?.passcodeMismatch) && result.passcodeMismatch.includes(id)) {
+        return { status: 'passcode_mismatch', label: '提取码不符', tone: 'unavailable' };
+    }
+    if (Array.isArray(result?.passcodeRequired) && result.passcodeRequired.includes(id)) {
+        return { status: 'passcode_required', label: '需要提取码', tone: 'status' };
+    }
+    if (Array.isArray(result?.available) && result.available.includes(id)) {
+        return describeQuarkContent(Array.isArray(result.passcodeVerified) && result.passcodeVerified.includes(id), result.content?.[id]);
+    }
+    return { status: 'unknown', label: '暂未确认', tone: 'status' };
+}
+
+function describeQuarkContent(passcodeVerified, content) {
+    const base = passcodeVerified ? '提取码可用' : '分享可访问';
+    const items = Number(content?.items);
+    if (!content || !Number.isInteger(items)) return { status: 'available', label: base, tone: 'available' };
+    if (items === 0) return { status: 'empty', label: `${base} · 无内容`, tone: 'warn' };
+    const names = Array.isArray(content.names) ? content.names.filter(name => typeof name === 'string').slice(0, 4) : [];
+    return { status: 'available', label: `${base} · ${items} 项内容`, tone: 'available', detail: names.join(' / ') };
+}
+
+function paintQuarkBadge(badge, outcome) {
+    for (const tone of ['available', 'unavailable', 'warn']) badge.classList.toggle(`link-tag-${tone}`, outcome.tone === tone);
+    badge.textContent = outcome.label;
+    if (outcome.detail) badge.title = `分享内容：${outcome.detail}`;
+    else badge.removeAttribute('title');
+}
+
 function checkQuarkRows(rows, signal) {
     if (!rows.length || !signal || signal.aborted) return;
     let verification = quarkChecksBySignal.get(signal);
@@ -1486,39 +1519,31 @@ function checkQuarkRows(rows, signal) {
         quarkChecksBySignal.set(signal, verification);
     }
     const now = Date.now();
-    const unchecked = [...new Set(rows.map(({ id }) => id))]
-        .filter(id => (verification.checks.get(id)?.expiresAt ?? 0) <= now);
+    const unchecked = [...new Map(rows.map(row => [row.id, row])).values()]
+        .filter(row => (verification.checks.get(row.id)?.expiresAt ?? 0) <= now);
     for (let offset = 0; offset < unchecked.length; offset += QUARK_CHECK_BATCH_SIZE) {
-        const ids = unchecked.slice(offset, offset + QUARK_CHECK_BATCH_SIZE);
+        const batchRows = unchecked.slice(offset, offset + QUARK_CHECK_BATCH_SIZE);
+        const ids = batchRows.map(row => row.id);
+        const passcodes = batchRows.filter(row => row.password).map(row => `${row.id}:${row.password}`);
         const batch = verification.queue
-            .then(() => ResourceAPI.checkQuarkLinks(ids, { signal }))
+            .then(() => ResourceAPI.checkQuarkLinks(ids, { signal }, { passcodes, content: true }))
             .then(result => result, () => null);
         verification.queue = batch;
         for (const id of ids) {
             const check = { expiresAt: Infinity };
             check.result = batch.then(result => {
-                const reason = Object.hasOwn(result?.unavailable || {}, id) ? result.unavailable[id] : undefined;
-                let status = 'unknown';
-                if (QUARK_UNAVAILABLE_LABELS.has(reason)) status = reason;
-                else if (Array.isArray(result?.passcodeRequired) && result.passcodeRequired.includes(id)) status = 'passcode_required';
-                else if (Array.isArray(result?.available) && result.available.includes(id)) status = 'available';
-                check.expiresAt = Date.now() + (status === 'unknown' ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
-                return status;
+                const outcome = describeQuarkCheck(result, id);
+                check.unknown = outcome.status === 'unknown';
+                check.expiresAt = Date.now() + (check.unknown ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
+                return outcome;
             });
             verification.checks.set(id, check);
         }
     }
     for (const { id, badge } of rows) {
-        void verification.checks.get(id).result.then(status => {
+        void verification.checks.get(id).result.then(outcome => {
             if (signal.aborted || !badge.isConnected) return;
-            const failure = QUARK_UNAVAILABLE_LABELS.get(status);
-            badge.classList.toggle('link-tag-unavailable', Boolean(failure));
-            badge.classList.toggle('link-tag-available', status === 'available');
-            badge.textContent = failure ?? {
-                available: '分享可访问',
-                passcode_required: '需要提取码',
-                unknown: '暂未确认'
-            }[status];
+            paintQuarkBadge(badge, outcome);
         });
     }
 }
@@ -1744,7 +1769,7 @@ function renderLinkCards(container, items, options, revealFocus = false) {
                 badge.className = 'link-tag link-tag-status';
                 badge.textContent = '待检查';
                 title.appendChild(badge);
-                quarkRows.push({ id: shareId, badge });
+                quarkRows.push({ id: shareId, badge, password: formatQuarkCopyText(item) });
             }
 
             const meta = document.createElement('div');
@@ -2148,7 +2173,8 @@ function renderQuarkUrls(quarkUrls, newUrls, probeSignal) {
         titleText: item => item.title || 'Quark link',
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
         sourceText: item => {
-            if (item.sourceUrl?.startsWith('https://t.me/s/Quark_Movies/')) return '来源：Telegram 夸克影视';
+            const channel = channelLabel(item.sourceUrl);
+            if (channel) return `来源：${channel}`;
             return item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : '';
         },
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
@@ -2685,7 +2711,8 @@ const AGGREGATE_HIDDEN_LABELS = [
     ['失效或已取消', ['missing', 'missing_files', 'deleted', 'invalid', 'cancelled', 'expired']],
     ['分享者受限', ['restricted', 'blocked']],
     ['提取码不符', ['passcode_mismatch']],
-    ['非影视内容', ['not_video']]
+    ['非影视内容', ['not_video']],
+    ['空分享', ['empty']]
 ];
 let aggregateState = null;
 
@@ -2741,8 +2768,12 @@ function aggregateSourceLabel(source) {
 
 function aggregateTags(item) {
     const tags = [];
-    if (item.status === 'available') tags.push({ text: item.passcodeVerified ? '提取码已核验' : '分享可访问', tone: 'available' });
-    else if (item.status === 'passcode_required') tags.push({ text: '需要提取码', tone: 'status' });
+    if (item.status === 'available') {
+        // The same wording as every other Quark link on the page.
+        const content = Array.isArray(item.entries) ? { items: Number(item.totalItems) || item.entries.length, names: item.entries.map(entry => entry.name) } : null;
+        const outcome = describeQuarkContent(Boolean(item.passcodeVerified), content);
+        tags.push({ text: outcome.label, tone: outcome.tone });
+    } else if (item.status === 'passcode_required') tags.push({ text: '需要提取码', tone: 'status' });
     else tags.push({ text: '暂未确认', tone: 'status' });
     if (item.contentMatch) tags.push({ text: '内容匹配', tone: 'match' });
     return tags;
@@ -2787,7 +2818,7 @@ function renderAggregate(retry) {
         tags: aggregateTags,
         actionLabel: item => (formatQuarkCopyText(item) ? '复制密码' : ''),
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
-        initialLimit: 9
+        initialLimit: 6
     };
     renderLinkCards(els.aggregateList, items, options);
     const actions = [];
@@ -2856,14 +2887,87 @@ async function loadAggregate(candidate, searchId, searchOptions, loadId, { refre
     }
 }
 
+// "频道 @name" for a post in a public Telegram channel.
+function channelLabel(url) {
+    const name = /^https:\/\/t\.me\/s\/([A-Za-z][A-Za-z0-9_]{4,31})\/\d+$/.exec(url || '')?.[1];
+    return name ? `频道 @${name}` : '';
+}
+
+// Sources whose own column lists the Quark links found in their posts. The
+// forum links (By669, WPZY) stay in the 夸克直链 column.
+const SOURCE_SHARE_COLUMNS = ['zuidouyin', 'quarkChannel'];
+
+function resourcePagesFor(resourceResult) {
+    const pages = resourceResultState?.result === resourceResult ? resourceResultState.pages : resourceResult.resourceMeta?.pages;
+    return Array.isArray(pages) ? pages : [];
+}
+
+// The Quark links each source's posts produced, with the reconciled passcode
+// of the combined list where the same share appears there.
+function sharesBySource(resourceResult) {
+    const combined = new Map((resourceResult.quarkUrls || []).map(item => [item.url, item]));
+    const bySource = new Map();
+    for (const page of resourcePagesFor(resourceResult)) {
+        const source = page?.source || '';
+        if (!bySource.has(source)) bySource.set(source, new Map());
+        const shares = bySource.get(source);
+        for (const item of Array.isArray(page.quarkUrls) ? page.quarkUrls : []) {
+            if (!item?.url || shares.has(item.url)) continue;
+            const { title, url, password, sourceUrl, sourceTitle } = combined.get(item.url) || item;
+            shares.set(url, {
+                title: title || page.title, url, ...(password ? { password } : {}),
+                sourceUrl: sourceUrl || page.url, sourceTitle: sourceTitle || page.title, _postUrl: page.url
+            });
+        }
+    }
+    return bySource;
+}
+
+// A source column: the Quark links its posts held, checked like every other
+// link, then any of its posts that held none (so the post can still be read).
+function renderSourceShares(container, shares, posts, newUrls, signal, { emptyLabel }) {
+    const postsWithShares = new Set(shares.map(share => share._postUrl));
+    const items = [...shares, ...(Array.isArray(posts) ? posts : []).filter(post => post?.url && !postsWithShares.has(post.url))];
+    renderLinkCards(container, items, {
+        emptyLabel,
+        itemClass: 'link-item',
+        cardClass: 'link-row',
+        iconName: 'cloud',
+        iconClass: 'res-icon h-4 w-4 shrink-0 mt-1',
+        metaClass: 'mt-2 text-xs font-mono text-cinema-400 break-all',
+        metaText: item => (quarkShareId(item.url) ? item.url.replace(/^https?:\/\//, '') : `原帖 · ${safeHostname(item.url)}`),
+        titleText: item => item.title || 'Quark link',
+        detailText: item => (formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : ''),
+        sourceText: item => channelLabel(item.sourceUrl || item.url)
+            || (item.sourceTitle && item.sourceTitle !== item.title ? `原帖：${item.sourceTitle}` : ''),
+        actionLabel: item => (formatQuarkCopyText(item) ? '复制密码' : ''),
+        onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
+        newUrls,
+        probeSignal: signal,
+        initialLimit: 6
+    });
+}
+
 function renderResourceLists(resourceResult, newUrls, signal) {
     const { resources, zuidouyinResources, wpzysResources, quarkChannelResources, resourceMeta } = resourceResult;
+    const bySource = sharesBySource(resourceResult);
+    const sourceShares = source => [...(bySource.get(source)?.values() || [])];
     renderResourceList(els.resourceList, resources, newUrls, resourceMeta?.providers?.by669 === 'failed');
-    renderResourceList(els.zuidouyinResourceList, zuidouyinResources, newUrls, resourceMeta?.providers?.zuidouyin === 'failed');
-    els.quarkChannelResourceList.closest('section').hidden = !quarkChannelResources.length;
-    renderResourceList(els.quarkChannelResourceList, quarkChannelResources, newUrls);
+    if (resourceMeta?.providers?.zuidouyin === 'failed' && !zuidouyinResources.length) {
+        renderResourceList(els.zuidouyinResourceList, [], newUrls, true);
+    } else {
+        renderSourceShares(els.zuidouyinResourceList, sourceShares('zuidouyin'), zuidouyinResources, newUrls, signal, { emptyLabel: '暂未匹配到醉都音资源' });
+    }
+    const channelShares = sourceShares('quarkChannel');
+    els.quarkChannelResourceList.closest('section').hidden = !quarkChannelResources.length && !channelShares.length;
+    renderSourceShares(els.quarkChannelResourceList, channelShares, quarkChannelResources, newUrls, signal, { emptyLabel: '暂未匹配到频道资源' });
     renderWpzysResourceList(wpzysResources, resourceMeta, newUrls);
-    renderQuarkUrls(resourceResult.quarkUrls, newUrls, signal);
+    // 夸克直链 keeps the forum links; a share only found by a source with its
+    // own column is listed there instead of twice.
+    const forumUrls = new Set([...bySource].filter(([source]) => !SOURCE_SHARE_COLUMNS.includes(source))
+        .flatMap(([, shares]) => [...shares.keys()]));
+    const sourceOnly = new Set(SOURCE_SHARE_COLUMNS.flatMap(sourceShares).map(share => share.url).filter(url => !forumUrls.has(url)));
+    renderQuarkUrls((resourceResult.quarkUrls || []).filter(item => !sourceOnly.has(item.url)), newUrls, signal);
     // The forum scan's Quark links decide which aggregate results are new.
     if (aggregateState?.data) renderAggregate(aggregateState.retry);
     return resources.length + zuidouyinResources.length + wpzysResources.length + quarkChannelResources.length;

@@ -543,6 +543,17 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     }
                 });
             }
+            if (url.pathname === '/api/resource/quark-status' && window.__smoke.resourceMode === 'sources') {
+                (window.__smoke.quarkStatusCalls = window.__smoke.quarkStatusCalls || []).push(url.search);
+                const ids = url.searchParams.getAll('id');
+                const content = { forum1: { items: 2, names: ['Forum folder', 'readme.txt'] }, zdy1: { items: 1, names: ['ZDY folder'] }, tg1: { items: 3, names: ['TG folder'] }, tgempty: { items: 0, names: [] } };
+                return json({
+                    unavailable: {}, unknown: [], available: ids, passcodeRequired: [],
+                    passcodeVerified: url.searchParams.getAll('pwd').map(entry => entry.split(':')[0]).filter(id => ids.includes(id)),
+                    passcodeMismatch: [],
+                    content: Object.fromEntries(ids.filter(id => content[id]).map(id => [id, content[id]]))
+                });
+            }
             if (url.pathname === '/api/resource/quark-status') {
                 if (window.__smoke.resourceMode !== 'cached-refresh') return json({
                     unavailable: {}, unknown: [], available: url.searchParams.getAll('id'), passcodeRequired: []
@@ -651,6 +662,28 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         quarkUrls: Array.from({ length: 8 }, (_, index) => ({
                             title: 'Retained Quark', url: 'https://pan.quark.cn/s/retained' + (index ? '-' + index : ''), password: 'keep'
                         }))
+                    });
+                }
+                if (window.__smoke.resourceMode === 'sources') {
+                    const share = (id, title, sourceUrl, extra = {}) => ({ title, url: 'https://pan.quark.cn/s/' + id, sourceUrl, sourceTitle: title + ' 帖', ...extra });
+                    const forum = share('forum1', 'Forum share', 'https://by669.org/d/77');
+                    const zdy = share('zdy1', 'ZDY share', 'https://zuidouyin.com/?p=9', { password: 'Ab12' });
+                    const tg = share('tg1', 'Channel share', 'https://t.me/s/yunpanx/55');
+                    const empty = share('tgempty', 'Empty share', 'https://t.me/s/yunpanx/55');
+                    return json({
+                        resources: [{ title: 'By669 post', url: 'https://by669.org/d/77' }],
+                        zuidouyinResources: [{ title: '醉都音帖', url: 'https://zuidouyin.com/?p=9' }, { title: '醉都音无链接帖', url: 'https://zuidouyin.com/?p=10' }],
+                        quarkChannelResources: [{ title: '频道帖', url: 'https://t.me/s/yunpanx/55' }],
+                        wpzysResources: [],
+                        quarkUrls: [forum, zdy, tg, empty],
+                        resourceMeta: {
+                            providers: { by669: 'ok', wpzys: 'ok', zuidouyin: 'ok', quarkChannel: 'ok' },
+                            pages: [
+                                { url: 'https://by669.org/d/77', source: 'by669', status: 'ok', title: 'By669 post', quarkUrls: [forum] },
+                                { url: 'https://zuidouyin.com/?p=9', source: 'zuidouyin', status: 'ok', title: '醉都音帖', quarkUrls: [zdy] },
+                                { url: 'https://t.me/s/yunpanx/55', source: 'quarkChannel', status: 'ok', title: '频道帖', quarkUrls: [tg, empty] }
+                            ]
+                        }
                     });
                 }
                 if (window.__smoke.resourceMode) return json({
@@ -1498,9 +1531,10 @@ async function runAggregateModuleFlow() {
     assert.equal(await evaluate("document.getElementById('aggregateCount').textContent"), '3');
     assert.equal(await evaluate("[...document.querySelectorAll('#aggregateList .link-index')].map(node => node.textContent).join()"), '01,02,03');
     const rows = await evaluate("[...document.querySelectorAll('#aggregateList .link-item')].map(row => row.textContent)");
-    assert.ok(rows[0].includes('Agg Verified Folder') && rows[0].includes('分享可访问') && rows[0].includes('内容匹配'));
+    // The same wording as every other Quark link: reachable, and how much the share holds.
+    assert.ok(rows[0].includes('Agg Verified Folder') && rows[0].includes('分享可访问 · 3 项内容') && rows[0].includes('内容匹配'));
     assert.ok(rows[0].includes('内容：Agg Verified Folder/') && rows[0].includes('Telegram chan') && rows[0].includes('2025-06-01'));
-    assert.ok(rows[1].includes('提取码已核验') && rows[1].includes('提取码：Qx9z'));
+    assert.ok(rows[1].includes('提取码可用') && rows[1].includes('提取码：Qx9z'));
     assert.ok(rows[2].includes('需要提取码'));
     assert.ok(!rows.some(text => text.includes('Agg Duplicate')), 'a share already listed as a direct link is not repeated');
     const summary = await evaluate("document.getElementById('aggregateSummary').textContent");
@@ -1543,6 +1577,41 @@ async function runAggregateModuleFlow() {
     await waitFor("document.querySelector('#quarkUrlList a')");
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.equal(await evaluate("document.getElementById('aggregatePanel').hidden"), true, 'a disabled module leaves no empty panel');
+}
+
+// Each source lists the Quark links its own posts held; every link is checked
+// for reachability, a listed passcode and whether the share holds anything.
+async function runSourceColumnsFlow() {
+    await command('Page.navigate', { url: baseUrl });
+    await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+    await evaluate("window.__smoke.resourceMode = 'sources'; window.__smoke.quarkStatusCalls = []");
+    await search('Test Movie');
+    await assertSearchReady('Test Movie');
+    await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    await waitFor("document.querySelector('#quarkChannelResourceList [data-link-url=\"https://pan.quark.cn/s/tgempty\"] .link-tag-warn')");
+    const urls = id => evaluate(`[...document.querySelectorAll('#${id} .link-item')].map(row => row.dataset.linkUrl)`);
+    assert.deepEqual(await urls('quarkUrlList'), ['https://pan.quark.cn/s/forum1'], '夸克直链 keeps the forum links');
+    assert.deepEqual(await urls('zuidouyinResourceList'), ['https://pan.quark.cn/s/zdy1', 'https://zuidouyin.com/?p=10'],
+        'a source column lists its shares, then its posts that held none');
+    assert.deepEqual(await urls('quarkChannelResourceList'), ['https://pan.quark.cn/s/tg1', 'https://pan.quark.cn/s/tgempty']);
+    const badge = (list, id) => evaluate(`document.querySelector('#${list} [data-link-url="https://pan.quark.cn/s/${id}"] .link-tag-status')?.textContent`);
+    assert.equal(await badge('quarkUrlList', 'forum1'), '分享可访问 · 2 项内容');
+    assert.equal(await badge('zuidouyinResourceList', 'zdy1'), '提取码可用 · 1 项内容');
+    assert.equal(await badge('quarkChannelResourceList', 'tg1'), '分享可访问 · 3 项内容');
+    assert.equal(await badge('quarkChannelResourceList', 'tgempty'), '分享可访问 · 无内容');
+    assert.ok((await evaluate("document.querySelector('#quarkChannelResourceList .link-item').textContent")).includes('频道 @yunpanx'));
+    assert.ok((await evaluate("document.querySelector('#zuidouyinResourceList [data-link-url=\"https://zuidouyin.com/?p=10\"]').textContent")).includes('原帖 · zuidouyin.com'));
+    const calls = await evaluate('window.__smoke.quarkStatusCalls');
+    assert.ok(calls.every(call => call.includes('content=1')), 'every check also reads the share contents');
+    assert.ok(calls.some(call => decodeURIComponent(call).includes('pwd=zdy1:Ab12')), 'a listed passcode is sent for checking');
+    // Desktop: the second row of sources lines up with the first.
+    const aligned = await evaluate(`(() => {
+        if (window.innerWidth < 1024) return true;
+        const left = id => Math.round(document.getElementById(id).closest('section').getBoundingClientRect().left);
+        return left('zuidouyinResourceList') === left('quarkUrlList') && left('quarkChannelResourceList') === left('resourceList');
+    })()`);
+    assert.equal(aligned, true);
+    assert.equal(await evaluate("(document.querySelectorAll('#resourcesSection .res-badge').length)"), 6);
 }
 
 async function runDeepLinkFlow() {
@@ -1741,7 +1810,7 @@ async function runResourceCacheAndQuarkStatusFlow() {
     await evaluate("window.__smoke.releaseQuarkChecks()");
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已删除'");
     await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-status')?.textContent === '暂未确认'");
-    assert.match(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"]').textContent"), /需要提取码.*来源：Telegram 夸克影视/s);
+    assert.match(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"]').textContent"), /需要提取码.*频道 @Quark_Movies/s);
     const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-copy')";
     // Advance beyond the unknown-status retry window while keeping known statuses cached.
     await evaluate("(() => { const now = Date.now.bind(Date); Date.now = () => now() + 3100; })()");
@@ -2227,6 +2296,7 @@ async function runDetailRetryRecoveryIdentityFlow() {
 try {
     await runResourceKeyboardAndLongTitleFlow();
     await runAggregateModuleFlow();
+    await runSourceColumnsFlow();
     await runTypingDuringSearchFlow();
     await runCompleteResourceVisibilityFlow();
     await runUnscannedResourceStatusFlow();

@@ -57,8 +57,10 @@ const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
 
 const RESOURCE_MAX_ZUIDOUYIN_POSTS = 4;
 
-const RESOURCE_MAX_CHANNEL_POSTS = 4;
-const QUARK_CHANNEL = "Quark_Movies";
+// Posts read from all channels together, per channel, and channels searched.
+const RESOURCE_MAX_CHANNEL_POSTS = 10;
+const RESOURCE_MAX_POSTS_PER_CHANNEL = 4;
+const RESOURCE_MAX_CHANNELS = 8;
 
 const ZUIDOUYIN_SEARCH_PAGE_SIZE = 10;
 
@@ -784,8 +786,51 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = nul
     return [...matches.values()];
 }
 
-async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, titleMatcher) {
-    const url = new URL(`https://t.me/s/${QUARK_CHANNEL}`);
+// Public Telegram channels whose search pages list Quark shares. Ranked by
+// how many of their posts both name a test work in the title and carry a
+// Quark link (five titles, 2026-11). QUARK_CHANNELS overrides the list.
+export const DEFAULT_QUARK_CHANNELS = ["yunpanx", "hdhhd21", "yydf_hzl", "Quark_Movies", "bdbdndn11", "baicaoZY"];
+
+export function getQuarkChannels(env) {
+    const configured = typeof env?.QUARK_CHANNELS === "string" ? env.QUARK_CHANNELS : "";
+    const channels = configured.split(",").map(name => name.trim()).filter(name => /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(name));
+    return [...new Set(channels.length ? channels : DEFAULT_QUARK_CHANNELS)].slice(0, RESOURCE_MAX_CHANNELS);
+}
+
+// Channels title their posts differently: "名称：繁花", "【标题】：繁花",
+// "🎬 《繁花》"; the work's name is what follows such a label.
+function channelPostTitle(line) {
+    return line
+        .replace(/^(?:\s|\p{Extended_Pictographic}|\uFE0F|\u200D|[★☆✨▶►◆◇■□●○·•|｜-])+/u, "")
+        .replace(/^【?\s*(?:资源)?(?:名称|标题|片名|剧名)\s*】?\s*[:：]\s*/u, "")
+        .replace(/^(?:\s|\p{Extended_Pictographic}|\uFE0F|\u200D)+/u, "")
+        .slice(0, 300)
+        .trim();
+}
+
+function parseChannelPosts(html, channel, matchesTitle, releaseYear, mediaType) {
+    const posts = [];
+    const idPattern = new RegExp(`^<div\\b[^<>]{0,1024}\\bdata-post="${channel}/(\\d{1,12})"`);
+    // A Telegram search page orders posts from oldest to newest.
+    const messages = html.split('<div class="tgme_widget_message_wrap js-widget_message_wrap">');
+    for (const message of messages.slice(1).reverse()) {
+        if (posts.length >= RESOURCE_MAX_POSTS_PER_CHANNEL) break;
+        const id = message.match(idPattern)?.[1];
+        if (!id || posts.some(post => post.id === id)) continue;
+        const text = message.match(/<div class="tgme_widget_message_text js-message_text"[^<>]*>([^]*?)<\/div>/)?.[1];
+        if (!text) continue;
+        const lines = text.split(/<br\b[^<>]*>/i).slice(0, 4).map(line => stripInlineHtml(line).trim()).filter(Boolean);
+        const title = channelPostTitle(lines[0] || "");
+        if (!title || /壁纸|更新目录|资源目录|预告片|解说|混剪/.test(title)
+            || !matchesTitle(title) || !resourceTitleHasYear(lines.slice(0, 3).join(" "), releaseYear, mediaType)
+            || !collectQuarkUrls(text, 1).length) continue;
+        posts.push({ id, title, url: `https://t.me/s/${channel}/${id}`, isQuark: true, source: "quarkChannel", text });
+    }
+    return posts;
+}
+
+async function fetchChannelSearch(channel, query, deadline) {
+    const url = new URL(`https://t.me/s/${channel}`);
     url.searchParams.set("q", query);
     const response = await fetchUpstream(url.href, {
         headers: { Accept: "text/html" },
@@ -799,27 +844,32 @@ async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, t
     if (!html.includes('class="tgme_channel_history js-message_history"') || isChallengePage(html)) {
         throw createHttpError("Quark channel returned an unrecognized search page", 502);
     }
+    return html;
+}
 
+// Searches every channel at once. A channel that fails is skipped; the source
+// fails only when none answered.
+async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, titleMatcher, channels = DEFAULT_QUARK_CHANNELS) {
     const matchesTitle = await titleMatcher;
-    const posts = new Map();
-    // A Telegram search page orders posts from oldest to newest.
-    const messages = html.split('<div class="tgme_widget_message_wrap js-widget_message_wrap">');
-    for (const message of messages.slice(1).reverse()) {
-        if (posts.size >= RESOURCE_MAX_CHANNEL_POSTS) break;
-        const id = message.match(/^<div\b[^<>]{0,1024}\bdata-post="Quark_Movies\/(\d{1,12})"/)?.[1];
-        if (!id || posts.has(id)) continue;
-        const text = message.match(/<div class="tgme_widget_message_text js-message_text"[^<>]*>([^]*?)<\/div>/)?.[1];
-        if (!text) continue;
-        const firstLine = stripInlineHtml(text.split(/<br\b[^<>]*>/i, 1)[0]);
-        const title = firstLine.match(/^名称\s*[:：]\s*(.{1,300})$/)?.[1]?.trim();
-        if (!title || /壁纸|更新目录|资源目录|预告片|解说|混剪/.test(title)
-            || !matchesTitle(title) || !resourceTitleHasYear(title, releaseYear, mediaType)
-            || !collectQuarkUrls(text, 1).length) continue;
-        posts.set(id, {
-            title, url: `https://t.me/s/${QUARK_CHANNEL}/${id}`, isQuark: true, source: "quarkChannel", text
-        });
+    const results = await Promise.allSettled(channels.map(async channel =>
+        parseChannelPosts(await fetchChannelSearch(channel, query, deadline), channel, matchesTitle, releaseYear, mediaType)));
+    const answered = results.filter(result => result.status === "fulfilled");
+    if (answered.length === 0) throw results[0]?.reason || createHttpError("Quark channels unavailable", 502);
+    const failed = results.length - answered.length;
+    if (failed) logEvent("warn", "quark_channels_partial", { failed, channels: results.length });
+    // Interleave channels so one busy channel cannot crowd out the others.
+    const lists = answered.map(result => result.value);
+    const posts = [];
+    for (let index = 0; posts.length < RESOURCE_MAX_CHANNEL_POSTS && lists.some(list => index < list.length); index += 1) {
+        for (const list of lists) {
+            if (index < list.length && posts.length < RESOURCE_MAX_CHANNEL_POSTS) {
+                const post = { ...list[index] };
+                delete post.id;
+                posts.push(post);
+            }
+        }
     }
-    return [...posts.values()];
+    return posts;
 }
 
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
@@ -1027,7 +1077,7 @@ export async function handleResourceSearch(rawQuery, env, ctx, { refresh = false
         ? await handleResourceSearchUncoalesced(query, ctx, options)
         : await withInFlight(
             ctx,
-            `resource:${wpzySession.cacheScope}:${generation}:${env.QUARK_CHANNEL_SEARCH === "1" ? "channel:" : ""}${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
+            `resource:${wpzySession.cacheScope}:${generation}:${env.QUARK_CHANNEL_SEARCH === "1" ? `channels=${getQuarkChannels(env).join("+")}:` : ""}${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
             () => handleResourceSearchUncoalesced(query, ctx, options)
         );
     const clientResponse = response.clone();
@@ -1088,7 +1138,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
     query = queryCheck.value;
 
     const channelEnabled = env.QUARK_CHANNEL_SEARCH === "1";
-    const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}${channelEnabled ? "&channel=1" : ""}`);
+    const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}${channelEnabled ? `&channels=${getQuarkChannels(env).join("+")}` : ""}`);
     let cacheKey = keyForGeneration(generation);
     const invalidateSession = () => sessionState(generation, true).catch(async error => {
         logEvent("warn", "wpzy_cache_revocation_failed", { error: logErrorMessage(error) });
@@ -1129,7 +1179,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             fetchBy669Resources(query, deadline, identity.year, identity.mediaType, titleMatcher),
             fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType, titleMatcher),
             fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType, titleMatcher),
-            channelEnabled ? fetchQuarkChannelPosts(query, deadline, identity.year, identity.mediaType, titleMatcher) : null
+            channelEnabled ? fetchQuarkChannelPosts(query, deadline, identity.year, identity.mediaType, titleMatcher, getQuarkChannels(env)) : null
         ]);
 
         const providerResults = Object.entries({

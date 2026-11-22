@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.75" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.76" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..800&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..800&display=swap">
@@ -285,7 +285,7 @@
                                 <h4 id="quarkHeading" class="card-title">夸克直链</h4>
                                 <span id="quarkCount" class="res-count" hidden></span>
                             </div>
-                            <p class="card-caption">从原帖提取的分享链接，可直接打开</p>
+                            <p class="card-caption">By669 与 WPZY 原帖提取，逐条核验</p>
                         </div>
                     </header>
                     <ul id="quarkUrlList" class="link-list" data-count-target="quarkCount"></ul>
@@ -299,27 +299,10 @@
                                     <h4 id="sourceHeading" class="card-title">网盘资源社 · By669</h4>
                                     <span id="postsCount" class="res-count" hidden></span>
                                 </div>
+                                <p class="card-caption">By669 论坛里匹配的资源帖</p>
                             </div>
                         </header>
                         <ul id="resourceList" class="link-list" data-count-target="postsCount"></ul>
-                    </section>
-                    <section aria-labelledby="zuidouyinHeading" class="card res-col res-posts">
-                        <header class="card-head res-head">
-                            <div class="res-title-row">
-                                <h4 id="zuidouyinHeading" class="card-title">醉都音</h4>
-                                <span id="zuidouyinCount" class="res-count" hidden></span>
-                            </div>
-                        </header>
-                        <ul id="zuidouyinResourceList" class="link-list" data-count-target="zuidouyinCount"></ul>
-                    </section>
-                    <section aria-labelledby="quarkChannelHeading" class="card res-col res-posts" hidden>
-                        <header class="card-head res-head">
-                            <div class="res-title-row">
-                                <h4 id="quarkChannelHeading" class="card-title">Telegram 夸克影视</h4>
-                                <span id="quarkChannelCount" class="res-count" hidden></span>
-                            </div>
-                        </header>
-                        <ul id="quarkChannelResourceList" class="link-list" data-count-target="quarkChannelCount"></ul>
                     </section>
                 </div>
                 <div class="resource-stack">
@@ -337,6 +320,32 @@
                         <ul id="wpzysResourceList" class="link-list" data-count-target="forumCount"></ul>
                     </section>
                 </div>
+                <section aria-labelledby="zuidouyinHeading" class="card res-col res-zdy">
+                    <header class="card-head res-head">
+                        <span class="res-badge" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h7l4 4v13H7a1.5 1.5 0 0 1-1.5-1.5V5A1.5 1.5 0 0 1 7 3.5ZM14 3.5V8h4M9 12h6M9 15.5h6"></path></svg></span>
+                        <div class="min-w-0">
+                            <div class="res-title-row">
+                                <h4 id="zuidouyinHeading" class="card-title">醉都音</h4>
+                                <span id="zuidouyinCount" class="res-count" hidden></span>
+                            </div>
+                            <p class="card-caption">站内帖子里提取的夸克链接，逐条核验</p>
+                        </div>
+                    </header>
+                    <ul id="zuidouyinResourceList" class="link-list" data-count-target="zuidouyinCount"></ul>
+                </section>
+                <section aria-labelledby="quarkChannelHeading" class="card res-col res-tg" hidden>
+                    <header class="card-head res-head">
+                        <span class="res-badge" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 4 3.5 11l6 2.2L18 7.5l-6.4 7 6 4.5L20.5 4ZM9.5 13.2V19l3-3"></path></svg></span>
+                        <div class="min-w-0">
+                            <div class="res-title-row">
+                                <h4 id="quarkChannelHeading" class="card-title">Telegram 频道</h4>
+                                <span id="quarkChannelCount" class="res-count" hidden></span>
+                            </div>
+                            <p class="card-caption">多个公开频道里提取的夸克链接，逐条核验</p>
+                        </div>
+                    </header>
+                    <ul id="quarkChannelResourceList" class="link-list" data-count-target="quarkChannelCount"></ul>
+                </section>
                 <section id="aggregatePanel" aria-labelledby="aggregateHeading" class="card res-col res-agg" hidden>
                     <header class="card-head res-head">
                         <span class="res-badge" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5S9.4 5.9 12 3.5ZM3.5 12h17"></path></svg></span>
@@ -345,7 +354,7 @@
                                 <h4 id="aggregateHeading" class="card-title">聚合搜索 · 已核验</h4>
                                 <span id="aggregateCount" class="res-count" hidden></span>
                             </div>
-                            <p class="card-caption">来自公开聚合搜索，已在夸克核对：分享有效、提取码可用，并列出分享里的内容</p>
+                            <p class="card-caption">公开聚合搜索的夸克分享，已核验有效、提取码与内容</p>
                         </div>
                     </header>
                     <p id="aggregateSummary" class="agg-summary" role="status" aria-live="polite"></p>
@@ -361,6 +370,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-5 left-1/2 w-max max-w-[min(90vw,28rem)] -translate-x-1/2 translate-y-20 opacity-0 transition-[translate,opacity] duration-200 bg-cinema-800 border border-cinema-600 text-cinema-100 px-5 py-3 rounded-xl shadow-xl text-sm z-50"></div>
 
     <footer id="releaseVersion" class="site-footer page-width" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.75"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.76"></script>
 </body>
 </html>
