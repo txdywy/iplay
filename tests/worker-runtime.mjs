@@ -59,6 +59,11 @@ const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (url.hostname === 't.me') {
+        assert.equal(url.pathname, '/s/Quark_Movies');
+        assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to the public channel');
+        return new Response('<section class="tgme_channel_history js-message_history"></section>');
+    }
     if (url.hostname === 'api.telegram.org') {
         assert.equal(url.pathname.startsWith(`/bot${telegramToken}/`), true);
         const method = url.pathname.split('/').at(-1);
@@ -330,6 +335,7 @@ try {
             assert.equal(response.status, 200);
             const data = await response.json();
             assert.equal(data.partial, false);
+            assert.equal(data.resourceMeta.providers.quarkChannel, 'ok');
             assert.equal(data.quarkUrls[0]?.password, 'abcd');
             assert.equal(data.quarkUrls[0]?.url, 'https://pan.quark.cn/s/runtime42');
             assert.equal(data.quarkUrls.find(item => item.url === 'https://pan.quark.cn/s/runtime-formatted')?.password, 'e5F6');

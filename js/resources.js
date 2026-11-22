@@ -1,4 +1,4 @@
-const PROVIDER_LISTS = { by669: 'resources', wpzys: 'wpzysResources', zuidouyin: 'zuidouyinResources' };
+const PROVIDER_LISTS = { by669: 'resources', wpzys: 'wpzysResources', zuidouyin: 'zuidouyinResources', quarkChannel: 'quarkChannelResources' };
 const MAX_QUARK_LINKS = 100;
 const asArray = value => Array.isArray(value) ? value : [];
 const pageKey = page => JSON.stringify([page.source || '', page.url || '']);

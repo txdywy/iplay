@@ -1383,7 +1383,6 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
     margin-top: 1rem;
     padding-top: 3.5rem;
   }
-  .resource-stack { display: contents; }
   .section-title { font-size: 1.5rem; letter-spacing: -0.025em; }
   .resources-grid .res-col {
     padding: 1.25rem 1rem 0.75rem;

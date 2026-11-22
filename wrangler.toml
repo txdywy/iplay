@@ -19,6 +19,7 @@ head_sampling_rate = 0.01
 
 [vars]
 ENVIRONMENT = "production"
+QUARK_CHANNEL_SEARCH = "1"
 
 # Cloudflare Rate Limiting bindings provide per-location counters at the edge.
 # Keep namespace IDs stable; they only need to be unique positive integers in

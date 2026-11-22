@@ -630,6 +630,8 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         restrictedPages: window.__smoke.resourceMode === 'restricted' ? 1 : 0, loginRequiredPages: 0
                     },
                     resources: [{title:'Smoke resource',url:'https://resource.example/smoke'}],
+                    zuidouyinResources: [{ title: '醉都音原帖', url: 'https://zuidouyin.com/?p=42' }],
+                    quarkChannelResources: [{ title: '频道原帖', url: 'https://t.me/s/Quark_Movies/1234' }],
                     wpzysResources: window.__smoke.resourceMode === 'restricted' ? [{title:'Restricted WPZY source',url:'https://wpzy.org/thread-301.htm'}] : [],
                     quarkUrls: []
                 });
@@ -1055,6 +1057,11 @@ async function runWpzyAccessFlow(mode) {
     await assertSearchReady('Test Movie');
     await evaluate("document.querySelector('#resourcesSection').scrollIntoView({block:'start'})");
     await waitFor("document.querySelector('#resourcesNotice')?.textContent.includes('部分完成')");
+    assert.equal(await evaluate("document.querySelector('#sourceHeading').textContent"), '网盘资源社 · By669');
+    assert.equal(await evaluate("document.querySelector('#resourceList a[href*=\"zuidouyin\"]') === null"), true);
+    assert.equal(await evaluate("document.querySelector('#zuidouyinResourceList a')?.href"), 'https://zuidouyin.com/?p=42');
+    assert.equal(await evaluate("document.querySelector('#quarkChannelResourceList a')?.href"), 'https://t.me/s/Quark_Movies/1234');
+    assert.equal(await evaluate("document.querySelector('#quarkChannelResourceList').closest('section').hidden"), false);
     if (mode === 'restricted') {
         assert.match(await evaluate("document.querySelector('#resourcesNotice').textContent"), /回复或 VIP/);
         assert.equal(await evaluate("document.querySelector('#resourcesNotice button') === null"), true, 'Retry cannot unlock reply/VIP restrictions');
