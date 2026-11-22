@@ -31,7 +31,7 @@ test('Quark status distinguishes accessible, protected, unavailable and unknown 
         if (id === 'live') return Response.json({ code: 0, data: { stoken: 'secret-token', author: 'private' } });
         const codes = {
             Missing: 41006, deleted: 41009, expired: 41019, cancelled: 41012, protected: 41008,
-            wrong: 41007, 'missing-files': 41004, blocked: 41010, invalid: 41011
+            wrong: 41007, 'missing-files': 41004, blocked: 41010, invalid: 41011, restricted: 41031
         };
         return Response.json({ code: codes[id] }, { status: id === 'Missing' ? 404 : 400 });
     };
@@ -65,9 +65,9 @@ test('Quark status distinguishes accessible, protected, unavailable and unknown 
     assert.deepEqual(await (await probe(ids)).json(), expected);
     for (const id of ['Missing', 'deleted', 'expired', 'cancelled', 'protected', 'live']) assert.equal(calls.get(id), 1);
     for (const id of ['unknown', 'limited', 'timeout', 'wrong']) assert.equal(calls.get(id), 2);
-    const additional = await probe(['missing-files', 'blocked', 'invalid', 'egress-error', 'redirect']);
+    const additional = await probe(['missing-files', 'blocked', 'invalid', 'restricted', 'egress-error', 'redirect']);
     assert.deepEqual(await additional.json(), {
-        unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid' },
+        unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid', restricted: 'restricted' },
         unknown: ['egress-error', 'redirect'],
         available: [],
         passcodeRequired: []

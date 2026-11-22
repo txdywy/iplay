@@ -515,6 +515,28 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 }
                 return json({ error: 'cache miss' }, 410);
             }
+            if (url.pathname === '/api/resource/aggregate') {
+                const aggregateCalls = window.__smoke.aggregateCalls = window.__smoke.aggregateCalls || [];
+                aggregateCalls.push(url.search);
+                const mode = window.__smoke.aggregateMode;
+                if (!mode) return json({ enabled: false, results: [], meta: {} });
+                if (mode === 'error-then-ok' && aggregateCalls.length === 1) return json({ error: 'Aggregate search unavailable' }, 502);
+                return json({
+                    enabled: true,
+                    results: [
+                        { title: 'Agg Post Title', url: 'https://pan.quark.cn/s/agg-one', shareTitle: 'Agg Verified Folder', status: 'available', contentMatch: true,
+                            entries: [{ name: 'Agg Verified Folder', dir: true }], totalItems: 3, source: 'tg:chan', datetime: '2025-06-01T00:00:00.000Z' },
+                        { title: 'Agg Locked', url: 'https://pan.quark.cn/s/agg-two', password: 'Qx9z', status: 'available', passcodeVerified: true },
+                        { title: 'Agg Needs Code', url: 'https://pan.quark.cn/s/agg-three', status: 'passcode_required' },
+                        { title: 'Agg Duplicate', url: 'https://pan.quark.cn/s/large-3', status: 'available' }
+                    ],
+                    meta: {
+                        provider: 'pansou', found: 40, matched: 9, verified: 4, unknown: 0,
+                        unchecked: mode === 'unchecked' && aggregateCalls.length === 1 ? 5 : 0,
+                        hidden: { invalid: 3, cancelled: 1, restricted: 1 }, hiddenCount: 5
+                    }
+                });
+            }
             if (url.pathname === '/api/resource/quark-status') {
                 if (window.__smoke.resourceMode !== 'cached-refresh') return json({
                     unavailable: {}, unknown: [], available: url.searchParams.getAll('id'), passcodeRequired: []
@@ -1452,6 +1474,60 @@ async function runTypingDuringSearchFlow() {
         'a late result must not take focus from someone typing');
 }
 
+// The aggregate module loads beside the forum scan: verified shares with what
+// is inside, the ones already listed above removed, and its own retry.
+async function runAggregateModuleFlow() {
+    const open = async (mode, title) => {
+        await command('Page.navigate', { url: baseUrl });
+        await waitFor("document.readyState === 'complete' && history.state?.kind === 'home'");
+        await evaluate(`window.__smoke.resourceMode = 'large'; window.__smoke.aggregateMode = ${JSON.stringify(mode)}; window.__smoke.aggregateCalls = []`);
+        await search(title);
+        await assertSearchReady(title);
+        await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
+    };
+
+    await open('unchecked', 'Test Movie');
+    await waitFor("document.querySelectorAll('#aggregateList .link-item').length === 3");
+    assert.equal(await evaluate("!document.getElementById('aggregatePanel').hidden"), true);
+    assert.equal(await evaluate("document.getElementById('aggregateCount').textContent"), '3');
+    assert.equal(await evaluate("[...document.querySelectorAll('#aggregateList .link-index')].map(node => node.textContent).join()"), '01,02,03');
+    const rows = await evaluate("[...document.querySelectorAll('#aggregateList .link-item')].map(row => row.textContent)");
+    assert.ok(rows[0].includes('Agg Verified Folder') && rows[0].includes('分享可访问') && rows[0].includes('内容匹配'));
+    assert.ok(rows[0].includes('内容：Agg Verified Folder/') && rows[0].includes('Telegram chan') && rows[0].includes('2025-06-01'));
+    assert.ok(rows[1].includes('提取码已核验') && rows[1].includes('提取码：Qx9z'));
+    assert.ok(rows[2].includes('需要提取码'));
+    assert.ok(!rows.some(text => text.includes('Agg Duplicate')), 'a share already listed as a direct link is not repeated');
+    const summary = await evaluate("document.getElementById('aggregateSummary').textContent");
+    assert.ok(summary.includes('聚合源返回 40 条') && summary.includes('标题匹配 9 条') && summary.includes('1 条已在上方夸克直链中'));
+    assert.ok(summary.includes('失效或已取消 4') && summary.includes('分享者受限 1') && summary.includes('5 条待核验'));
+    assert.equal(await evaluate("document.getElementById('aggregateList').closest('#resourcesSection') !== null"), true);
+    await evaluate("document.querySelector('#aggregateList .link-item:nth-child(2) .link-copy').click()");
+    await waitFor("window.__smoke.copied === 'Qx9z'");
+
+    // Opening a result counts in the shared filter bar.
+    assert.match(await evaluate("document.getElementById('resourceOpenedSummary').textContent"), /^已打开 0 \/ \d+$/u);
+
+    assert.equal(await evaluate("document.querySelector('#aggregateActions button').textContent"), '继续核验剩余 5 条');
+    await evaluate("document.querySelector('#aggregateActions button').click()");
+    await waitFor("window.__smoke.aggregateCalls.length === 2 && document.querySelector('#aggregateActions button') === null");
+    assert.ok((await evaluate('window.__smoke.aggregateCalls'))[1].includes('refresh=1'));
+    assert.equal(await evaluate("document.getElementById('aggregateSummary').textContent.includes('待核验')"), false);
+    assert.equal(await evaluate("document.querySelectorAll('#aggregateList .link-item').length"), 3);
+
+    await open('error-then-ok', 'Fresh Movie');
+    await waitFor("document.querySelector('#aggregateList')?.textContent.includes('聚合搜索暂时不可用')");
+    assert.equal(await evaluate("document.querySelector('#aggregateList button').textContent"), '重试聚合搜索');
+    assert.equal(await evaluate("document.querySelector('#resourceList a, #quarkUrlList a') !== null"), true,
+        'the forum scan is unaffected by an unavailable aggregate source');
+    await evaluate("document.querySelector('#aggregateList button').click()");
+    await waitFor("document.querySelectorAll('#aggregateList .link-item').length === 3");
+
+    await open('', 'Retry Detail Movie');
+    await waitFor("document.querySelector('#quarkUrlList a')");
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(await evaluate("document.getElementById('aggregatePanel').hidden"), true, 'a disabled module leaves no empty panel');
+}
+
 async function runDeepLinkFlow() {
     await command('Page.navigate', { url: `${baseUrl}?id=109&type=movie&title=Wrong%20Title` });
     await waitFor("window.__smoke?.detailCalls === 1");
@@ -2133,6 +2209,7 @@ async function runDetailRetryRecoveryIdentityFlow() {
 
 try {
     await runResourceKeyboardAndLongTitleFlow();
+    await runAggregateModuleFlow();
     await runTypingDuringSearchFlow();
     await runCompleteResourceVisibilityFlow();
     await runUnscannedResourceStatusFlow();

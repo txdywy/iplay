@@ -27,7 +27,8 @@ test('the three resource sources are told apart by colour, icon and count', () =
         assert.match(html, new RegExp(`id="${list}" class="link-list" data-count-target="${count}"`));
         assert.match(css, new RegExp(`\\.${accent} \\{ --res-accent: oklch\\(`));
     }
-    assert.equal((html.match(/class="res-badge"/g) || []).length, 3);
+    // The three forum sources and the separate aggregate module each have a badge.
+    assert.equal((html.match(/class="res-badge"/g) || []).length, 4);
     assert.match(main, /iconName: 'cloud',\n\s+iconClass: 'res-icon/);
     assert.match(main, /function setResourceCount\(container, count\)/);
 });
@@ -51,4 +52,20 @@ test('resource links are numbered, remember being opened and can hide opened one
     assert.match(main, /const RESOURCE_FILTER_KEY = 'iplay_resource_filter'/);
     assert.doesNotMatch(main, /trackOpened/);
     assert.match(css, /\.is-opened \.link-opened \{\s*display: inline-block;/);
+});
+
+test('the aggregate module is its own verified section inside the resources, wired into the shared list features', () => {
+    assert.match(html, /<section id="aggregatePanel"[^>]*class="card res-col res-agg" hidden>/);
+    for (const id of ['aggregateHeading', 'aggregateCount', 'aggregateSummary', 'aggregateList', 'aggregateActions']) {
+        assert.match(html, new RegExp(`id="${id}"`));
+    }
+    assert.ok(html.indexOf('id="aggregatePanel"') > html.indexOf('id="wpzysResourceList"')
+        && html.indexOf('id="aggregatePanel"') < html.indexOf('</section>', html.indexOf('id="aggregateActions"')));
+    assert.match(main, /const RESOURCE_LIST_IDS = \[[^\]]*'aggregateList'\]/, 'numbering, opened marks, stars and the filter apply to it');
+    assert.match(main, /ResourceAPI\.aggregate\(query, searchOptions, \{ refresh, identity \}\)/);
+    assert.match(main, /void loadAggregate\(candidate, searchId, searchOptions, loadId\)/);
+    assert.match(main, /tags: aggregateTags/);
+    assert.match(css, /\.res-agg \{ --res-accent: oklch\(/);
+    assert.match(css, /\.resources-grid > \.res-agg \{ grid-column: 1 \/ -1; \}/);
+    assert.match(css, /\.link-tag-match/);
 });

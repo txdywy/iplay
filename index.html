@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://image.tmdb.org">
-    <link href="./css/output.css?v=1.0.68" rel="stylesheet">
+    <link href="./css/output.css?v=1.0.69" rel="stylesheet">
     <link rel="preconnect" href="https://iplayw.hackx64.eu.org" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..800&display=swap">
     <link rel="stylesheet" media="print" data-deferred-style href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..800&display=swap">
@@ -337,6 +337,21 @@
                         <ul id="wpzysResourceList" class="link-list" data-count-target="forumCount"></ul>
                     </section>
                 </div>
+                <section id="aggregatePanel" aria-labelledby="aggregateHeading" class="card res-col res-agg" hidden>
+                    <header class="card-head res-head">
+                        <span class="res-badge" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5S9.4 5.9 12 3.5ZM3.5 12h17"></path></svg></span>
+                        <div class="min-w-0">
+                            <div class="res-title-row">
+                                <h4 id="aggregateHeading" class="card-title">聚合搜索 · 已核验</h4>
+                                <span id="aggregateCount" class="res-count" hidden></span>
+                            </div>
+                            <p class="card-caption">来自公开聚合搜索，已在夸克核对：分享有效、提取码可用，并列出分享里的内容</p>
+                        </div>
+                    </header>
+                    <p id="aggregateSummary" class="agg-summary" role="status" aria-live="polite"></p>
+                    <ul id="aggregateList" class="link-list agg-list" data-count-target="aggregateCount"></ul>
+                    <div id="aggregateActions" class="agg-actions"></div>
+                </section>
             </section>
         </div>
     </main>
@@ -346,6 +361,6 @@
     <div id="toast" role="status" aria-live="polite" aria-atomic="true" class="pointer-events-none fixed bottom-5 left-1/2 w-max max-w-[min(90vw,28rem)] -translate-x-1/2 translate-y-20 opacity-0 transition-[translate,opacity] duration-200 bg-cinema-800 border border-cinema-600 text-cinema-100 px-5 py-3 rounded-xl shadow-xl text-sm z-50"></div>
 
     <footer id="releaseVersion" class="site-footer page-width" aria-label="当前应用版本">iPlay · </footer>
-    <script type="module" src="./assets/app.min.js?v=1.0.68"></script>
+    <script type="module" src="./assets/app.min.js?v=1.0.69"></script>
 </body>
 </html>

@@ -22,6 +22,7 @@ import {
     handlePosterSearch
 } from './poster.js';
 import { handleQuarkStatus } from './quark-status.js';
+import { handleAggregateSearch } from './aggregate.js';
 import {
     handleResourceSearch
 } from './resources.js';
@@ -183,6 +184,20 @@ export default {
 
             if (path === "/api/resource/quark-status") {
                 return withCors(await handleQuarkStatus(url.searchParams.getAll("id"), ctx), request, env);
+            }
+
+            if (path === "/api/resource/aggregate") {
+                return withCors(await handleAggregateSearch(
+                    url.searchParams.get("q"),
+                    env,
+                    ctx,
+                    {
+                        refresh: url.searchParams.get("refresh") === "1",
+                        id: url.searchParams.get("id"),
+                        mediaType: url.searchParams.get("type"),
+                        year: url.searchParams.get("year")
+                    }
+                ), request, env);
             }
 
             if (path === "/api/resource" || path === "/api/resource/cache") {

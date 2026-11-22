@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.68';
+import { RELEASE_VERSION } from './release.js?v=1.0.69';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -9,6 +9,8 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
 const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
 const RESOURCE_CACHE_TIMEOUT_MS = 2500;
+// The aggregate search queries a third-party index, then checks each share.
+const RESOURCE_AGGREGATE_TIMEOUT_MS = 32000;
 const POSTER_TIMEOUT_MS = 18000;
 // Successful TMDB answers are briefly browser-cacheable. Tag them by release so
 // a new frontend never reuses a response shaped for the previous Worker.
@@ -247,6 +249,17 @@ export const ResourceAPI = {
         const requestOptions = { ...options, cache: 'no-store' };
         return fetchWithTimeout(`${API_BASE}${path}?q=${encodeURIComponent(query)}${identityParams}${refreshParam}&${RELEASE_PARAM}`,
             requestOptions, cacheOnly ? RESOURCE_CACHE_TIMEOUT_MS : RESOURCE_TIMEOUT_MS);
+    },
+
+    // Quark shares from a public search index, verified on Quark itself.
+    async aggregate(query, options = {}, { refresh = false, identity = null } = {}) {
+        const identityParams = identity ? [
+            `&id=${encodeURIComponent(identity.mediaId)}`,
+            `&type=${encodeURIComponent(identity.mediaType)}`,
+            `&year=${encodeURIComponent(identity.year || '')}`
+        ].join('') : '';
+        return fetchWithTimeout(`${API_BASE}/api/resource/aggregate?q=${encodeURIComponent(query)}${identityParams}${refresh ? '&refresh=1' : ''}&${RELEASE_PARAM}`,
+            { ...options, cache: 'no-store' }, RESOURCE_AGGREGATE_TIMEOUT_MS);
     },
 
     async checkQuarkLinks(ids, options = {}) {

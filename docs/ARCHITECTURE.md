@@ -284,6 +284,7 @@ Manual fallback: npm run deploy:worker (Wrangler with --keep-vars)
 
 - **Douban scraping** uses `HTMLRewriter` to parse HTML. If Douban changes their HTML structure, the detail scraper will break.
 - `/api/resource` returns available results during individual source outages and returns `502` when every source fails.
+- The aggregate module (`worker/aggregate.js`) is separate from the forum scan: `/api/resource/aggregate` asks a PanSou-compatible index for Quark shares, keeps those whose title and year match, and verifies each on Quark through `worker/quark-share.js` (token, one passcode attempt with the passcode the index listed, then the top-level folder names). Only reachable shares are returned. The frontend loads it in parallel with the scan, so a slow index never delays the forum results.
 - The optional `WPZY_COOKIE` secret supplies `bbs_token` and `bbs_sid` only to read-only HTTPS search and thread requests on the exact WPZY host. An internal SHA-256 login-state fingerprint scopes the v19 resource cache and in-flight requests. Each search selects up to six WPZY threads. Responses identify login failures, gated posts and maintenance pages so the frontend can retain available results and offer a retry.
 
 ---

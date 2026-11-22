@@ -147,7 +147,7 @@ function assertWpzyReadOnlyUrl(value) {
     }
 }
 
-function isValidQuarkPassword(value) {
+export function isValidQuarkPassword(value) {
     return /^[a-z0-9]{2,12}$/i.test(value) && !/^https?$/i.test(value);
 }
 
@@ -173,7 +173,7 @@ function extractQuarkPasswordFromUrl(url) {
     };
 }
 
-function parseQuarkUrl(rawUrl) {
+export function parseQuarkUrl(rawUrl) {
     if (!rawUrl || rawUrl.length > RESOURCE_MAX_URL_LENGTH) return null;
 
     const cleaned = rawUrl
@@ -984,25 +984,35 @@ function selectResourceDetails(...groups) {
     return selected;
 }
 
-export async function handleResourceSearch(query, env, ctx, { refresh = false, cacheOnly = false, id = null, mediaType = null, year = null } = {}) {
+// Validates the query and the optional TMDB identity shared by every resource
+// route. Returns { error } (a ready 400 response) or { query, identity }.
+export function validateResourceRequest(query, id = null, mediaType = null, year = null) {
     const queryCheck = validateRequiredText(query, "query", MAX_MEDIA_TITLE_LENGTH);
-    if (queryCheck.error) return queryCheck.error;
-    query = queryCheck.value;
+    if (queryCheck.error) return { error: queryCheck.error };
 
     const idCheck = id === null ? null : validatePositiveInteger(id);
-    if (idCheck?.error) return idCheck.error;
+    if (idCheck?.error) return { error: idCheck.error };
     const mediaTypeCheck = mediaType === null ? null : validatePersonMediaType(mediaType);
-    if (mediaTypeCheck?.error) return mediaTypeCheck.error;
+    if (mediaTypeCheck?.error) return { error: mediaTypeCheck.error };
     if (Boolean(idCheck) !== Boolean(mediaTypeCheck)) {
-        return jsonResponse({ error: "TMDB id and media type must be provided together" }, 400);
+        return { error: jsonResponse({ error: "TMDB id and media type must be provided together" }, 400) };
     }
     const yearCheck = validateOptionalYear(year);
-    if (yearCheck.error) return yearCheck.error;
-    const identity = {
-        id: idCheck ? Number(idCheck.value) : null,
-        mediaType: mediaTypeCheck?.value || null,
-        year: yearCheck.value
+    if (yearCheck.error) return { error: yearCheck.error };
+    return {
+        query: queryCheck.value,
+        identity: {
+            id: idCheck ? Number(idCheck.value) : null,
+            mediaType: mediaTypeCheck?.value || null,
+            year: yearCheck.value
+        }
     };
+}
+
+export async function handleResourceSearch(rawQuery, env, ctx, { refresh = false, cacheOnly = false, id = null, mediaType = null, year = null } = {}) {
+    const request = validateResourceRequest(rawQuery, id, mediaType, year);
+    if (request.error) return request.error;
+    const { query, identity } = request;
 
     const wpzySession = await getWpzySession(env);
 
@@ -1039,7 +1049,7 @@ const RESOURCE_ALIAS_REGIONS = new Set(["CN", "TW", "HK", "MO", "SG", "US", "GB"
 // Forum posts may name a work by its original or regional title ("哪吒2",
 // "駭客任務", "The Matrix"). Names come from TMDB for the selected identity;
 // the lookup is cached and bounded so it never delays the provider searches.
-async function getResourceTitleAliases(query, identity, env, ctx) {
+export async function getResourceTitleAliases(query, identity, env, ctx) {
     if (!identity.id || !identity.mediaType || !getTmdbAuth(env)) return [];
     const deadline = createDeadline(RESOURCE_ALIAS_TIMEOUT_MS);
     const path = `/${identity.mediaType}/${identity.id}`;
