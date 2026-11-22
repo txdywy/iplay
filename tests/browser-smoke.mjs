@@ -1538,7 +1538,7 @@ async function runAggregateModuleFlow() {
     assert.ok(rows[2].includes('需要提取码'));
     assert.ok(!rows.some(text => text.includes('Agg Duplicate')), 'a share already listed as a direct link is not repeated');
     const summary = await evaluate("document.getElementById('aggregateSummary').textContent");
-    assert.ok(summary.includes('聚合源返回 40 条') && summary.includes('标题匹配 9 条') && summary.includes('1 条已在上方夸克直链中'));
+    assert.ok(summary.includes('聚合源返回 40 条') && summary.includes('标题匹配 9 条') && summary.includes('1 条已在上方其他来源中'));
     assert.ok(summary.includes('失效或已取消 4') && summary.includes('分享者受限 1') && summary.includes('5 条待核验'));
     assert.equal(await evaluate("document.getElementById('aggregateList').closest('#resourcesSection') !== null"), true);
     await evaluate("document.querySelector('#aggregateList .link-item:nth-child(2) .link-copy').click()");
@@ -1563,7 +1563,7 @@ async function runAggregateModuleFlow() {
     await waitFor("document.querySelectorAll('#aggregateList .link-item').length === 3");
 
     await open('duplicates', 'Test Movie');
-    await waitFor("document.querySelector('#aggregateList')?.textContent.includes('都已在上方夸克直链中')");
+    await waitFor("document.querySelector('#aggregateList')?.textContent.includes('都已在上方其他来源中')");
     assert.equal(await evaluate("document.querySelector('#aggregateActions button') === null"), true);
 
     // A thin answer from the index offers a fresh search.
@@ -1612,6 +1612,13 @@ async function runSourceColumnsFlow() {
     })()`);
     assert.equal(aligned, true);
     assert.equal(await evaluate("(document.querySelectorAll('#resourcesSection .res-badge').length)"), 6);
+
+    // Starring a channel share keeps it in its own column, not back in 夸克直链.
+    await evaluate("document.querySelector('#quarkChannelResourceList [data-link-url=\"https://pan.quark.cn/s/tg1\"] .link-star').click()");
+    await waitFor("document.querySelector('#quarkChannelResourceList [data-link-url=\"https://pan.quark.cn/s/tg1\"] .link-star')?.getAttribute('aria-pressed') === 'true'");
+    assert.deepEqual(await urls('quarkUrlList'), ['https://pan.quark.cn/s/forum1']);
+    await evaluate("document.querySelector('#quarkChannelResourceList [data-link-url=\"https://pan.quark.cn/s/tg1\"] .link-star').click()");
+    await waitFor("document.querySelector('#quarkChannelResourceList [data-link-url=\"https://pan.quark.cn/s/tg1\"] .link-star')?.getAttribute('aria-pressed') === 'false'");
 }
 
 async function runDeepLinkFlow() {

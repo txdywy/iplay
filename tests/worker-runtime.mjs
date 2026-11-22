@@ -9,6 +9,7 @@ import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 import { tmdbDetail } from './fixtures/tmdb.js';
 import { PERFORMANCE_SEARCH_QUERY, searchPerformanceResults, searchPerformanceAlias } from './fixtures/search-performance.js';
 import { loadProductionRuntimeConfig } from './helpers/worker-runtime-config.js';
+import { getQuarkChannels } from '../worker/resources.js';
 
 const { Response } = globalThis;
 
@@ -69,7 +70,8 @@ async function upstream(request) {
     }
     if (url.origin === 'https://so.252035.xyz') return new Response(null, { status: 503 });
     if (url.hostname === 't.me') {
-        assert.equal(url.pathname, '/s/Quark_Movies');
+        // Every configured channel is answered, so none fails silently.
+        assert.ok(getQuarkChannels(bindings).map(name => `/s/${name}`).includes(url.pathname), `unexpected channel ${url.pathname}`);
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to the public channel');
         return new Response('<section class="tgme_channel_history js-message_history"></section>');
     }

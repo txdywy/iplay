@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.79';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.80';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.79';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.79';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.79';
-import { RELEASE_VERSION } from './release.js?v=1.0.79';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.79';
+} from './scorer.js?v=1.0.80';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.80';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.80';
+import { RELEASE_VERSION } from './release.js?v=1.0.80';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.80';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.79';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.79';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.79';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.79';
+} from './match.js?v=1.0.80';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.80';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.80';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.80';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1540,12 +1540,27 @@ function checkQuarkRows(rows, signal) {
             verification.checks.set(id, check);
         }
     }
-    for (const { id, badge } of rows) {
-        void verification.checks.get(id).result.then(outcome => {
-            if (signal.aborted || !badge.isConnected) return;
-            paintQuarkBadge(badge, outcome);
+    for (const row of rows) {
+        void verification.checks.get(row.id).result.then(outcome => {
+            if (signal.aborted || !row.badge.isConnected) return;
+            paintQuarkBadge(row.badge, outcome);
+            if (outcome.status === 'unknown' && !row.recheck) scheduleQuarkRecheck(verification, row, signal);
         });
     }
+}
+
+// An inconclusive check (Quark timed out or limited it) is asked once more,
+// shortly after, in one batch with the others from the same moment.
+function scheduleQuarkRecheck(verification, row, signal) {
+    verification.recheck = verification.recheck || new Map();
+    verification.recheck.set(row.id, { ...row, recheck: true });
+    if (verification.recheckTimer) return;
+    verification.recheckTimer = setTimeout(() => {
+        const rows = [...verification.recheck.values()].filter(entry => entry.badge.isConnected);
+        verification.recheck.clear();
+        verification.recheckTimer = null;
+        if (!signal.aborted && rows.length) checkQuarkRows(rows, signal);
+    }, QUARK_CHECK_RETRY_MS + 200);
 }
 
 function resourceLinkUrls() {
@@ -1579,7 +1594,7 @@ function rerenderResourceLists(revealFocusIn = null, starsChanged = false) {
         const { result, pages, preferredScanUrls, comparedWith } = resourceResultState;
         result.quarkUrls = selectResourceShares(pages, preferredScanUrls, starredLinks);
         const quarkRender = linkListRenders.get(els.quarkUrlList);
-        if (quarkRender) quarkRender.items = result.quarkUrls;
+        if (quarkRender) quarkRender.items = forumQuarkUrls(result);
         if (comparedWith) {
             resourceResultState.newUrls = newResourceUrls(comparedWith.result, result, comparedWith.pages);
             for (const id of RESOURCE_LIST_IDS) {
@@ -1593,6 +1608,8 @@ function rerenderResourceLists(revealFocusIn = null, starsChanged = false) {
         const render = linkListRenders.get(els[id]);
         if (render) renderLinkCards(els[id], render.items, render.options, els[id] === revealFocusIn);
     }
+    // A star can move a share into 夸克直链; the aggregate list drops it again.
+    if (starsChanged && aggregateState?.data) renderAggregate(aggregateState.retry);
     updateResourceToolbar();
 }
 
@@ -2107,6 +2124,7 @@ function renderResourceErrorStates(onRetry) {
 
 // Before a scan has run, "nothing found" would be a claim the page cannot make.
 function renderResourcesAwaitingDetails() {
+    resetAggregateModule();
     const waiting = { title: '等待详情确认', detail: '确认作品后开始扫描资源', isLoading: false };
     renderResourceStatus(els.quarkUrlList, { ...waiting, iconName: 'cloud', iconClass: 'text-accent-red' });
     renderOriginalPostStatus({ ...waiting, iconName: 'link', iconClass: 'text-blue-500' });
@@ -2715,24 +2733,41 @@ const AGGREGATE_HIDDEN_LABELS = [
     ['空分享', ['empty']]
 ];
 let aggregateState = null;
+// Overlapping loads (a scan retry while a search is still running): only the
+// latest request may paint.
+let aggregateRequestSeq = 0;
 
 function setAggregateActions(...buttons) {
+    // Rebuilding unchanged buttons would drop keyboard focus from them.
+    const signature = buttons.map(({ label }) => label).join('\n');
+    if (els.aggregateActions.dataset.signature === signature && els.aggregateActions.childElementCount === buttons.length) {
+        [...els.aggregateActions.children].forEach((button, index) => { button._onClick = buttons[index].onClick; });
+        return;
+    }
+    const hadFocus = els.aggregateActions.contains(document.activeElement);
     clearNode(els.aggregateActions);
+    els.aggregateActions.dataset.signature = signature;
     for (const { label, onClick } of buttons) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'ui-button text-xs';
         button.textContent = label;
+        button._onClick = onClick;
         button.addEventListener('click', async () => {
             button.disabled = true;
             try {
-                await onClick();
+                await button._onClick();
             } finally {
                 button.disabled = false;
+            }
+            // The action may have replaced its own button; keep focus nearby.
+            if (!button.isConnected && (document.activeElement === document.body || !document.activeElement)) {
+                (els.aggregateActions.querySelector('button') || els.resourcesSection)?.focus({ preventScroll: true });
             }
         });
         els.aggregateActions.appendChild(button);
     }
+    if (hadFocus) (els.aggregateActions.querySelector('button') || els.resourcesSection)?.focus({ preventScroll: true });
 }
 
 function resetAggregateModule() {
@@ -2742,6 +2777,7 @@ function resetAggregateModule() {
     linkListRenders.delete(els.aggregateList);
     clearNode(els.aggregateList);
     clearNode(els.aggregateActions);
+    delete els.aggregateActions.dataset.signature;
     setText(els.aggregateSummary, '');
     setResourceCount(els.aggregateList, 0);
     updateResourceToolbar();
@@ -2749,7 +2785,7 @@ function resetAggregateModule() {
 
 function aggregateSummaryText(meta, duplicates) {
     const parts = [`聚合源返回 ${meta.found ?? 0} 条`, `标题匹配 ${meta.matched ?? 0} 条`, `通过核验 ${meta.verified ?? 0} 条`];
-    if (duplicates) parts.push(`${duplicates} 条已在上方夸克直链中`);
+    if (duplicates) parts.push(`${duplicates} 条已在上方其他来源中`);
     if (meta.unknown) parts.push(`${meta.unknown} 条暂未确认`);
     const hidden = AGGREGATE_HIDDEN_LABELS
         .map(([label, reasons]) => [label, reasons.reduce((sum, reason) => sum + (Number(meta.hidden?.[reason]) || 0), 0)])
@@ -2795,14 +2831,17 @@ function renderAggregate(retry) {
     const data = aggregateState?.data;
     if (!els.aggregatePanel || !data) return;
     els.aggregatePanel.hidden = false;
-    // The forum scan lists its own Quark links; show only what is new here.
-    const direct = new Set(linkListRenders.get(els.quarkUrlList)?.urls || []);
+    // The other columns list their own Quark links; show only what is new here.
+    const direct = new Set(RESOURCE_LIST_IDS.filter(id => id !== 'aggregateList')
+        .flatMap(id => linkListRenders.get(els[id])?.urls || []));
     const all = Array.isArray(data.results) ? data.results : [];
     const items = all.filter(item => !direct.has(item.url));
     const meta = data.meta || {};
-    setText(els.aggregateSummary, aggregateSummaryText(meta, all.length - items.length));
+    // A live region re-announces every write; write only when it changes.
+    const summary = aggregateSummaryText(meta, all.length - items.length);
+    if (els.aggregateSummary.textContent !== summary) setText(els.aggregateSummary, summary);
     // Say why the list is empty: every share may already be listed above.
-    const emptyLabel = all.length > 0 ? '聚合源找到的分享都已在上方夸克直链中'
+    const emptyLabel = all.length > 0 ? '聚合源找到的分享都已在上方其他来源中'
         : meta.matched ? '匹配到的分享暂时都无法访问，已为你隐藏'
             : '聚合源暂未找到这部作品的夸克分享';
     const options = {
@@ -2867,11 +2906,13 @@ async function loadAggregate(candidate, searchId, searchOptions, loadId, { refre
         renderAggregate(retry);
         return;
     }
-    aggregateState = { queryKey, data: aggregateState?.queryKey === queryKey ? aggregateState.data : null };
+    const requestId = ++aggregateRequestSeq;
+    const isNewest = () => isCurrent() && requestId === aggregateRequestSeq;
+    aggregateState = { queryKey, data: aggregateState?.queryKey === queryKey ? aggregateState.data : null, retry };
     if (!aggregateState.data) renderAggregateLoading();
     try {
         const data = await ResourceAPI.aggregate(query, searchOptions, { refresh, identity });
-        if (!isCurrent()) return;
+        if (!isNewest()) return;
         if (!data || data.enabled === false) {
             resetAggregateModule();
             return;
@@ -2880,7 +2921,7 @@ async function loadAggregate(candidate, searchId, searchOptions, loadId, { refre
         renderAggregate(retry);
         updateResourceToolbar();
     } catch (error) {
-        if (error?.name === 'AbortError' || !isCurrent()) return;
+        if (error?.name === 'AbortError' || !isNewest()) return;
         console.debug('Aggregate search skipped:', error);
         // Keep an earlier result if a refresh fails.
         if (aggregateState?.data) renderAggregate(retry);
@@ -2949,6 +2990,17 @@ function renderSourceShares(container, shares, posts, newUrls, signal, { emptyLa
     });
 }
 
+// 夸克直链 keeps the forum links; a share only found by a source with its own
+// column is listed there instead of twice. Every path that fills 夸克直链
+// (a scan, a star change) goes through here.
+function forumQuarkUrls(resourceResult, bySource = sharesBySource(resourceResult)) {
+    const sourceShares = source => [...(bySource.get(source)?.values() || [])];
+    const forumUrls = new Set([...bySource].filter(([source]) => !SOURCE_SHARE_COLUMNS.includes(source))
+        .flatMap(([, shares]) => [...shares.keys()]));
+    const sourceOnly = new Set(SOURCE_SHARE_COLUMNS.flatMap(sourceShares).map(share => share.url).filter(url => !forumUrls.has(url)));
+    return (resourceResult.quarkUrls || []).filter(item => !sourceOnly.has(item.url));
+}
+
 function renderResourceLists(resourceResult, newUrls, signal) {
     const { resources, zuidouyinResources, wpzysResources, quarkChannelResources, resourceMeta } = resourceResult;
     const bySource = sharesBySource(resourceResult);
@@ -2963,12 +3015,7 @@ function renderResourceLists(resourceResult, newUrls, signal) {
     els.quarkChannelResourceList.closest('section').hidden = !quarkChannelResources.length && !channelShares.length;
     renderSourceShares(els.quarkChannelResourceList, channelShares, quarkChannelResources, newUrls, signal, { emptyLabel: '暂未匹配到频道资源' });
     renderWpzysResourceList(wpzysResources, resourceMeta, newUrls);
-    // 夸克直链 keeps the forum links; a share only found by a source with its
-    // own column is listed there instead of twice.
-    const forumUrls = new Set([...bySource].filter(([source]) => !SOURCE_SHARE_COLUMNS.includes(source))
-        .flatMap(([, shares]) => [...shares.keys()]));
-    const sourceOnly = new Set(SOURCE_SHARE_COLUMNS.flatMap(sourceShares).map(share => share.url).filter(url => !forumUrls.has(url)));
-    renderQuarkUrls((resourceResult.quarkUrls || []).filter(item => !sourceOnly.has(item.url)), newUrls, signal);
+    renderQuarkUrls(forumQuarkUrls(resourceResult, bySource), newUrls, signal);
     // The forum scan's Quark links decide which aggregate results are new.
     if (aggregateState?.data) renderAggregate(aggregateState.retry);
     return resources.length + zuidouyinResources.length + wpzysResources.length + quarkChannelResources.length;
@@ -3230,7 +3277,11 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     const loadId = ++currentCandidateLoadId;
     const candidateOptions = createCandidateRequestOptions(searchOptions);
     resourceLoadStarted = false;
-    if (!retained) resourceResultState = null;
+    if (!retained) {
+        resourceResultState = null;
+        resetAggregateModule();
+        resetAggregateModule();
+    }
     const selectedCandidate = {
         ...(retained?.candidate || candidate),
         mediaType: retained?.candidate.mediaType || requestedType
@@ -3600,6 +3651,7 @@ function beginSearchSession(query) {
     cancelResourceLoadSchedule();
     resourceLoadStarted = false;
     resourceResultState = null;
+    resetAggregateModule();
     abortCandidateRequests();
     abortActorPageRequests();
     if (currentAbortController) currentAbortController.abort();
@@ -3641,6 +3693,7 @@ async function handleSearch({ historyMode = 'push' } = {}) {
         cancelResourceLoadSchedule();
         resourceLoadStarted = false;
         resourceResultState = null;
+        resetAggregateModule();
         hideActorCandidatePicker();
         lastSearchQuery = '';
         searchRetryAction = null;
@@ -3864,6 +3917,7 @@ function resetInitialView() {
     cancelResourceLoadSchedule();
     resourceLoadStarted = false;
     resourceResultState = null;
+    resetAggregateModule();
     lastSearchQuery = '';
     searchRetryAction = null;
     if (els.input) els.input.value = '';

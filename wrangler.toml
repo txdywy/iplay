@@ -72,6 +72,7 @@ new_sqlite_classes = ["WpzyCacheSession"]
 [previews.vars]
 ENVIRONMENT = "production"
 PANSOUSUO_SEARCH = "1"
+QUARK_CHANNEL_SEARCH = "1"
 
 [[previews.durable_objects.bindings]]
 name = "WPZY_CACHE_SESSION"

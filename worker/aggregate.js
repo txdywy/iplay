@@ -45,6 +45,13 @@ const CACHE_SECONDS_PARTIAL = 120;
 // After the index fails, visitors in the next minute and a half are told at
 // once instead of each waiting out the timeouts. A retry still tries again.
 const INDEX_DOWN_SECONDS = 90;
+const INDEX_DOWN_QUERIES = 2;
+
+async function readIndexFailures(key) {
+    const cached = await serveCachedJson(key);
+    const queries = (await cached?.json().catch(() => null))?.queries;
+    return Array.isArray(queries) ? queries.filter(query => typeof query === 'string') : [];
+}
 // The index sometimes answers with a fraction of its usual results; such a
 // thin answer is not worth keeping for long.
 const THIN_INDEX_RESPONSE = 5;
@@ -129,34 +136,39 @@ async function fetchPansousuo(query, deadline) {
     }));
 }
 
-// The sources are asked at once and the first answer wins: one stalled
-// request no longer costs a whole timeout before the next is tried. When the
-// faster, Telegram-only answer comes first, the fuller one gets a short grace.
-const FULL_SOURCE_GRACE_MS = 2000;
+// The fuller source (all indexes) goes first. The Telegram-only source,
+// which usually answers in about two seconds, is added only when the fuller
+// one has failed or not answered within HEDGE_AFTER_MS, so a healthy index is
+// asked once and a stalled one does not cost a whole timeout.
+const HEDGE_AFTER_MS = 2500;
 
 async function fetchPansou(base, query, sources, deadline) {
-    const attempts = sources.map(source => fetchPansouOnce(base, query, source, deadline).then(
+    const attempt = source => fetchPansouOnce(base, query, source, deadline).then(
         items => ({ source, items }),
         error => {
             logEvent('warn', 'aggregate_source_attempt_failed', { source, error: logErrorMessage(error) });
             throw error;
         }
-    ));
-    for (const attempt of attempts) attempt.catch(() => {});
-    let first;
+    );
+    const fuller = attempt(sources[0]);
+    fuller.catch(() => {});
+    if (sources.length === 1) return (await fuller).items;
+    let timer;
+    const early = await Promise.race([
+        fuller.catch(() => null),
+        new Promise(resolve => {
+            timer = setTimeout(resolve, Math.min(HEDGE_AFTER_MS, remainingDeadlineMs(deadline, HEDGE_AFTER_MS)), 'stalled');
+        })
+    ]);
+    clearTimeout(timer);
+    if (early && early !== 'stalled') return early.items;
+    const faster = attempt(sources[1]);
+    faster.catch(() => {});
     try {
-        first = await Promise.any(attempts);
+        return (await Promise.any([fuller, faster])).items;
     } catch (failure) {
         throw failure.errors?.[0] || createHttpError('Aggregate search timed out', 504, 'Upstream request timed out');
     }
-    if (first.source === sources[0]) return first.items;
-    let timer;
-    const grace = new Promise(resolve => {
-        timer = setTimeout(resolve, Math.min(FULL_SOURCE_GRACE_MS, remainingDeadlineMs(deadline, FULL_SOURCE_GRACE_MS)), null);
-    });
-    const fuller = await Promise.race([attempts[0].catch(() => null), grace]);
-    clearTimeout(timer);
-    return fuller?.items || first.items;
 }
 
 // Keeps shares whose own title names this work (and year) and removes
@@ -226,7 +238,7 @@ async function verifyCandidates(candidates, ctx, deadline) {
     const checked = new Map();
     const check = async candidate => {
         const probe = passcode => probeQuarkShare(candidate.id, ctx, {
-            passcode, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS
+            passcode, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS, deadline
         });
         const result = await probe(candidate.credential?.password);
         if (result.status !== 'passcode_mismatch' || !candidate.alternate || budget.remaining <= 0 || isDeadlineExpired(deadline)) return result;
@@ -295,8 +307,10 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             hidden[status] = (hidden[status] || 0) + 1;
             continue;
         }
-        const password = (result.credential || candidate.credential)?.password;
-        const { source, time } = result.credential || candidate;
+        // The post that supplied the passcode is the one named as the source.
+        const shown = result.credential || candidate.credential || candidate;
+        const password = shown.password;
+        const { source, time } = shown;
         results.push({
             title: candidate.title,
             url: candidate.url,
@@ -361,12 +375,16 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
             // The alias lookup is bounded and cached; it must not delay the search.
             const aliasesTask = getResourceTitleAliases(query, identity, env, ctx).catch(() => []);
             const indexesResult = await Promise.all(Object.entries(indexes).map(async ([name, index]) => {
-                const downKey = new Request(`https://aggregate-index-down-v1.local/?base=${encodeURIComponent(index.key)}`);
-                if (!refresh && await serveCachedJson(downKey)) return { name, status: 'cooldown' };
+                // An index counts as down after two different searches failed
+                // within the window, so one hard query cannot block everyone.
+                const downKey = new Request(`https://aggregate-index-down-v2.local/?base=${encodeURIComponent(index.key)}`);
+                const failures = await readIndexFailures(downKey);
+                if (!refresh && failures.length >= INDEX_DOWN_QUERIES) return { name, status: 'cooldown' };
                 try {
                     return { name, status: 'ok', items: await index.fetch() };
                 } catch (error) {
-                    cacheJson(ctx, downKey, { down: true }, INDEX_DOWN_SECONDS);
+                    const failedQueries = [...new Set([...failures, query])].slice(-INDEX_DOWN_QUERIES * 2);
+                    cacheJson(ctx, downKey, { queries: failedQueries }, INDEX_DOWN_SECONDS);
                     logEvent('warn', 'aggregate_index_failed', { provider: name, error: logErrorMessage(error) });
                     return { name, status: 'failed', error };
                 }

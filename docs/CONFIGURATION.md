@@ -19,6 +19,8 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
 | `WPZY_COOKIE` | Optional | — | Login cookie (`bbs_token`, `bbs_sid`) of a dedicated read-only wpzy.org account, sent only to WPZY search and thread pages. Requires the `WPZY_CACHE_SESSION` Durable Object binding in production. |
 | `CRON_REFRESH_TITLES` | Optional | — | Comma-separated titles whose resource scans the scheduled trigger refreshes. The refresh warms the cache of the data centre the trigger runs in. |
+| `QUARK_CHANNEL_SEARCH` | Optional | `1` in `wrangler.toml` | Plain variable. `1` searches public Telegram channels for Quark posts. |
+| `QUARK_CHANNELS` | Optional | 6 measured channels | Plain variable. Comma-separated channel usernames (at most 8, case-insensitive) that override the default list. |
 | `PANSOU_API_URL` | Optional | `https://so.252035.xyz` | Base URL of a [PanSou](https://github.com/fish2018/pansou)-compatible search API. Must be `https` without credentials. `off` disables PanSou. |
 | `PANSOU_SOURCE` | Optional | `all` and `tg` | Pins the PanSou index source (`all`, `tg` or `plugin`). The default queries `all` and `tg` in parallel. |
 | `PANSOUSUO_SEARCH` | Optional | Enabled in `wrangler.toml` | Set to `1` to query the [盘搜索 public Quark index](https://www.pansousuo.com/api-docs). Only the search title is sent. |
