@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.66';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.67';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.66';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.66';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.66';
-import { RELEASE_VERSION } from './release.js?v=1.0.66';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.66';
+} from './scorer.js?v=1.0.67';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.67';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.67';
+import { RELEASE_VERSION } from './release.js?v=1.0.67';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.67';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.66';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.66';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.66';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.66';
+} from './match.js?v=1.0.67';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.67';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.67';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.67';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -93,6 +93,8 @@ const els = {
     wikiSummary: document.getElementById('wikiSummary'),
     resourceStatus: document.getElementById('resourcesStatus'),
     resourceList: document.getElementById('resourceList'),
+    zuidouyinResourceList: document.getElementById('zuidouyinResourceList'),
+    quarkChannelResourceList: document.getElementById('quarkChannelResourceList'),
     wpzysResourceList: document.getElementById('wpzysResourceList'),
     quarkUrlList: document.getElementById('quarkUrlList'),
     preferenceForm: document.getElementById('preferenceForm'),
@@ -1308,7 +1310,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
 
     const meta = resourceResult?.resourceMeta || {};
     const providers = meta.providers || {};
-    const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音' };
+    const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音', quarkChannel: 'Telegram 夸克影视' };
     const failedProviders = Object.entries(providers)
         .filter(([, status]) => status === 'failed')
         .map(([provider]) => providerLabels[provider] || provider);
@@ -1453,7 +1455,8 @@ try {
     // Default to every link.
 }
 
-const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'wpzysResourceList'];
+const RESOURCE_LIST_IDS = ['quarkUrlList', 'resourceList', 'zuidouyinResourceList', 'quarkChannelResourceList', 'wpzysResourceList'];
+const ORIGINAL_POST_LISTS = ['resourceList', 'zuidouyinResourceList'];
 // The arguments each list was last rendered with, so the filter can redraw it.
 const linkListRenders = new WeakMap();
 const quarkChecksBySignal = new WeakMap();
@@ -1978,7 +1981,7 @@ function renderResourceLoadingStates(title) {
         iconName: 'cloud',
         iconClass: 'text-accent-red',
     });
-    renderResourceStatus(els.resourceList, {
+    renderOriginalPostStatus({
         title: '正在收集资源页面',
         detail: '正在检查资源索引和论坛帖子',
         iconName: 'link',
@@ -2004,7 +2007,7 @@ function renderResourceDeferredStates(title, onStart) {
         actionLabel: '开始扫描资源',
         onAction: onStart
     });
-    renderResourceStatus(els.resourceList, {
+    renderOriginalPostStatus({
         title: '资源页面待加载',
         detail: '资源扫描会在影视详情先显示后开始',
         iconName: 'link',
@@ -2036,7 +2039,7 @@ function renderResourceErrorStates(onRetry) {
         actionLabel: '重试资源扫描',
         onAction: onRetry
     });
-    renderResourceStatus(els.resourceList, {
+    renderOriginalPostStatus({
         title: '资源来源暂时没有响应',
         detail: '上方影视详情仍可使用，你可以重新扫描资源',
         iconName: 'link',
@@ -2060,13 +2063,20 @@ function renderResourceErrorStates(onRetry) {
 function renderResourcesAwaitingDetails() {
     const waiting = { title: '等待详情确认', detail: '确认作品后开始扫描资源', isLoading: false };
     renderResourceStatus(els.quarkUrlList, { ...waiting, iconName: 'cloud', iconClass: 'text-accent-red' });
-    renderResourceStatus(els.resourceList, { ...waiting, iconName: 'link', iconClass: 'text-blue-500' });
+    renderOriginalPostStatus({ ...waiting, iconName: 'link', iconClass: 'text-blue-500' });
     renderResourceStatus(els.wpzysResourceList, { ...waiting, iconName: 'comments', iconClass: 'text-accent-gold' });
 }
 
-function renderResourceList(resources, newUrls) {
-    renderLinkCards(els.resourceList, resources, {
-        emptyLabel: '暂未发现资源页面',
+function renderOriginalPostStatus(options) {
+    for (const id of ORIGINAL_POST_LISTS) renderResourceStatus(els[id], options);
+    els.quarkChannelResourceList.closest('section').hidden = true;
+    // Forget the previous title's channel rows while a new title is loading.
+    renderResourceStatus(els.quarkChannelResourceList, options);
+}
+
+function renderResourceList(container, resources, newUrls, unavailable = false) {
+    renderLinkCards(container, resources, {
+        emptyLabel: unavailable ? '暂时无法查询此来源' : '暂未匹配到原帖',
         itemClass: 'link-item',
         cardClass: 'link-row',
         iconName: 'link',
@@ -2646,12 +2656,14 @@ function createResourceRetry(candidate, searchId, searchOptions, loadId) {
 }
 
 function renderResourceLists(resourceResult, newUrls, signal) {
-    const resources = [...resourceResult.resources, ...resourceResult.zuidouyinResources];
-    const wpzysResources = resourceResult.wpzysResources;
-    renderResourceList(resources, newUrls);
-    renderWpzysResourceList(wpzysResources, resourceResult.resourceMeta, newUrls);
+    const { resources, zuidouyinResources, wpzysResources, quarkChannelResources, resourceMeta } = resourceResult;
+    renderResourceList(els.resourceList, resources, newUrls, resourceMeta?.providers?.by669 === 'failed');
+    renderResourceList(els.zuidouyinResourceList, zuidouyinResources, newUrls, resourceMeta?.providers?.zuidouyin === 'failed');
+    els.quarkChannelResourceList.closest('section').hidden = !quarkChannelResources.length;
+    renderResourceList(els.quarkChannelResourceList, quarkChannelResources, newUrls);
+    renderWpzysResourceList(wpzysResources, resourceMeta, newUrls);
     renderQuarkUrls(resourceResult.quarkUrls, newUrls, signal);
-    return resources.length + wpzysResources.length;
+    return resources.length + zuidouyinResources.length + wpzysResources.length + quarkChannelResources.length;
 }
 
 function renderResourceResult({ result: resourceResult, newUrls, refreshFailed }, onRetry, signal) {
@@ -2670,7 +2682,7 @@ function updateCompletedResourceStatus({ result, newUrls, refreshPending, refres
     if (refreshPending || refreshFailed) return;
     const update = newUrls?.size ? `，本次新增 ${newUrls.size} 条` : '，暂无新增';
     const partial = result.partial || result.resourceMeta?.partial;
-    const totalSources = result.resources.length + result.zuidouyinResources.length + result.wpzysResources.length;
+    const totalSources = result.resources.length + result.zuidouyinResources.length + result.wpzysResources.length + result.quarkChannelResources.length;
     const attempted = Number(result.resourceMeta?.attemptedPages);
     const completion = partial ? '资源扫描部分完成'
         : Number.isFinite(attempted) && attempted < totalSources
@@ -2694,7 +2706,8 @@ function scheduleResourceLoad(candidate, searchId, searchOptions, loadId) {
         return;
     }
     resourceLoadStarted = false;
-    for (const container of [els.resourceList, els.wpzysResourceList, els.quarkUrlList]) {
+    for (const id of RESOURCE_LIST_IDS) {
+        const container = els[id];
         if (container) delete container.dataset.expanded;
     }
 

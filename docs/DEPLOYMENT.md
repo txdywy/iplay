@@ -135,6 +135,7 @@ npm run wrangler -- dev
 | `TMDB_ACCESS_TOKEN` | TMDB v4 访问令牌，推荐优先配置 |
 | `TMDB_API_KEY` | TMDB v3 API Key，作为备用 |
 | `WPZY_COOKIE` | wpzy.org 的 `bbs_token` 与可选 `bbs_sid`，仅放在 Worker Secret；不可公开、写进前端或 GitHub |
+| `QUARK_CHANNEL_SEARCH` | 设为 `1` 启用 Telegram 公开频道搜索，生产配置已启用。请求只发送搜索片名，无需 Telegram 凭据 |
 | `CORS_ALLOWED_ORIGINS` | 额外允许的前端 Origin，多个值用英文逗号分隔；线上域名与 localhost:8080 已默认允许 |
 
 ### 本地开发

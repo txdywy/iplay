@@ -1,5 +1,5 @@
 /**
- * Quark resource search across By669, WPZY and 醉都音.
+ * Quark resource search across forums, 醉都音 and a public Telegram channel.
  */
 
 import { isQuarkShareId } from '../js/quark.js';
@@ -56,6 +56,9 @@ const RESOURCE_MAX_DETAIL_PAGES = 12;
 const RESOURCE_MAX_WPZY_DETAIL_PAGES = 6;
 
 const RESOURCE_MAX_ZUIDOUYIN_POSTS = 4;
+
+const RESOURCE_MAX_CHANNEL_POSTS = 4;
+const QUARK_CHANNEL = "Quark_Movies";
 
 const ZUIDOUYIN_SEARCH_PAGE_SIZE = 10;
 
@@ -781,11 +784,50 @@ async function fetchZuidouyinPosts(query, deadline, releaseYear, mediaType = nul
     return [...matches.values()];
 }
 
+async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, titleMatcher) {
+    const url = new URL(`https://t.me/s/${QUARK_CHANNEL}`);
+    url.searchParams.set("q", query);
+    const response = await fetchUpstream(url.href, {
+        headers: { Accept: "text/html" },
+        redirect: "manual"
+    }, remainingDeadlineMs(deadline, RESOURCE_TIMEOUT_MS));
+    if (!response.ok) {
+        await releaseUpstreamResponse(response);
+        throw createHttpError(`Quark channel rejected with status ${response.status}`, 502);
+    }
+    const html = await readTextWithLimit(response);
+    if (!html.includes('class="tgme_channel_history js-message_history"') || isChallengePage(html)) {
+        throw createHttpError("Quark channel returned an unrecognized search page", 502);
+    }
+
+    const matchesTitle = await titleMatcher;
+    const posts = new Map();
+    // A Telegram search page orders posts from oldest to newest.
+    const messages = html.split('<div class="tgme_widget_message_wrap js-widget_message_wrap">');
+    for (const message of messages.slice(1).reverse()) {
+        if (posts.size >= RESOURCE_MAX_CHANNEL_POSTS) break;
+        const id = message.match(/^<div\b[^<>]{0,1024}\bdata-post="Quark_Movies\/(\d{1,12})"/)?.[1];
+        if (!id || posts.has(id)) continue;
+        const text = message.match(/<div class="tgme_widget_message_text js-message_text"[^<>]*>([^]*?)<\/div>/)?.[1];
+        if (!text) continue;
+        const firstLine = stripInlineHtml(text.split(/<br\b[^<>]*>/i, 1)[0]);
+        const title = firstLine.match(/^名称\s*[:：]\s*(.{1,300})$/)?.[1]?.trim();
+        if (!title || /壁纸|更新目录|资源目录|预告片|解说|混剪/.test(title)
+            || !matchesTitle(title) || !resourceTitleHasYear(title, releaseYear, mediaType)
+            || !collectQuarkUrls(text, 1).length) continue;
+        posts.set(id, {
+            title, url: `https://t.me/s/${QUARK_CHANNEL}/${id}`, isQuark: true, source: "quarkChannel", text
+        });
+    }
+    return [...posts.values()];
+}
+
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
     const quarkUrls = [];
     const quarkUrlsByUrl = new Map();
     // The caller bounds fetched pages; prefetched posts are already bounded.
-    const maxPages = Math.min(resources.length, RESOURCE_MAX_DETAIL_PAGES + RESOURCE_MAX_ZUIDOUYIN_POSTS);
+    const maxPages = Math.min(resources.length,
+        RESOURCE_MAX_DETAIL_PAGES + RESOURCE_MAX_ZUIDOUYIN_POSTS + RESOURCE_MAX_CHANNEL_POSTS);
     let failedPages = 0;
     let restrictedPages = 0;
     let loginRequiredPages = 0;
@@ -975,7 +1017,7 @@ export async function handleResourceSearch(query, env, ctx, { refresh = false, c
         ? await handleResourceSearchUncoalesced(query, ctx, options)
         : await withInFlight(
             ctx,
-            `resource:${wpzySession.cacheScope}:${generation}:${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
+            `resource:${wpzySession.cacheScope}:${generation}:${env.QUARK_CHANNEL_SEARCH === "1" ? "channel:" : ""}${refresh ? "refresh:" : ""}${query}:${JSON.stringify(identity)}`,
             () => handleResourceSearchUncoalesced(query, ctx, options)
         );
     const clientResponse = response.clone();
@@ -1035,7 +1077,8 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
     if (queryCheck.error) return queryCheck.error;
     query = queryCheck.value;
 
-    const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}`);
+    const channelEnabled = env.QUARK_CHANNEL_SEARCH === "1";
+    const keyForGeneration = epoch => new Request(`https://resource-search-v19-cache.local/?q=${encodeURIComponent(query)}&id=${identity.id || ""}&type=${identity.mediaType || ""}&year=${identity.year || ""}&scope=${wpzySession.cacheScope}${epoch ? "&generation=" + epoch : ""}${channelEnabled ? "&channel=1" : ""}`);
     let cacheKey = keyForGeneration(generation);
     const invalidateSession = () => sessionState(generation, true).catch(async error => {
         logEvent("warn", "wpzy_cache_revocation_failed", { error: logErrorMessage(error) });
@@ -1072,13 +1115,17 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         const titleMatcher = getResourceTitleAliases(query, identity, env, ctx)
             .catch(() => [])
             .then(aliases => createResourceTitleMatcher([query, ...aliases], identity.mediaType));
-        const [by669Result, wpzysResult, zuidouyinResult] = await Promise.allSettled([
+        const [by669Result, wpzysResult, zuidouyinResult, channelResult] = await Promise.allSettled([
             fetchBy669Resources(query, deadline, identity.year, identity.mediaType, titleMatcher),
             fetchWpzysResources(query, deadline, wpzySession, identity.year, identity.mediaType, titleMatcher),
-            fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType, titleMatcher)
+            fetchZuidouyinPosts(query, deadline, identity.year, identity.mediaType, titleMatcher),
+            channelEnabled ? fetchQuarkChannelPosts(query, deadline, identity.year, identity.mediaType, titleMatcher) : null
         ]);
 
-        const providerResults = Object.entries({ by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult });
+        const providerResults = Object.entries({
+            by669: by669Result, wpzys: wpzysResult, zuidouyin: zuidouyinResult,
+            ...(channelEnabled ? { quarkChannel: channelResult } : {})
+        });
         const failedProviders = providerResults.filter(([, result]) => result.status === "rejected");
         let loginRequired = wpzysResult.status === "rejected" && wpzysResult.reason?.resourceIssue === "login_required";
         if (failedProviders.length === providerResults.length) {
@@ -1095,11 +1142,14 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         const resources = by669Result.value ?? [];
         const wpzysResources = wpzysResult.value ?? [];
         const zuidouyinPosts = zuidouyinResult.value ?? [];
+        const channelPosts = channelResult.value ?? [];
         const zuidouyinResources = zuidouyinPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
+        const quarkChannelResources = channelPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
         const detailResources = selectResourceDetails(
             preferDistinctTitles(resources),
             preferDistinctTitles(wpzysResources).slice(0, RESOURCE_MAX_WPZY_DETAIL_PAGES),
-            zuidouyinPosts
+            zuidouyinPosts,
+            channelPosts
         );
         const detailResult = await collectQuarkUrlsFromResources(detailResources, deadline, wpzySession);
         if (detailResult.loginRequiredPages && sessionState) {
@@ -1120,7 +1170,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             await deleteCachedResponse(cacheKey);
         }
         const selectedUrls = new Set(detailResult.pages.map(page => page.url));
-        const unselectedPages = [...resources, ...wpzysResources, ...zuidouyinResources]
+        const unselectedPages = [...resources, ...wpzysResources, ...zuidouyinResources, ...quarkChannelResources]
             .filter(entry => !selectedUrls.has(entry.url))
             .map(({ url, source }) => ({ url, source, status: "unattempted" }));
 
@@ -1132,6 +1182,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             resources,
             wpzysResources,
             zuidouyinResources,
+            ...(channelEnabled ? { quarkChannelResources } : {}),
             quarkUrls: detailResult.quarkUrls,
             partial: isPartial,
             resourceMeta: {
