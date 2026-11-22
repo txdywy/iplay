@@ -246,7 +246,9 @@ try {
 
     const quarkStatus = await request('/api/resource/quark-status?id=missing&id=redirect', 'runtime-quark-status');
     assert.equal(quarkStatus.status, 200);
-    assert.deepEqual(await quarkStatus.json(), { unavailable: { missing: 'missing' }, unknown: ['redirect'] });
+    assert.deepEqual(await quarkStatus.json(), {
+        unavailable: { missing: 'missing' }, unknown: ['redirect'], available: [], passcodeRequired: []
+    });
     assert.equal(redirectedRequests, 0, 'Quark redirects must not reach other hosts');
     checks.push('native-quark-status-and-redirect-handling');
 

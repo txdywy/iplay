@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from '../worker/_worker.js';
 
-test('Quark status labels only confirmed failures and caches no upstream account data', async t => {
+test('Quark status distinguishes accessible, protected, unavailable and unknown shares without caching account data', async t => {
     const entries = new Map();
     const writes = [];
     const calls = new Map();
@@ -59,15 +59,18 @@ test('Quark status labels only confirmed failures and caches no upstream account
     assert.equal(response.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     const unavailable = { Missing: 'missing', deleted: 'deleted', expired: 'expired', cancelled: 'cancelled' };
     const unknown = ['wrong', 'unknown', 'limited', 'timeout'];
-    assert.deepEqual(await response.json(), { unavailable, unknown });
+    const expected = { unavailable, unknown, available: ['live'], passcodeRequired: ['protected'] };
+    assert.deepEqual(await response.json(), expected);
     assert.equal(calls.get('Missing'), 1);
-    assert.deepEqual(await (await probe(ids)).json(), { unavailable, unknown });
+    assert.deepEqual(await (await probe(ids)).json(), expected);
     for (const id of ['Missing', 'deleted', 'expired', 'cancelled', 'protected', 'live']) assert.equal(calls.get(id), 1);
     for (const id of ['unknown', 'limited', 'timeout', 'wrong']) assert.equal(calls.get(id), 2);
     const additional = await probe(['missing-files', 'blocked', 'invalid', 'egress-error', 'redirect']);
     assert.deepEqual(await additional.json(), {
         unavailable: { 'missing-files': 'missing_files', blocked: 'blocked', invalid: 'invalid' },
-        unknown: ['egress-error', 'redirect']
+        unknown: ['egress-error', 'redirect'],
+        available: [],
+        passcodeRequired: []
     });
     assert.ok(limits.every(key => key === 'quark-test:quark-status'));
     for (const entry of entries.values()) {
