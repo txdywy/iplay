@@ -45,6 +45,7 @@ function mockWorld(t, { pansou, shares = {}, pansouFailures = 0 }) {
             const share = shares[id];
             if (!share) return Response.json({ code: 41011 }, { status: 400 });
             if (share.throws) throw new Error('network down');
+            if (share.throwsOnce && calls.token.filter(call => call.id === id).length === 1) throw new Error('timed out once');
             if (share.passcode && passcode !== share.passcode) return Response.json({ code: 41008 }, { status: 400 });
             if (share.code) return Response.json({ code: share.code }, { status: 400 });
             return Response.json({ code: 0, data: { stoken: 'secret-stoken', title: share.title, author: { nick: 'private-author' } } });
@@ -291,4 +292,22 @@ test('a thin answer from the index is cached only briefly, a full one for longer
     const full = mockWorld(t, { pansou: items, shares });
     const fullBody = await (await aggregate(full, '测试剧B')).json();
     assert.ok(fullBody.meta.cacheExpiresAt - Date.now() > 300_000, 'ten minutes for a complete, fully verified answer');
+});
+
+test('a share whose first check is inconclusive is checked once more within the same request', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('flaky1', '测试剧 (2023) 4K'), post('down1', '测试剧 (2023) 1080P')],
+        shares: {
+            flaky1: { throwsOnce: true, title: '测试剧 4K', entries: ['测试剧'] },
+            down1: { throws: true }
+        }
+    });
+    const body = await (await aggregate(world)).json();
+    const byId = Object.fromEntries(body.results.map(item => [item.url.split('/').at(-1), item]));
+    assert.equal(byId.flaky1.status, 'available', 'the second attempt settles it');
+    assert.equal(byId.down1.status, 'unknown', 'a share that keeps failing stays unconfirmed');
+    assert.equal(world.calls.token.filter(call => call.id === 'flaky1').length, 2);
+    assert.equal(world.calls.token.filter(call => call.id === 'down1').length, 2);
+    assert.equal(body.meta.unknown, 1);
+    assert.equal(body.meta.verified, 1);
 });

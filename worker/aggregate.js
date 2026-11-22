@@ -149,13 +149,22 @@ const STATUS_RANK = { available: 0, unknown: 1, passcode_required: 2 };
 async function verifyCandidates(candidates, ctx, deadline) {
     const budget = { remaining: QUARK_REQUEST_BUDGET };
     const checked = new Map();
+    const check = candidate => probeQuarkShare(candidate.id, ctx, {
+        passcode: candidate.password, listing: true, budget
+    });
     await forEachWithConcurrency(candidates, CHECK_CONCURRENCY, async candidate => {
         if (isDeadlineExpired(deadline) || budget.remaining <= 0) return;
-        const result = await probeQuarkShare(candidate.id, ctx, {
-            passcode: candidate.password, listing: true, budget
-        });
+        const result = await check(candidate);
         // A check cut short by the budget is not evidence about the share.
         if (result.status !== undefined || budget.remaining > 0) checked.set(candidate.id, result);
+    });
+    // Quark answers a share now and then with a timeout or a limit. One more
+    // pass, with whatever budget is left, settles most of those.
+    const inconclusive = candidates.filter(candidate => checked.has(candidate.id) && checked.get(candidate.id).status === undefined);
+    await forEachWithConcurrency(inconclusive, CHECK_CONCURRENCY, async candidate => {
+        if (isDeadlineExpired(deadline) || budget.remaining <= 0) return;
+        const result = await check(candidate);
+        if (result.status !== undefined) checked.set(candidate.id, result);
     });
     return checked;
 }
