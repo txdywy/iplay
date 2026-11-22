@@ -183,7 +183,10 @@ export default {
             }
 
             if (path === "/api/resource/quark-status") {
-                return withCors(await handleQuarkStatus(url.searchParams.getAll("id"), ctx), request, env);
+                return withCors(await handleQuarkStatus(url.searchParams.getAll("id"), ctx, {
+                    passcodes: url.searchParams.getAll("pwd"),
+                    content: url.searchParams.get("content") === "1"
+                }), request, env);
             }
 
             if (path === "/api/resource/aggregate") {

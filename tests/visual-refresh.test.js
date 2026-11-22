@@ -27,8 +27,10 @@ test('the three resource sources are told apart by colour, icon and count', () =
         assert.match(html, new RegExp(`id="${list}" class="link-list" data-count-target="${count}"`));
         assert.match(css, new RegExp(`\\.${accent} \\{ --res-accent: oklch\\(`));
     }
-    // The three forum sources and the separate aggregate module each have a badge.
-    assert.equal((html.match(/class="res-badge"/g) || []).length, 4);
+    // Every source column has a badge: three forum sources, 醉都音, the
+    // Telegram channels and the aggregate module.
+    assert.equal((html.match(/class="res-badge"/g) || []).length, 6);
+    for (const accent of ['res-zdy', 'res-tg', 'res-agg']) assert.match(css, new RegExp(`\\.${accent} \\{ --res-accent: oklch\\(`));
     assert.match(main, /iconName: 'cloud',\n\s+iconClass: 'res-icon/);
     assert.match(main, /function setResourceCount\(container, count\)/);
 });
@@ -66,6 +68,20 @@ test('the aggregate module is its own verified section inside the resources, wir
     assert.match(main, /void loadAggregate\(candidate, searchId, searchOptions, loadId\)/);
     assert.match(main, /tags: aggregateTags/);
     assert.match(css, /\.res-agg \{ --res-accent: oklch\(/);
-    assert.match(css, /\.resources-grid > \.res-agg \{ grid-column: 1 \/ -1; \}/);
+    assert.doesNotMatch(css, /\.resources-grid > \.res-agg \{ grid-column: 1 \/ -1; \}/, 'it is an ordinary column like the others');
     assert.match(css, /\.link-tag-match/);
+});
+
+test('醉都音 and the Telegram channels list their own Quark links, checked for content', () => {
+    for (const [heading, list] of [['zuidouyinHeading', 'zuidouyinResourceList'], ['quarkChannelHeading', 'quarkChannelResourceList']]) {
+        const start = html.indexOf(`aria-labelledby="${heading}"`);
+        const section = html.slice(start, html.indexOf('</section>', start));
+        assert.match(section, /class="res-badge"/);
+        assert.match(section, /class="card-caption"/);
+        assert.match(section, new RegExp(`id="${list}"`));
+    }
+    assert.match(main, /const SOURCE_SHARE_COLUMNS = \['zuidouyin', 'quarkChannel'\]/);
+    assert.match(main, /ResourceAPI\.checkQuarkLinks\(ids, \{ signal \}, \{ passcodes, content: true \}\)/);
+    assert.match(main, /label: `\$\{base\} · 无内容`/);
+    assert.match(css, /\.link-tag-warn/);
 });

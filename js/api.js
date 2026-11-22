@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.75';
+import { RELEASE_VERSION } from './release.js?v=1.0.76';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'
@@ -9,6 +9,8 @@ const API_BASE = location.hostname === 'localhost' || location.hostname === '127
 const DEFAULT_TIMEOUT_MS = 12000;
 const RESOURCE_TIMEOUT_MS = 18000;
 const RESOURCE_CACHE_TIMEOUT_MS = 2500;
+// Reading what each share holds takes a second request per share.
+const QUARK_CHECK_TIMEOUT_MS = 20000;
 // The aggregate search queries a third-party index, then checks each share.
 const RESOURCE_AGGREGATE_TIMEOUT_MS = 32000;
 const POSTER_TIMEOUT_MS = 18000;
@@ -262,9 +264,15 @@ export const ResourceAPI = {
             { ...options, cache: 'no-store' }, RESOURCE_AGGREGATE_TIMEOUT_MS);
     },
 
-    async checkQuarkLinks(ids, options = {}) {
-        const params = new globalThis.URLSearchParams(ids.map(id => ['id', id]));
-        return fetchWithTimeout(`${API_BASE}/api/resource/quark-status?${params}`, { ...options, cache: 'no-store' });
+    // `passcodes` ("id:code") are the codes the page listed; `content` also
+    // reads each share's top level so an empty share can be told apart.
+    async checkQuarkLinks(ids, options = {}, { passcodes = [], content = false } = {}) {
+        const params = new globalThis.URLSearchParams([
+            ...ids.map(id => ['id', id]),
+            ...passcodes.map(entry => ['pwd', entry]),
+            ...(content ? [['content', '1']] : [])
+        ]);
+        return fetchWithTimeout(`${API_BASE}/api/resource/quark-status?${params}`, { ...options, cache: 'no-store' }, QUARK_CHECK_TIMEOUT_MS);
     }
 };
 

@@ -919,6 +919,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 .link-tag-new, .link-tag-available { color: var(--color-green-500); }
 .link-tag-match { background: color-mix(in oklab, var(--res-accent, var(--color-blue-500)) 18%, transparent); color: var(--res-accent, var(--color-blue-500)); }
 .link-tag-unavailable { color: var(--color-accent-red); }
+.link-tag-warn { color: var(--color-accent-gold); }
 .link-opened::before { content: "✓ "; }
 .is-opened { --link-open-strength: 50%; }
 .is-opened[data-open-level="2"] { --link-open-strength: 65%; }
@@ -1123,7 +1124,9 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
 .res-quark { --res-accent: oklch(70% 0.16 255); }  /* Quark blue: direct shares */
 .res-posts { --res-accent: oklch(80% 0.14 72); }   /* amber: source posts */
 .res-forum { --res-accent: oklch(72% 0.15 305); }  /* violet: forum threads */
-.res-agg { --res-accent: oklch(76% 0.13 178); }    /* teal: verified aggregate search */
+.res-zdy { --res-accent: oklch(72% 0.14 12); }     /* rose: 醉都音 posts */
+.res-tg { --res-accent: oklch(76% 0.11 210); }     /* cyan: Telegram channels */
+.res-agg { --res-accent: oklch(76% 0.13 152); }    /* green: verified aggregate search */
 
 .res-col {
   position: relative;
@@ -1410,11 +1413,6 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   .link-list { margin-inline: -0.5rem; }
   .link-row { padding: 0.875rem 0.5rem; }
 
-  /* The aggregate module runs the full width, its rows in three columns. */
-  .resources-grid > .res-agg { grid-column: 1 / -1; }
-  .agg-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 1.5rem; }
-  .agg-list > li:not(.link-item) { grid-column: 1 / -1; }
-  .agg-list > .link-item { border-top: 1px solid var(--glass-line); }
 
   /* One-row sticky bar; recent searches open beneath the search field. */
   /* Symmetric columns put the search field on the page's centre line. */
