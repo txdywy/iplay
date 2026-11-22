@@ -38,6 +38,9 @@ const CHECK_CONCURRENCY = 4;
 const QUARK_REQUEST_BUDGET = 36;
 const CACHE_SECONDS_VERIFIED = 600;
 const CACHE_SECONDS_PARTIAL = 120;
+// After the index fails, visitors in the next minute and a half are told at
+// once instead of each waiting out the timeouts. A retry still tries again.
+const INDEX_DOWN_SECONDS = 90;
 // The index sometimes answers with a fraction of its usual results; such a
 // thin answer is not worth keeping for long.
 const THIN_INDEX_RESPONSE = 5;
@@ -95,18 +98,34 @@ async function fetchPansouOnce(base, query, source, deadline) {
     return items;
 }
 
+// The sources are asked at once and the first answer wins: one stalled
+// request no longer costs a whole timeout before the next is tried. When the
+// faster, Telegram-only answer comes first, the fuller one gets a short grace.
+const FULL_SOURCE_GRACE_MS = 2000;
+
 async function fetchPansou(base, query, sources, deadline) {
-    let lastError;
-    for (const source of sources) {
-        if (isDeadlineExpired(deadline)) break;
-        try {
-            return await fetchPansouOnce(base, query, source, deadline);
-        } catch (error) {
-            lastError = error;
+    const attempts = sources.map(source => fetchPansouOnce(base, query, source, deadline).then(
+        items => ({ source, items }),
+        error => {
             logEvent('warn', 'aggregate_source_attempt_failed', { source, error: logErrorMessage(error) });
+            throw error;
         }
+    ));
+    for (const attempt of attempts) attempt.catch(() => {});
+    let first;
+    try {
+        first = await Promise.any(attempts);
+    } catch (failure) {
+        throw failure.errors?.[0] || createHttpError('Aggregate search timed out', 504, 'Upstream request timed out');
     }
-    throw lastError || createHttpError('Aggregate search timed out', 504, 'Upstream request timed out');
+    if (first.source === sources[0]) return first.items;
+    let timer;
+    const grace = new Promise(resolve => {
+        timer = setTimeout(resolve, Math.min(FULL_SOURCE_GRACE_MS, remainingDeadlineMs(deadline, FULL_SOURCE_GRACE_MS)), null);
+    });
+    const fuller = await Promise.race([attempts[0].catch(() => null), grace]);
+    clearTimeout(timer);
+    return fuller?.items || first.items;
 }
 
 // Keeps shares whose own title names this work (and year) and removes
@@ -267,12 +286,19 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
     if (cacheOnly && !cached) {
         return jsonResponse({ error: '聚合结果已过期，请重新搜索。' }, 410, { 'Cache-Control': 'no-store' });
     }
+    const downKey = new Request(`https://aggregate-index-down-v1.local/?base=${encodeURIComponent(base)}`);
+    if (!cached && !refresh && await serveCachedJson(downKey)) {
+        return jsonResponse({ error: '聚合源刚刚没有响应，请稍后重试。' }, 503, { 'Cache-Control': 'no-store', 'Retry-After': '60' });
+    }
     const response = cached || await withInFlight(ctx, `aggregate:${cacheKey.url}:${refresh ? 'refresh' : ''}`, async () => {
         try {
             const deadline = createDeadline(Math.min(timeoutMs, TOTAL_TIMEOUT_MS));
             // The alias lookup is bounded and cached; it must not delay the search.
             const [items, aliases] = await Promise.all([
-                fetchPansou(base, query, sources, deadline),
+                fetchPansou(base, query, sources, deadline).catch(error => {
+                    cacheJson(ctx, downKey, { down: true }, INDEX_DOWN_SECONDS);
+                    throw error;
+                }),
                 getResourceTitleAliases(query, identity, env, ctx).catch(() => [])
             ]);
             const matchesTitle = createResourceTitleMatcher([query, ...aliases], identity.mediaType);
