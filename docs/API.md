@@ -450,7 +450,7 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 ### 6.1 夸克分享状态
 
-`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID，返回 `{ unavailable: { [shareId]: reason }, unknown: [shareId] }`。原因可为 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 或 `expired`。只有夸克返回明确状态时才列入 `unavailable`。提取码提示表示需要用户输入提取码。限流、网络故障等无法判断的结果列入 `unknown`，后续可复查。探测使用公开分享状态，Worker 缓存状态 5 分钟。此接口使用独立的每分钟 10 次限流额度。
+`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
 
 ---
 
@@ -627,7 +627,7 @@ const { resources, wpzysResources, zuidouyinResources, quarkUrls } = await Resou
 | 方法 | 签名 | 返回值 |
 |------|------|--------|
 | `search` | `(query, options = {}, { refresh = false, cacheOnly = false, identity } = {})` | `{ resources[], wpzysResources[], zuidouyinResources[], quarkUrls[], resourceMeta, partial }` |
-| `checkQuarkLinks` | `(ids, options = {})` | `{ unavailable }` |
+| `checkQuarkLinks` | `(ids, options = {})` | `{ available, passcodeRequired, unavailable, unknown }` |
 
 ### `PosterAPI`
 

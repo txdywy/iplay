@@ -916,7 +916,7 @@ details[open] > .disclosure::after { transform: translateY(25%) rotate(225deg); 
   white-space: nowrap;
 }
 .link-opened, .link-tag[hidden] { display: none; }
-.link-tag-new { color: var(--color-green-500); }
+.link-tag-new, .link-tag-available { color: var(--color-green-500); }
 .link-tag-unavailable { color: var(--color-accent-red); }
 .link-opened::before { content: "✓ "; }
 .is-opened { --link-open-strength: 50%; }

@@ -136,7 +136,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
             quarkUrls: [
                 { title: 'Existing share', url: 'https://pan.quark.cn/s/still-present', password: 'keep' },
                 { title: 'Deleted share', url: 'https://pan.quark.cn/s/prior-gone' },
-                { title: 'Protected share', url: 'https://pan.quark.cn/s/protected' }
+                { title: 'Protected share', url: 'https://pan.quark.cn/s/protected', sourceUrl: 'https://t.me/s/Quark_Movies/1234' }
             ]
         };
         window.__smoke = { calls: [], requestOptions: [], resourceCalls: 0, posterCalls: 0, detailCalls: 0, detailResolved: 0, detailAttempts: {}, actorFilterFailures: 0 };
@@ -516,7 +516,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 return json({ error: 'cache miss' }, 410);
             }
             if (url.pathname === '/api/resource/quark-status') {
-                if (window.__smoke.resourceMode !== 'cached-refresh') return json({ unavailable: {}, unknown: [] });
+                if (window.__smoke.resourceMode !== 'cached-refresh') return json({
+                    unavailable: {}, unknown: [], available: url.searchParams.getAll('id'), passcodeRequired: []
+                });
                 const firstProbe = !window.__smoke.releaseQuarkChecks;
                 if (firstProbe) {
                     await new Promise(resolve => { window.__smoke.releaseQuarkChecks = resolve; });
@@ -526,7 +528,9 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const ids = url.searchParams.getAll('id');
                 return json({
                     unavailable: Object.fromEntries(ids.filter(id => reasons[id]).map(id => [id, reasons[id]])),
-                    unknown: firstProbe && ids.includes('still-present') ? ['still-present'] : []
+                    unknown: firstProbe && ids.includes('still-present') ? ['still-present'] : [],
+                    available: [],
+                    passcodeRequired: ids.filter(id => id === 'protected')
                 });
             }
             if (url.pathname === '/api/resource') {
@@ -1026,6 +1030,7 @@ async function runObserverFlow() {
     await waitFor('window.__smoke.resourceCalls === 3');
     await waitFor("Boolean(document.querySelector('#resourceList a[href=\\\"https://resource.example/smoke\\\"]'))");
     assert.equal(await evaluate('document.querySelector("#quarkUrlList a")?.getAttribute("href")'), 'https://pan.quark.cn/s/smoke');
+    await waitFor("document.querySelector('#quarkUrlList .link-tag-available')?.textContent === '分享可访问'");
     assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#quarkUrlList li')).map(card => ({ url: card.querySelector('a')?.getAttribute('href'), passwordText: card.innerText.match(/提取码：[a-z0-9]+/i)?.[0] || '', buttons: card.querySelectorAll('.link-copy').length }))"), [
         { url: 'https://pan.quark.cn/s/smoke', passwordText: '提取码：abcd', buttons: 1 },
         { url: 'https://pan.quark.cn/s/smoke-second', passwordText: '提取码：e5F6', buttons: 1 },
@@ -1642,7 +1647,11 @@ async function runResourceCacheAndQuarkStatusFlow() {
 
     await evaluate("window.__smoke.releaseQuarkChecks()");
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已删除'");
+    await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-status')?.textContent === '暂未确认'");
+    assert.match(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"]').textContent"), /需要提取码.*来源：Telegram 夸克影视/s);
     const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-copy')";
+    // Advance beyond the unknown-status retry window while keeping known statuses cached.
+    await evaluate("(() => { const now = Date.now.bind(Date); Date.now = () => now() + 3100; })()");
     await evaluate(copy + '.focus(); window.__smoke.releaseResourceRefresh()');
     await waitFor("document.querySelector('#resourcesStatus').textContent.includes('本次新增 3 条')");
     assert.equal(await evaluate('document.activeElement === ' + copy), true);
@@ -1650,7 +1659,7 @@ async function runResourceCacheAndQuarkStatusFlow() {
     assert.equal(await evaluate("document.querySelectorAll('#resourcesSection .link-tag-new').length"), 3);
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已取消'");
     await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-unavailable')?.textContent === '分享已过期'");
-    assert.equal(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-unavailable').hidden"), true);
+    assert.equal(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-unavailable')"), null);
     assert.equal(await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource/quark-status?') && call.includes('id=prior-gone')).length"), 1);
 
     const queries = await evaluate("window.__smoke.requestOptions.filter(call => ['/api/resource/cache', '/api/resource'].includes(call.path))");

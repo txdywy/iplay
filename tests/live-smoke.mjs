@@ -141,6 +141,8 @@ const quark = await getApi('/api/resource/quark-status?id=' + probeId, 200);
 assert.equal(quark.response.headers.get('cache-control'), 'no-store');
 assert.ok(['missing', 'invalid', 'deleted'].includes(quark.data.unavailable?.[probeId]), 'Quark must confirm the generated nonexistent share');
 assert.deepEqual(quark.data.unknown, []);
+assert.deepEqual(quark.data.available, []);
+assert.deepEqual(quark.data.passcodeRequired, []);
 results.push({ check: 'quark-confirmed-missing-share', status: 'passed' });
 
 console.log(JSON.stringify({ liveSmoke: 'passed', release, site, api, results }, null, 2));

@@ -9,8 +9,8 @@ const CHECK_TIMEOUT_MS = 3200;
 const CHECK_CACHE_SECONDS = 300;
 const MAX_TOKEN_RESPONSE_BYTES = 24 * 1024;
 
-// Definitive states used by Quark's public share client. A passcode prompt,
-// login requirement, visit limit or expired access token is inconclusive.
+// Definitive failures used by Quark's public share client. Account and visit
+// limits are inconclusive, while a passcode prompt has its own status.
 const UNAVAILABLE_BY_CODE = new Map([
     [41004, 'missing_files'],
     [41006, 'missing'],
@@ -22,10 +22,10 @@ const UNAVAILABLE_BY_CODE = new Map([
 ]);
 
 async function checkShare(id, ctx) {
-    const cacheKey = new Request('https://quark-share-status-v1-cache.local/' + id);
+    const cacheKey = new Request('https://quark-share-status-v2-cache.local/' + id);
     try {
         const cached = await serveCachedJson(cacheKey);
-        if (cached) return (await cached.json()).reason;
+        if (cached) return (await cached.json()).status;
 
         const response = await fetchUpstream(SHARE_TOKEN_URL, {
             method: 'POST',
@@ -45,16 +45,16 @@ async function checkShare(id, ctx) {
         }
 
         const data = await readJsonWithLimit(response, MAX_TOKEN_RESPONSE_BYTES);
-        const reason = UNAVAILABLE_BY_CODE.get(data?.code) ?? null;
         const requiresPasscode = data?.code === 41008;
         const tokenIssued = response.ok && data?.code === 0 && typeof data.data?.stoken === 'string' && data.data.stoken.length > 0;
-        if (reason || requiresPasscode || tokenIssued) {
+        const status = UNAVAILABLE_BY_CODE.get(data?.code)
+            ?? (requiresPasscode ? 'passcode_required' : tokenIssued ? 'available' : undefined);
+        if (status) {
             // Cache only the status. Quark's token response can include
             // author information and a temporary access credential.
-            cacheJson(ctx, cacheKey, { reason }, CHECK_CACHE_SECONDS);
-            return reason;
+            cacheJson(ctx, cacheKey, { status }, CHECK_CACHE_SECONDS);
         }
-        return undefined;
+        return status;
     } catch {
         return undefined;
     }
@@ -69,7 +69,10 @@ export async function handleQuarkStatus(ids, ctx) {
     await forEachWithConcurrency(uniqueIds, 4, async id => {
         statuses.set(id, await checkShare(id, ctx));
     });
-    const unavailable = Object.fromEntries(uniqueIds.filter(id => statuses.get(id)).map(id => [id, statuses.get(id)]));
+    const available = uniqueIds.filter(id => statuses.get(id) === 'available');
+    const passcodeRequired = uniqueIds.filter(id => statuses.get(id) === 'passcode_required');
+    const unavailable = Object.fromEntries(uniqueIds.filter(id => statuses.get(id)
+        && statuses.get(id) !== 'available' && statuses.get(id) !== 'passcode_required').map(id => [id, statuses.get(id)]));
     const unknown = uniqueIds.filter(id => statuses.get(id) === undefined);
-    return jsonResponse({ unavailable, unknown });
+    return jsonResponse({ unavailable, unknown, available, passcodeRequired });
 }

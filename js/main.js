@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.67';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.68';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.67';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.67';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.67';
-import { RELEASE_VERSION } from './release.js?v=1.0.67';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.67';
+} from './scorer.js?v=1.0.68';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.68';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.68';
+import { RELEASE_VERSION } from './release.js?v=1.0.68';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.68';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.67';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.67';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.67';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.67';
+} from './match.js?v=1.0.68';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.68';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.68';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.68';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1489,22 +1489,30 @@ function checkQuarkRows(rows, signal) {
             .then(result => result, () => null);
         verification.queue = batch;
         for (const id of ids) {
-            const check = { expiresAt: Infinity, unknown: false };
+            const check = { expiresAt: Infinity };
             check.result = batch.then(result => {
                 const reason = Object.hasOwn(result?.unavailable || {}, id) ? result.unavailable[id] : undefined;
-                check.unknown = !reason && (!Array.isArray(result?.unknown) || result.unknown.includes(id));
-                check.expiresAt = Date.now() + (check.unknown ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
-                return reason;
+                let status = 'unknown';
+                if (QUARK_UNAVAILABLE_LABELS.has(reason)) status = reason;
+                else if (Array.isArray(result?.passcodeRequired) && result.passcodeRequired.includes(id)) status = 'passcode_required';
+                else if (Array.isArray(result?.available) && result.available.includes(id)) status = 'available';
+                check.expiresAt = Date.now() + (status === 'unknown' ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
+                return status;
             });
             verification.checks.set(id, check);
         }
     }
     for (const { id, badge } of rows) {
-        void verification.checks.get(id).result.then(reason => {
-            const label = QUARK_UNAVAILABLE_LABELS.get(reason);
-            if (!label || signal.aborted || !badge.isConnected) return;
-            badge.textContent = label;
-            badge.hidden = false;
+        void verification.checks.get(id).result.then(status => {
+            if (signal.aborted || !badge.isConnected) return;
+            const failure = QUARK_UNAVAILABLE_LABELS.get(status);
+            badge.classList.toggle('link-tag-unavailable', Boolean(failure));
+            badge.classList.toggle('link-tag-available', status === 'available');
+            badge.textContent = failure ?? {
+                available: '分享可访问',
+                passcode_required: '需要提取码',
+                unknown: '暂未确认'
+            }[status];
         });
     }
 }
@@ -1720,8 +1728,8 @@ function renderLinkCards(container, items, options, revealFocus = false) {
             const shareId = probeSignal && quarkShareId(item.url);
             if (shareId) {
                 const badge = document.createElement('span');
-                badge.className = 'link-tag link-tag-unavailable';
-                badge.hidden = true;
+                badge.className = 'link-tag link-tag-status';
+                badge.textContent = '待检查';
                 title.appendChild(badge);
                 quarkRows.push({ id: shareId, badge });
             }
@@ -2126,8 +2134,10 @@ function renderQuarkUrls(quarkUrls, newUrls, probeSignal) {
         metaText: item => item.url.replace(/^https?:\/\//, ''),
         titleText: item => item.title || 'Quark link',
         detailText: item => formatQuarkCopyText(item) ? `提取码：${formatQuarkCopyText(item)}` : '',
-        // The source post usually has the same title as the card; repeat it only when it differs.
-        sourceText: item => (item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : ''),
+        sourceText: item => {
+            if (item.sourceUrl?.startsWith('https://t.me/s/Quark_Movies/')) return '来源：Telegram 夸克影视';
+            return item.sourceTitle && item.sourceTitle !== item.title ? `来源：${item.sourceTitle}` : '';
+        },
         actionLabel: item => formatQuarkCopyText(item) ? '复制密码' : '',
         onAction: item => copyQuarkShare(item, text => globalThis.navigator.clipboard.writeText(text)),
         newUrls,
