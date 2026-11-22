@@ -513,7 +513,7 @@ test('Quark checks allow longer than three seconds, the aggregate module longest
         headers: { 'cf-connecting-ip': '203.0.113.250' }
     }), {}, world.ctx);
     assert.equal(status.status, 200);
-    assert.ok(delays.includes(4500) && !delays.includes(3200), 'the shared check no longer cuts Quark off at 3.2 seconds');
+    assert.ok(delays.some(delay => delay > 6000 && delay <= 7000) && !delays.includes(3200), 'quark-status gives each Quark step up to seven seconds');
 });
 
 test('cacheOnly serves a cached answer and refuses to search when there is none', async t => {
