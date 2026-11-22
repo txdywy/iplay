@@ -181,23 +181,30 @@ function selectCandidates(items, matchesTitle, { year, mediaType }) {
         const password = fromPansousuo
             ? parsed.password || (!parsed._passwordConflict && isValidQuarkPassword(listed) ? listed : '')
             : isValidQuarkPassword(listed) ? listed : parsed.password;
-        const time = Date.parse(item.datetime);
+        const date = Date.parse(item.datetime);
+        const time = Number.isFinite(date) ? date : 0;
+        const source = fromPansousuo || SOURCE_PATTERN.test(item.source) ? item.source : '';
         const candidate = {
             id,
             url: parsed.url,
-            password,
             title,
-            source: fromPansousuo || SOURCE_PATTERN.test(item.source) ? item.source : '',
-            time: Number.isFinite(time) ? time : 0
+            source,
+            time,
+            credential: password ? { password, source, time } : undefined
         };
         const existing = byId.get(id);
-        // The same share is reposted by many channels; keep the newest post
-        // and any passcode a repost supplied.
-        if (!existing || candidate.time > existing.time) {
-            byId.set(id, { ...candidate, password: candidate.password || existing?.password || '' });
-        } else if (!existing.password && candidate.password) {
-            existing.password = candidate.password;
+        if (!existing) {
+            byId.set(id, candidate);
+            continue;
         }
+        // Keep the newest post, but preserve a distinct passcode from the
+        // other index in case the preferred credential is explicitly rejected.
+        const [newer, older] = candidate.time > existing.time ? [candidate, existing] : [existing, candidate];
+        const credential = newer.credential || older.credential;
+        const alternate = credential && [older.credential, existing.alternate, newer.credential].find(item => item
+            && item.password !== credential.password
+            && (item.source === PANSOUSUO_SOURCE) !== (credential.source === PANSOUSUO_SOURCE));
+        byId.set(id, { ...newer, credential, alternate });
     }
     const ranked = [...byId.values()].sort((a, b) => b.time - a.time);
     // The check budget is shared. Give each index a turn even when one has
@@ -217,9 +224,15 @@ const STATUS_RANK = { available: 0, unknown: 1, passcode_required: 2 };
 async function verifyCandidates(candidates, ctx, deadline) {
     const budget = { remaining: QUARK_REQUEST_BUDGET };
     const checked = new Map();
-    const check = candidate => probeQuarkShare(candidate.id, ctx, {
-        passcode: candidate.password, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS
-    });
+    const check = async candidate => {
+        const probe = passcode => probeQuarkShare(candidate.id, ctx, {
+            passcode, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS
+        });
+        const result = await probe(candidate.credential?.password);
+        if (result.status !== 'passcode_mismatch' || !candidate.alternate || budget.remaining <= 0 || isDeadlineExpired(deadline)) return result;
+        const alternate = await probe(candidate.alternate.password);
+        return alternate.passcodeVerified ? { ...alternate, credential: candidate.alternate } : result;
+    };
     await forEachWithConcurrency(candidates, CHECK_CONCURRENCY, async candidate => {
         if (isDeadlineExpired(deadline) || budget.remaining <= 0) return;
         const result = await check(candidate);
@@ -282,18 +295,20 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             hidden[status] = (hidden[status] || 0) + 1;
             continue;
         }
+        const password = (result.credential || candidate.credential)?.password;
+        const { source, time } = result.credential || candidate;
         results.push({
             title: candidate.title,
             url: candidate.url,
-            ...(candidate.password ? { password: candidate.password } : {}),
-            ...(candidate.source ? { source: candidate.source } : {}),
-            ...(candidate.time ? { datetime: new Date(candidate.time).toISOString() } : {}),
+            ...(password ? { password } : {}),
+            ...(source ? { source } : {}),
+            ...(time ? { datetime: new Date(time).toISOString() } : {}),
             status: status ?? 'unknown',
             ...(result.passcodeVerified ? { passcodeVerified: true } : {}),
             ...(result.shareTitle ? { shareTitle: result.shareTitle } : {}),
             ...(result.entries?.length ? { entries: result.entries, totalItems: result.totalItems } : {}),
             ...(contentNamesWork(result, matchesTitle) ? { contentMatch: true } : {}),
-            _time: candidate.time
+            _time: time
         });
     }
     results.sort((a, b) => (STATUS_RANK[a.status] ?? 1) - (STATUS_RANK[b.status] ?? 1)

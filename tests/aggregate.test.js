@@ -167,6 +167,32 @@ test('a 盘搜索 rate limit does not remove successful PanSou results', async t
     assert.equal(result.results[0].source, 'tg:chan1');
 });
 
+test('duplicate results preserve a valid alternate passcode and accept decimal release metadata', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('protected', '测试片 5.1声道 (2023)', { password: 'ok12' })],
+        pansousuo: [
+            indexed('protected', '测试片 2.5GB (2023)', { access_code: 'old1' }),
+            indexed('decimal', '测试片 2.5GB (2023)'),
+            indexed('sequel', '测试片 2 (2024)')
+        ],
+        shares: {
+            protected: { passcode: 'ok12', entries: ['测试片.mkv'] },
+            decimal: { entries: ['测试片.mp4'] }
+        }
+    });
+    const response = await aggregate(world, '测试片', {
+        env: { PANSOUSUO_SEARCH: '1' }, extra: '&id=1&type=movie&year=2023'
+    });
+    const result = await response.json();
+    assert.equal(result.results.length, 2);
+    const share = result.results.find(item => item.url.endsWith('/protected'));
+    assert.equal(share.password, 'ok12');
+    assert.equal(share.passcodeVerified, true);
+    assert.equal(share.source, 'tg:chan1');
+    assert.deepEqual(world.calls.token.filter(call => call.id === 'protected' && call.passcode).map(call => call.passcode), ['old1', 'ok12']);
+    assert.ok(!world.calls.token.some(call => call.id === 'sequel'));
+});
+
 test('aggregate search returns only verified shares of this work, with what is inside', async t => {
     const world = mockWorld(t, {
         pansou: [

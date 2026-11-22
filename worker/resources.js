@@ -441,7 +441,7 @@ const RESOURCE_SEASON_SUFFIX_PATTERN = /^(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}(?:\s*[
 
 // Quality tags glued to a Han title: "长安的荔枝HDR", "繁花4K".
 const RESOURCE_QUALITY_SUFFIX_PATTERN = /^(?:hdr|uhd|hd|bd|web|dv|4k|8k|1080|2160|720)/u;
-const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:–—-]*\d{1,2}(?![\p{L}\p{N}])/u;
+const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:–—-]*\d{1,2}(?![\p{L}\p{N}]|\.\d)/u;
 
 export function createResourceTitleMatcher(names, mediaType = null) {
     const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
