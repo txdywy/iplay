@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.77';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.78';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.77';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.77';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.77';
-import { RELEASE_VERSION } from './release.js?v=1.0.77';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.77';
+} from './scorer.js?v=1.0.78';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.78';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.78';
+import { RELEASE_VERSION } from './release.js?v=1.0.78';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.78';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.77';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.77';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.77';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.77';
+} from './match.js?v=1.0.78';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.78';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.78';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.78';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -2761,6 +2761,7 @@ function aggregateSummaryText(meta, duplicates) {
 }
 
 function aggregateSourceLabel(source) {
+    if (source === 'index:pansousuo') return '盘搜索';
     const [kind, name] = typeof source === 'string' ? source.split(':') : [];
     if (!name) return '';
     return kind === 'tg' ? `Telegram ${name}` : `聚合 ${name}`;

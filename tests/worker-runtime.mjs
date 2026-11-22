@@ -59,6 +59,15 @@ const ratelimits = productionConfig.ratelimits;
 
 async function upstream(request) {
     const url = new URL(request.url);
+    if (url.origin === 'https://www.pansousuo.com') {
+        assert.equal(url.pathname, '/api/search');
+        assert.equal(url.searchParams.get('q'), 'Runtime Index Movie');
+        assert.equal(url.searchParams.get('pan'), 'quark');
+        assert.equal(request.headers.get('authorization'), null);
+        assert.equal(request.headers.get('cookie'), null);
+        return Response.json({ items: [{ pan: 'quark', title: 'Runtime Index Movie (2023)', share_url: 'https://pan.quark.cn/s/missing' }] });
+    }
+    if (url.origin === 'https://so.252035.xyz') return new Response(null, { status: 503 });
     if (url.hostname === 't.me') {
         assert.equal(url.pathname, '/s/Quark_Movies');
         assert.equal(request.headers.get('Cookie'), null, 'WPZY cookie leaked to the public channel');
@@ -218,6 +227,14 @@ try {
     assert.equal(detail.headers.get('access-control-allow-origin'), 'https://iplay.hackx64.eu.org');
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
+
+    const aggregate = await request('/api/resource/aggregate?q=Runtime%20Index%20Movie&type=movie&year=2023&id=603', 'runtime-aggregate-index');
+    assert.equal(aggregate.status, 200);
+    const indexed = await aggregate.json();
+    assert.deepEqual(indexed.meta.providers, { pansou: { status: 'failed', found: 0 }, pansousuo: { status: 'ok', found: 1 } });
+    assert.deepEqual(indexed.meta.hidden, { missing: 1 });
+    assert.deepEqual(indexed.results, []);
+    checks.push('native-pansousuo-fallback-and-quark-verification');
 
     const { createHash } = await import('node:crypto');
     const telegramSecret = createHash('sha256').update(`iplay-telegram-webhook:${telegramToken}`).digest('hex');
