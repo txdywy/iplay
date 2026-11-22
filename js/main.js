@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.69';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.70';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.69';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.69';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.69';
-import { RELEASE_VERSION } from './release.js?v=1.0.69';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.69';
+} from './scorer.js?v=1.0.70';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.70';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.70';
+import { RELEASE_VERSION } from './release.js?v=1.0.70';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.70';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.69';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.69';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.69';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.69';
+} from './match.js?v=1.0.70';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.70';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.70';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.70';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -2720,9 +2720,10 @@ function resetAggregateModule() {
     updateResourceToolbar();
 }
 
-function aggregateSummaryText(meta, shown, duplicates) {
-    const parts = [`聚合源返回 ${meta.found ?? 0} 条`, `标题匹配 ${meta.matched ?? 0} 条`, `通过核验 ${shown + duplicates} 条`];
+function aggregateSummaryText(meta, duplicates) {
+    const parts = [`聚合源返回 ${meta.found ?? 0} 条`, `标题匹配 ${meta.matched ?? 0} 条`, `通过核验 ${meta.verified ?? 0} 条`];
     if (duplicates) parts.push(`${duplicates} 条已在上方夸克直链中`);
+    if (meta.unknown) parts.push(`${meta.unknown} 条暂未确认`);
     const hidden = AGGREGATE_HIDDEN_LABELS
         .map(([label, reasons]) => [label, reasons.reduce((sum, reason) => sum + (Number(meta.hidden?.[reason]) || 0), 0)])
         .filter(([, count]) => count > 0)
@@ -2767,7 +2768,7 @@ function renderAggregate(retry) {
     const all = Array.isArray(data.results) ? data.results : [];
     const items = all.filter(item => !direct.has(item.url));
     const meta = data.meta || {};
-    setText(els.aggregateSummary, aggregateSummaryText(meta, items.length, all.length - items.length));
+    setText(els.aggregateSummary, aggregateSummaryText(meta, all.length - items.length));
     const options = {
         emptyLabel: meta.matched ? '匹配到的分享暂时都无法访问，已为你隐藏' : '聚合源暂未找到这部作品的夸克分享',
         itemClass: 'link-item',

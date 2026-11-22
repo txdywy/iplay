@@ -151,6 +151,7 @@ test('aggregate search returns only verified shares of this work, with what is i
     assert.equal(body.meta.matched, 11, 'books, audio, other works, other years and non-Quark links are dropped before any check');
     assert.equal(body.meta.unchecked, 0);
     assert.equal(body.meta.unknown, 1);
+    assert.equal(body.meta.verified, body.results.length - 1, 'an unconfirmed share is not counted as verified');
 
     // One passcode attempt per share, and only the passcode the index listed.
     const attempts = world.calls.token.filter(call => call.passcode);
@@ -274,4 +275,20 @@ test('aggregate search validates its request and shares the resource rate limit'
     assert.equal(limited.status, 429);
     assert.match(keys[0], /:aggregate$/);
     assert.equal(world.calls.pansou.length, 0);
+});
+
+test('a thin answer from the index is cached only briefly, a full one for longer', async t => {
+    const thin = mockWorld(t, {
+        pansou: [post('alive1', '测试剧 (2023)')],
+        shares: { alive1: { title: '测试剧', entries: ['测试剧'] } }
+    });
+    const before = Date.now();
+    const thinBody = await (await aggregate(thin)).json();
+    assert.ok(thinBody.meta.cacheExpiresAt - before <= 125_000, 'two minutes at most');
+
+    const items = Array.from({ length: 6 }, (_, index) => post(`full${index}`, `测试剧 (2023) 版本${index}`));
+    const shares = Object.fromEntries(items.map((item, index) => [`full${index}`, { title: `测试剧 ${index}`, entries: ['测试剧'] }]));
+    const full = mockWorld(t, { pansou: items, shares });
+    const fullBody = await (await aggregate(full, '测试剧B')).json();
+    assert.ok(fullBody.meta.cacheExpiresAt - Date.now() > 300_000, 'ten minutes for a complete, fully verified answer');
 });

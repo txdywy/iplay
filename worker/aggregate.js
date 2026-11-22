@@ -36,6 +36,9 @@ const CHECK_CONCURRENCY = 4;
 const QUARK_REQUEST_BUDGET = 36;
 const CACHE_SECONDS_VERIFIED = 600;
 const CACHE_SECONDS_PARTIAL = 120;
+// The index sometimes answers with a fraction of its usual results; such a
+// thin answer is not worth keeping for long.
+const THIN_INDEX_RESPONSE = 5;
 const MAX_TITLE_LENGTH = 160;
 const SOURCE_PATTERN = /^(?:tg|plugin):[\w.-]{1,64}$/;
 
@@ -219,7 +222,8 @@ function buildResponse(candidates, checked, { found, matched }, matchesTitle) {
             provider: 'pansou',
             found,
             matched,
-            verified: results.length,
+            // Checked on Quark and reachable; unconfirmed ones are counted apart.
+            verified: results.length - unknown,
             unknown,
             unchecked,
             hidden,
@@ -251,7 +255,7 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
             const candidates = selectCandidates(items, matchesTitle, identity);
             const checked = await verifyCandidates(candidates, ctx, deadline);
             const body = buildResponse(candidates, checked, { found: items.length, matched: candidates.length }, matchesTitle);
-            const partial = body.meta.unknown > 0 || body.meta.unchecked > 0;
+            const partial = body.meta.unknown > 0 || body.meta.unchecked > 0 || items.length < THIN_INDEX_RESPONSE;
             const seconds = partial ? CACHE_SECONDS_PARTIAL : CACHE_SECONDS_VERIFIED;
             body.meta.cacheExpiresAt = Date.now() + seconds * 1000;
             return cacheJson(ctx, cacheKey, body, seconds);
