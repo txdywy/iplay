@@ -12,17 +12,21 @@ import {
 /**
  * Aggregated Quark search: a separate module from the forum scan.
  *
- * It asks a PanSou-compatible search API (https://github.com/fish2018/pansou,
- * which indexes many public Telegram channels and share sites) for Quark
- * shares, keeps the ones whose title names this work and year, then checks
+ * It queries PanSou and the 盘搜索 public index for Quark shares,
+ * keeps the ones whose title names this work and year, then checks
  * each share on Quark itself. Aggregators list many dead links, so only
  * shares that are verifiably reachable are returned, with the passcode check
  * and the share's top-level folder names that show what is inside.
  */
 
 // A public community instance. Self-hosting is easy and more dependable:
-// point PANSOU_API_URL at your own. "off" (or AGGREGATE_SEARCH=0) disables it.
+// point PANSOU_API_URL at your own. "off" disables that provider.
 const DEFAULT_PANSOU_URL = 'https://so.252035.xyz';
+const PANSOUSUO_SEARCH_URL = 'https://www.pansousuo.com/api/search';
+const PANSOUSUO_SOURCE = 'index:pansousuo';
+const PANSOUSUO_TIMEOUT_MS = 8000;
+const MAX_PANSOUSUO_BYTES = 512 * 1024;
+const MAX_PANSOUSUO_QUERY_LENGTH = 60;
 // The community instance sometimes stalls. A second, narrower attempt (the
 // Telegram channels alone answer in about two seconds) rescues most stalls.
 const PANSOU_ATTEMPT_TIMEOUT_MS = 7000;
@@ -95,7 +99,34 @@ async function fetchPansouOnce(base, query, source, deadline) {
     // An empty result omits the key; a malformed body is a provider fault.
     if (items === undefined && isObject(body?.data)) return [];
     if (!Array.isArray(items)) throw createHttpError('PanSou returned an invalid response', 502, 'Aggregate search unavailable');
-    return items;
+    return items.map(item => item?.source === PANSOUSUO_SOURCE ? { ...item, source: '' } : item);
+}
+
+async function fetchPansousuo(query, deadline) {
+    if ([...query].length > MAX_PANSOUSUO_QUERY_LENGTH) return [];
+    const url = new URL(PANSOUSUO_SEARCH_URL);
+    url.searchParams.set('q', query);
+    url.searchParams.set('pan', 'quark');
+    const response = await fetchUpstream(url.href, {
+        headers: { Accept: 'application/json' },
+        redirect: 'manual'
+    }, remainingDeadlineMs(deadline, PANSOUSUO_TIMEOUT_MS));
+    if (!response.ok) {
+        await releaseUpstreamResponse(response);
+        throw createHttpError(`盘搜索 returned HTTP ${response.status}`, 502, 'Aggregate search unavailable');
+    }
+    const body = await readJsonWithLimit(response, MAX_PANSOUSUO_BYTES);
+    if (!Array.isArray(body?.items)) throw createHttpError('盘搜索 returned invalid JSON', 502, 'Aggregate search unavailable');
+    if (body.blocked === true) return [];
+    return body.items.slice(0, 30).filter(item => item?.pan === 'quark').map(item => ({
+        url: item.share_url,
+        password: item.access_code,
+        note: item.title,
+        workTitle: item.work_title,
+        year: Number.isInteger(item.year) && item.year >= 1800 && item.year <= 2100 ? item.year : null,
+        datetime: item.published_at || item.created_at,
+        source: PANSOUSUO_SOURCE
+    }));
 }
 
 // The sources are asked at once and the first answer wins: one stalled
@@ -132,25 +163,31 @@ async function fetchPansou(base, query, sources, deadline) {
 // duplicates; the newest posts come first because they are likelier to live.
 function selectCandidates(items, matchesTitle, { year, mediaType }) {
     const byId = new Map();
-    for (const item of items.slice(0, MAX_ITEMS_SCANNED)) {
+    for (const item of items) {
         if (!isObject(item)) continue;
         const note = typeof item.note === 'string' ? item.note : '';
         if (!note || note.length > 4000) continue;
         const parsed = parseQuarkUrl(typeof item.url === 'string' ? item.url : '');
         if (!parsed) continue;
-        if (!matchesTitle(note) || !resourceTitleHasYear(note, year, mediaType)) continue;
+        const fromPansousuo = item.source === PANSOUSUO_SOURCE;
+        const workTitle = fromPansousuo && typeof item.workTitle === 'string' ? item.workTitle.trim() : '';
+        if (workTitle && (workTitle.length > 400 || !matchesTitle(workTitle))) continue;
+        const yearEvidence = fromPansousuo && item.year ? `${note}\n${item.year}` : note;
+        if (!matchesTitle(note) || !resourceTitleHasYear(yearEvidence, year, mediaType)) continue;
         const title = cleanText(note.split(/\r?\n/).find(line => line.trim()) || note, MAX_TITLE_LENGTH);
         if (NON_VIDEO_PATTERN.test(title)) continue;
         const id = parsed.url.slice(parsed.url.lastIndexOf('/') + 1);
         const listed = typeof item.password === 'string' ? item.password.trim() : '';
-        const password = isValidQuarkPassword(listed) ? listed : parsed.password;
+        const password = fromPansousuo
+            ? parsed.password || (!parsed._passwordConflict && isValidQuarkPassword(listed) ? listed : '')
+            : isValidQuarkPassword(listed) ? listed : parsed.password;
         const time = Date.parse(item.datetime);
         const candidate = {
             id,
             url: parsed.url,
             password,
             title,
-            source: SOURCE_PATTERN.test(item.source) ? item.source : '',
+            source: fromPansousuo || SOURCE_PATTERN.test(item.source) ? item.source : '',
             time: Number.isFinite(time) ? time : 0
         };
         const existing = byId.get(id);
@@ -162,7 +199,17 @@ function selectCandidates(items, matchesTitle, { year, mediaType }) {
             existing.password = candidate.password;
         }
     }
-    return [...byId.values()].sort((a, b) => b.time - a.time).slice(0, MAX_CANDIDATES);
+    const ranked = [...byId.values()].sort((a, b) => b.time - a.time);
+    // The check budget is shared. Give each index a turn even when one has
+    // enough newer reposts to consume all available checks on its own.
+    const primary = ranked.filter(item => item.source !== PANSOUSUO_SOURCE);
+    const supplemental = ranked.filter(item => item.source === PANSOUSUO_SOURCE);
+    const candidates = [];
+    for (let i = 0; candidates.length < MAX_CANDIDATES && i < Math.max(primary.length, supplemental.length); i++) {
+        if (primary[i]) candidates.push(primary[i]);
+        if (supplemental[i] && candidates.length < MAX_CANDIDATES) candidates.push(supplemental[i]);
+    }
+    return candidates;
 }
 
 const STATUS_RANK = { available: 0, unknown: 1, passcode_required: 2 };
@@ -211,7 +258,7 @@ function isNonVideoShare(result) {
     return entries.length > 0 && entries.every(entry => NON_VIDEO_PATTERN.test(entry.name));
 }
 
-function buildResponse(candidates, checked, { found, matched }, matchesTitle) {
+function buildResponse(candidates, checked, { found, matched, providers }, matchesTitle) {
     const results = [];
     const hidden = {};
     let unchecked = 0;
@@ -257,7 +304,8 @@ function buildResponse(candidates, checked, { found, matched }, matchesTitle) {
         enabled: true,
         results,
         meta: {
-            provider: 'pansou',
+            provider: Object.keys(providers).length > 1 ? 'multiple' : Object.keys(providers)[0],
+            providers,
             found,
             matched,
             // Checked on Quark and reachable; unconfirmed ones are counted apart.
@@ -278,34 +326,53 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
     const { query, identity } = request;
 
     const base = getPansouBase(env);
-    if (!base) return jsonResponse({ enabled: false, results: [], meta: {} }, 200, { 'Cache-Control': 'no-store' });
+    const usePansousuo = String(env?.PANSOUSUO_SEARCH ?? '').trim() === '1';
+    if (String(env?.AGGREGATE_SEARCH ?? '').trim() === '0' || (!base && !usePansousuo)) {
+        return jsonResponse({ enabled: false, results: [], meta: {} }, 200, { 'Cache-Control': 'no-store' });
+    }
     const sources = getPansouSources(env);
-
-    const cacheKey = new Request(`https://aggregate-search-v1-cache.local/?base=${encodeURIComponent(base)}&src=${sources.join('+')}&q=${encodeURIComponent(query)}&id=${identity.id || ''}&type=${identity.mediaType || ''}&year=${identity.year || ''}`);
+    const cacheKey = new Request(`https://aggregate-search-v1-cache.local/?base=${encodeURIComponent(base || '')}&src=${sources.join('+')}&q=${encodeURIComponent(query)}&id=${identity.id || ''}&type=${identity.mediaType || ''}&year=${identity.year || ''}${usePansousuo ? '&pansousuo=1' : ''}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cacheOnly && !cached) {
         return jsonResponse({ error: '聚合结果已过期，请重新搜索。' }, 410, { 'Cache-Control': 'no-store' });
     }
-    const downKey = new Request(`https://aggregate-index-down-v1.local/?base=${encodeURIComponent(base)}`);
-    if (!cached && !refresh && await serveCachedJson(downKey)) {
-        return jsonResponse({ error: '聚合源刚刚没有响应，请稍后重试。' }, 503, { 'Cache-Control': 'no-store', 'Retry-After': '60' });
-    }
     const response = cached || await withInFlight(ctx, `aggregate:${cacheKey.url}:${refresh ? 'refresh' : ''}`, async () => {
         try {
             const deadline = createDeadline(Math.min(timeoutMs, TOTAL_TIMEOUT_MS));
+            const indexes = {
+                ...(base ? { pansou: { key: base, fetch: () => fetchPansou(base, query, sources, deadline) } } : {}),
+                ...(usePansousuo ? { pansousuo: { key: PANSOUSUO_SEARCH_URL, fetch: () => fetchPansousuo(query, deadline) } } : {})
+            };
             // The alias lookup is bounded and cached; it must not delay the search.
-            const [items, aliases] = await Promise.all([
-                fetchPansou(base, query, sources, deadline).catch(error => {
+            const aliasesTask = getResourceTitleAliases(query, identity, env, ctx).catch(() => []);
+            const indexesResult = await Promise.all(Object.entries(indexes).map(async ([name, index]) => {
+                const downKey = new Request(`https://aggregate-index-down-v1.local/?base=${encodeURIComponent(index.key)}`);
+                if (!refresh && await serveCachedJson(downKey)) return { name, status: 'cooldown' };
+                try {
+                    return { name, status: 'ok', items: await index.fetch() };
+                } catch (error) {
                     cacheJson(ctx, downKey, { down: true }, INDEX_DOWN_SECONDS);
-                    throw error;
-                }),
-                getResourceTitleAliases(query, identity, env, ctx).catch(() => [])
-            ]);
+                    logEvent('warn', 'aggregate_index_failed', { provider: name, error: logErrorMessage(error) });
+                    return { name, status: 'failed', error };
+                }
+            }));
+            const successful = indexesResult.filter(index => index.status === 'ok');
+            if (!successful.length) {
+                if (indexesResult.every(index => index.status === 'cooldown')) {
+                    return jsonResponse({ error: '聚合源刚刚没有响应，请稍后重试。' }, 503, { 'Cache-Control': 'no-store', 'Retry-After': '60' });
+                }
+                throw indexesResult.find(index => index.error).error;
+            }
+            const providers = Object.fromEntries(indexesResult.map(({ name, status, items }) => [name, { status, found: items?.length ?? 0 }]));
+            const items = successful.flatMap(index => index.items.slice(0, MAX_ITEMS_SCANNED));
+            const aliases = await aliasesTask;
             const matchesTitle = createResourceTitleMatcher([query, ...aliases], identity.mediaType);
             const candidates = selectCandidates(items, matchesTitle, identity);
             const checked = await verifyCandidates(candidates, ctx, deadline);
-            const body = buildResponse(candidates, checked, { found: items.length, matched: candidates.length }, matchesTitle);
-            const partial = body.meta.unknown > 0 || body.meta.unchecked > 0 || items.length < THIN_INDEX_RESPONSE;
+            const found = successful.reduce((sum, index) => sum + index.items.length, 0);
+            const body = buildResponse(candidates, checked, { found, matched: candidates.length, providers }, matchesTitle);
+            const partial = body.meta.unknown > 0 || body.meta.unchecked > 0 || found < THIN_INDEX_RESPONSE
+                || successful.length < indexesResult.length;
             const seconds = partial ? CACHE_SECONDS_PARTIAL : CACHE_SECONDS_VERIFIED;
             body.meta.cacheExpiresAt = Date.now() + seconds * 1000;
             return cacheJson(ctx, cacheKey, body, seconds);

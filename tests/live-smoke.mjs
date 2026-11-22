@@ -9,12 +9,12 @@ const api = process.env.LIVE_API_BASE || 'https://iplayw.hackx64.eu.org';
 const release = (await readFile(new URL('../VERSION', import.meta.url), 'utf8')).trim();
 const results = [];
 
-async function fetchLive(url, options = {}) {
-    return globalThis.fetch(url, { ...options, signal: globalThis.AbortSignal.timeout(20000) });
+async function fetchLive(url, options = {}, timeoutMs = 20000) {
+    return globalThis.fetch(url, { ...options, signal: globalThis.AbortSignal.timeout(timeoutMs) });
 }
 
-async function getApi(path, expectedStatus = 200) {
-    const response = await fetchLive(new URL(path, api), { headers: { Origin: new URL(site).origin } });
+async function getApi(path, expectedStatus = 200, timeoutMs) {
+    const response = await fetchLive(new URL(path, api), { headers: { Origin: new URL(site).origin } }, timeoutMs);
     if (expectedStatus !== null) assert.equal(response.status, expectedStatus, `${path}: unexpected HTTP status`);
     assert.equal(response.headers.get('access-control-allow-origin'), new URL(site).origin, `${path}: CORS`);
     assert.equal(response.headers.get('x-iplay-version'), release, `${path}: deployed Worker version differs`);
@@ -154,5 +154,16 @@ assert.deepEqual(quark.data.unknown, []);
 assert.deepEqual(quark.data.available, []);
 assert.deepEqual(quark.data.passcodeRequired, []);
 results.push({ check: 'quark-confirmed-missing-share', status: 'passed' });
+
+if (process.env.LIVE_REQUIRE_PANSOUSUO === '1') {
+    const params = new URLSearchParams({ q: '流浪地球', id: '550988', type: 'movie', year: '2019', refresh: '1' });
+    const { data } = await getApi('/api/resource/aggregate?' + params, 200, 45000);
+    const index = data.meta?.providers?.pansousuo;
+    assert.equal(index?.status, 'ok', '盘搜索 must answer the production Worker');
+    assert.ok(index.found > 0, '盘搜索 must return candidates for the probe title');
+    assert.ok(Array.isArray(data.results));
+    results.push({ check: 'pansousuo-index', status: 'passed', candidates: index.found,
+        displayed: data.results.filter(item => item.source === 'index:pansousuo').length });
+}
 
 console.log(JSON.stringify({ liveSmoke: 'passed', release, site, api, results }, null, 2));

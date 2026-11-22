@@ -971,6 +971,7 @@ const AGGREGATE_STATUS_TEXT = {
 };
 
 function aggregateSourceLabel(source) {
+    if (source === "index:pansousuo") return "盘搜索";
     const [kind, name] = typeof source === "string" ? source.split(":") : [];
     if (!name) return "";
     return kind === "tg" ? `Telegram ${name}` : `聚合 ${name}`;

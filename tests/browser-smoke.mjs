@@ -532,7 +532,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                     results: [
                         { title: 'Agg Post Title', url: 'https://pan.quark.cn/s/agg-one', shareTitle: 'Agg Verified Folder', status: 'available', contentMatch: true,
                             entries: [{ name: 'Agg Verified Folder', dir: true }], totalItems: 3, source: 'tg:chan', datetime: '2025-06-01T00:00:00.000Z' },
-                        { title: 'Agg Locked', url: 'https://pan.quark.cn/s/agg-two', password: 'Qx9z', status: 'available', passcodeVerified: true },
+                        { title: 'Agg Locked', url: 'https://pan.quark.cn/s/agg-two', password: 'Qx9z', status: 'available', passcodeVerified: true, source: 'index:pansousuo' },
                         { title: 'Agg Needs Code', url: 'https://pan.quark.cn/s/agg-three', status: 'passcode_required' },
                         { title: 'Agg Duplicate', url: 'https://pan.quark.cn/s/large-3', status: 'available' }
                     ],
@@ -1534,7 +1534,7 @@ async function runAggregateModuleFlow() {
     // The same wording as every other Quark link: reachable, and how much the share holds.
     assert.ok(rows[0].includes('Agg Verified Folder') && rows[0].includes('分享可访问 · 3 项内容') && rows[0].includes('内容匹配'));
     assert.ok(rows[0].includes('内容：Agg Verified Folder/') && rows[0].includes('Telegram chan') && rows[0].includes('2025-06-01'));
-    assert.ok(rows[1].includes('提取码可用') && rows[1].includes('提取码：Qx9z'));
+    assert.ok(rows[1].includes('提取码可用') && rows[1].includes('提取码：Qx9z') && rows[1].includes('盘搜索'));
     assert.ok(rows[2].includes('需要提取码'));
     assert.ok(!rows.some(text => text.includes('Agg Duplicate')), 'a share already listed as a direct link is not repeated');
     const summary = await evaluate("document.getElementById('aggregateSummary').textContent");

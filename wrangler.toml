@@ -20,6 +20,7 @@ head_sampling_rate = 0.01
 [vars]
 ENVIRONMENT = "production"
 QUARK_CHANNEL_SEARCH = "1"
+PANSOUSUO_SEARCH = "1"
 
 # Cloudflare Rate Limiting bindings provide per-location counters at the edge.
 # Keep namespace IDs stable; they only need to be unique positive integers in
@@ -70,6 +71,7 @@ new_sqlite_classes = ["WpzyCacheSession"]
 # Branch Previews use isolated storage and independent rate limit counters.
 [previews.vars]
 ENVIRONMENT = "production"
+PANSOUSUO_SEARCH = "1"
 
 [[previews.durable_objects.bindings]]
 name = "WPZY_CACHE_SESSION"

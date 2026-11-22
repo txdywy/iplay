@@ -228,4 +228,4 @@ docker run -d --name pansou --restart unless-stopped -p 8888:8888 ghcr.io/fish20
 3. 在 Worker 的变量中设置 `PANSOU_API_URL=https://你的域名`，然后重新部署。缓存键包含这个地址，切换后会立即使用新实例。
 4. 用 `curl "https://你的域名/api/search?kw=繁花&cloud_types=quark&res=merge"` 确认能返回 `merged_by_type.quark`。
 
-不想使用聚合搜索时，设置 `PANSOU_API_URL=off` 即可关闭这个模块，其他来源不受影响。
+`PANSOU_API_URL=off` 仅关闭 PanSou。生产配置同时启用了独立的盘搜索开放索引（`PANSOUSUO_SEARCH=1`），会沿用同一套夸克核验流程。设置 `AGGREGATE_SEARCH=0` 可关闭整个聚合模块。

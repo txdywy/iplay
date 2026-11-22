@@ -4,6 +4,7 @@ import worker from '../worker/_worker.js';
 import { getPansouBase } from '../worker/aggregate.js';
 
 const PANSOU = 'https://so.252035.xyz';
+const PANSOUSUO = 'https://www.pansousuo.com';
 const QUARK = 'https://drive-h.quark.cn';
 
 function memoryCache() {
@@ -19,14 +20,22 @@ function memoryCache() {
 
 // A PanSou-compatible index and Quark's share endpoints. `shares` maps a share
 // id to how Quark answers for it.
-function mockWorld(t, { pansou, shares = {}, pansouFailures = 0 }) {
+function mockWorld(t, { pansou, pansousuo, shares = {}, pansouFailures = 0 }) {
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
     const cache = memoryCache();
-    const calls = { pansou: [], token: [], detail: [] };
+    const calls = { pansou: [], pansousuo: [], token: [], detail: [] };
     let pansouAttempts = 0;
     globalThis.caches = cache;
     globalThis.fetch = async (input, options = {}) => {
         const url = new URL(String(input));
+        if (url.origin === PANSOUSUO) {
+            calls.pansousuo.push(url);
+            assert.equal(options.redirect, 'manual');
+            assert.equal(new globalThis.Headers(options.headers).get('authorization'), null);
+            assert.equal(url.pathname, '/api/search');
+            assert.equal(url.searchParams.get('pan'), 'quark');
+            return typeof pansousuo === 'function' ? pansousuo() : Response.json({ items: pansousuo });
+        }
         if (url.origin === PANSOU) {
             calls.pansou.push(url);
             pansouAttempts += 1;
@@ -82,6 +91,80 @@ async function aggregate(world, query = '测试剧', { env = {}, extra = '&id=1&
 
 const post = (id, note, extra = {}) => ({
     url: `https://pan.quark.cn/s/${id}`, password: '', note, datetime: '2025-06-01T00:00:00Z', source: 'tg:chan1', ...extra
+});
+
+const indexed = (id, title, extra = {}) => ({
+    pan: 'quark', title, share_url: `https://pan.quark.cn/s/${id}`, published_at: '2025-09-01T00:00:00Z', ...extra
+});
+
+test('the 盘搜索 index contributes verified shares alongside PanSou with the same identity checks and deduplication', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('also-in-index', '测试片 (2023)'), post('pan-only', '测试片 (2023)')],
+        pansousuo: [
+            indexed('also-in-index', '测试片 (2023)', { access_code: 'ab12' }),
+            indexed('index-only', '测试片 4K', { year: 2023 }),
+            indexed('sequel', '测试片 2 (2024)'),
+            indexed('other-year', '测试片 (2010)'),
+            indexed('different-work', '测试片 (2023)', { work_title: '另一部电影' }),
+            indexed('foreign-provider', '测试片 (2023)', { pan: 'baidu' }),
+            indexed('offsite', '测试片 (2023)', { share_url: 'https://example.com/s/offsite' }),
+            indexed('dead', '测试片 (2023)')
+        ],
+        shares: {
+            'also-in-index': { passcode: 'ab12', entries: ['测试片.mkv'] },
+            'index-only': { entries: ['测试片.mkv'] },
+            'pan-only': { entries: ['测试片.mp4'] }
+        }
+    });
+    const options = { env: { PANSOUSUO_SEARCH: '1' }, extra: '&id=1&type=movie&year=2023' };
+    const response = await aggregate(world, '测试片', options);
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.meta.provider, 'multiple');
+    assert.deepEqual(result.meta.providers, { pansou: { status: 'ok', found: 2 }, pansousuo: { status: 'ok', found: 7 } });
+    assert.deepEqual(result.results.map(item => item.url.split('/').at(-1)).sort(), ['also-in-index', 'index-only', 'pan-only']);
+    const duplicate = result.results.find(item => item.url.endsWith('/also-in-index'));
+    assert.equal(duplicate.source, 'index:pansousuo');
+    assert.equal(duplicate.passcodeVerified, true);
+    assert.deepEqual([...new Set(world.calls.token.map(item => item.id))].sort(), ['also-in-index', 'dead', 'index-only', 'pan-only']);
+    assert.equal(world.calls.pansousuo[0].searchParams.get('q'), '测试片');
+    await aggregate(world, '测试片', options);
+    assert.equal(world.calls.pansousuo.length, 1, 'a cached search does not contact the index again');
+});
+
+test('the indexes remain usable independently during failure, cooldown and configured disablement', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('pan-only', '测试剧 (2023)')], pansouFailures: 2,
+        pansousuo: [indexed('index-only', '测试剧 (2023)')],
+        shares: { 'index-only': { entries: ['测试剧'] } }
+    });
+    const env = { PANSOUSUO_SEARCH: '1' };
+    const fallback = await (await aggregate(world, '测试剧', { env })).json();
+    assert.equal(fallback.meta.providers.pansou.status, 'failed');
+    assert.equal(fallback.results.length, 1);
+    const duringCooldown = await (await aggregate(world, '测试剧', { env, extra: '&id=2&type=tv&year=2023' })).json();
+    assert.equal(duringCooldown.meta.providers.pansou.status, 'cooldown');
+    assert.equal(duringCooldown.meta.providers.pansousuo.status, 'ok');
+    assert.equal(world.calls.pansou.length, 2);
+    const indexOnly = await (await aggregate(world, '测试剧', { env: { ...env, PANSOU_API_URL: 'off' } })).json();
+    assert.equal(indexOnly.meta.provider, 'pansousuo');
+    const before = world.calls.pansousuo.length;
+    const disabled = await (await aggregate(world, '测试剧', { env: { ...env, AGGREGATE_SEARCH: '0' } })).json();
+    assert.equal(disabled.enabled, false);
+    assert.equal(world.calls.pansousuo.length, before);
+});
+
+test('a 盘搜索 rate limit does not remove successful PanSou results', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('pan-only', '测试剧 (2023)')],
+        pansousuo: () => new Response(null, { status: 429 }),
+        shares: { 'pan-only': { entries: ['测试剧'] } }
+    });
+    const response = await aggregate(world, '测试剧', { env: { PANSOUSUO_SEARCH: '1' } });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.meta.providers.pansousuo.status, 'failed');
+    assert.equal(result.results[0].source, 'tg:chan1');
 });
 
 test('aggregate search returns only verified shares of this work, with what is inside', async t => {

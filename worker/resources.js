@@ -441,6 +441,7 @@ const RESOURCE_SEASON_SUFFIX_PATTERN = /^(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}(?:\s*[
 
 // Quality tags glued to a Han title: "长安的荔枝HDR", "繁花4K".
 const RESOURCE_QUALITY_SUFFIX_PATTERN = /^(?:hdr|uhd|hd|bd|web|dv|4k|8k|1080|2160|720)/u;
+const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:–—-]*\d{1,2}(?![\p{L}\p{N}])/u;
 
 export function createResourceTitleMatcher(names, mediaType = null) {
     const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
@@ -456,6 +457,7 @@ export function createResourceTitleMatcher(names, mediaType = null) {
             const leftOk = !isWord(previous) || (/\p{N}/u.test(previous) && !/\p{N}/u.test(match[0][0]))
                 || RESOURCE_TITLE_PREFIX_PATTERN.test(before);
             if (!leftOk) continue;
+            if (mediaType === "movie" && MOVIE_NUMBER_SUFFIX_PATTERN.test(after)) continue;
             if (!isWord(next)) return true;
             if (mediaType === "tv" && RESOURCE_SEASON_SUFFIX_PATTERN.test(after)) return true;
             if (/\p{Script=Han}/u.test(match[0].at(-1)) && RESOURCE_QUALITY_SUFFIX_PATTERN.test(after)) return true;
