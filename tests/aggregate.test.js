@@ -488,6 +488,7 @@ test('a share whose first check is inconclusive is checked once more within the 
     assert.equal(world.calls.token.filter(call => call.id === 'down1').length, 2);
     assert.equal(body.meta.unknown, 1);
     assert.equal(body.meta.verified, 3);
+    assert.equal(Object.values(body.meta.checkFailures).reduce((sum, count) => sum + count, 0), 1);
 });
 
 test('when most first-pass checks fail, Quark is not asked again', async t => {
@@ -498,6 +499,7 @@ test('when most first-pass checks fail, Quark is not asked again', async t => {
     const body = await (await aggregate(world)).json();
     assert.equal(body.meta.unknown, 3);
     assert.equal(world.calls.token.length, 3, 'one attempt each: no second pass while Quark is failing');
+    assert.deepEqual(body.meta.checkFailures, { network: 3 }, 'the reason the checks failed is reported, as a count');
 });
 
 test('Quark checks allow longer than three seconds, the aggregate module longest', async t => {
@@ -593,4 +595,12 @@ test('index failures expire individually within the rolling cooldown window', as
     await aggregate(world, '第二部', { extra: '&id=1&type=tv&year=2023&refresh=1' });
     assert.equal((await aggregate(world, '第三部')).status, 200);
     assert.equal(world.calls.pansou.length, 7);
+});
+
+test('inconclusive checks are described in a few fixed words', async () => {
+    const { describeCheckFailure } = await import('../worker/quark-share.js');
+    assert.equal(describeCheckFailure(Object.assign(new Error('Upstream request timed out'), { status: 504 })), 'timeout');
+    assert.equal(describeCheckFailure(new Error('Too many subrequests.')), 'subrequest_limit');
+    assert.equal(describeCheckFailure(new Error('Network connection lost.')), 'network');
+    assert.equal(describeCheckFailure(new Error('private detail https://x.test/?token=1')), 'error');
 });
