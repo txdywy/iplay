@@ -214,3 +214,46 @@ test('the share coordinator atomically reserves slots and releases a completed o
     await share.fetch('https://local.test/', { method: 'DELETE', body: reservations.find(Boolean) });
     assert.equal(typeof await reserve(), 'string');
 });
+
+test('an attempt Quark never answered holds its slot for ten minutes, not the hour', async t => {
+    const binding = testQuarkAttempts(t);
+    const share = binding.getByName('slow-share');
+    const endpoint = 'https://local.test/';
+    const reserve = async () => (await share.fetch(endpoint, { method: 'POST' })).json();
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const unanswered = await reserve();
+    const refused = await reserve();
+    assert.equal(await reserve(), null);
+    await share.fetch(endpoint, { method: 'PATCH', body: unanswered });
+    now += 11 * 60_000;
+    assert.equal(typeof await reserve(), 'string', 'the unanswered slot is free after ten minutes');
+    assert.equal(await reserve(), null, 'the refused one is still held');
+    now += 50 * 60_000;
+    assert.equal(typeof await reserve(), 'string', 'and is free after the hour');
+    assert.ok(refused);
+});
+
+test('a passcode check that times out shortens its reservation instead of keeping it for the hour', async t => {
+    const coordinator = testQuarkAttempts(t);
+    const methods = [];
+    const binding = { getByName(name) {
+        const stub = coordinator.getByName(name);
+        return { fetch: (url, options = {}) => { methods.push(options.method); return stub.fetch(url, options); } };
+    } };
+    const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
+    t.after(() => Object.assign(globalThis, previous));
+    globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
+    globalThis.fetch = async (url, options = {}) => {
+        const { passcode } = JSON.parse(options.body);
+        if (!passcode) return Response.json({ code: 41008 }, { status: 400 });
+        throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    };
+    const writes = [];
+    const response = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=slow1&pwd=slow1:Ab12', {
+        headers: { 'cf-connecting-ip': '198.51.100.21' }
+    }), { QUARK_PASSCODE_ATTEMPTS: binding }, { waitUntil(promise) { writes.push(promise); } });
+    await Promise.all(writes);
+    assert.deepEqual((await response.json()).unknown, ['slow1']);
+    assert.deepEqual(methods, ['POST', 'PATCH']);
+});

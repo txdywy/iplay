@@ -48,8 +48,18 @@ function spend(budget) {
     return true;
 }
 
+// Why a check came out inconclusive, in a few fixed words: enough to tell a
+// slow Quark from a throttled one or from this Worker's own limits.
+export function describeCheckFailure(error) {
+    const message = String(error?.message || '');
+    if (error?.status === 504 || error?.name === 'TimeoutError' || /timed out/i.test(message)) return 'timeout';
+    if (/subrequest/i.test(message)) return 'subrequest_limit';
+    if (/connection|network|socket|reset/i.test(message)) return 'network';
+    return 'error';
+}
+
 async function requestShareToken(id, passcode, budget, timeoutMs) {
-    if (!spend(budget)) return undefined;
+    if (!spend(budget)) return { failure: 'budget' };
     const response = await fetchUpstream(SHARE_TOKEN_URL, {
         method: 'POST',
         redirect: 'manual',
@@ -58,9 +68,15 @@ async function requestShareToken(id, passcode, budget, timeoutMs) {
     }, timeoutMs);
     if (!response.ok && ![400, 403, 404, 410].includes(response.status)) {
         await releaseUpstreamResponse(response);
-        return undefined;
+        return { failure: `http_${response.status}` };
     }
     return { ok: response.ok, data: await readJsonWithLimit(response, MAX_TOKEN_RESPONSE_BYTES) };
+}
+
+function tokenFailure(result) {
+    if (result?.failure) return result.failure;
+    const code = result?.data?.code;
+    return Number.isInteger(code) ? `code_${code}` : 'unreadable';
 }
 
 function classifyToken(result) {
@@ -114,7 +130,8 @@ async function passcodeKey(passcode) {
  *
  * `status` is one of: available, passcode_required, passcode_mismatch, an
  * unavailable reason (see UNAVAILABLE_BY_CODE), or undefined when the check
- * was inconclusive. When the share asks for a passcode and one is supplied,
+ * was inconclusive, with `failure` naming why in a fixed word (timeout,
+ * http_429, code_<n>, budget, deadline, subrequest_limit, ...). When the share asks for a passcode and one is supplied,
  * it is submitted once, unless the share has already refused
  * the allowed passcodes this hour; success is `passcodeVerified`.
  * Every request is bounded by `deadline` when one is given; a step that would
@@ -135,44 +152,52 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
         if (cached) return await cached.json();
 
         const firstTimeout = stepTimeout();
-        if (firstTimeout === null) return { status: undefined };
-        const first = await requestShareToken(id, '', budget, firstTimeout);
+        if (firstTimeout === null) return { status: undefined, failure: 'deadline' };
+        const first = await requestShareToken(id, '', budget, firstTimeout).catch(error => ({ failure: describeCheckFailure(error) }));
         let status = classifyToken(first);
         let tokenData = first?.data;
         let passcodeVerified = false;
         let complete = true;
         if (status === 'passcode_required' && passcode) {
             const reserveTimeout = stepTimeout();
-            if (reserveTimeout === null || budget?.remaining === 0) return { status: undefined };
-            const release = await reserveQuarkAttempt(attempts, id, reserveTimeout);
-            if (!release) {
+            if (reserveTimeout === null) return { status: undefined, failure: 'deadline' };
+            if (budget?.remaining === 0) return { status: undefined, failure: 'budget' };
+            const reservation = await reserveQuarkAttempt(attempts, id, reserveTimeout);
+            if (!reservation) {
                 // Not tried: report what Quark said, and do not remember it.
                 complete = false;
             } else {
                 const secondTimeout = budget?.remaining === 0 ? null : stepTimeout();
-                const second = secondTimeout === null ? undefined : await requestShareToken(id, passcode, budget, secondTimeout);
+                const second = secondTimeout === null
+                    ? undefined
+                    : await requestShareToken(id, passcode, budget, secondTimeout).catch(error => ({ failure: describeCheckFailure(error) }));
                 const retried = classifyToken(second);
-                // Keep reservations for rejected or uncertain attempts.
-                if (secondTimeout === null || (retried && retried !== 'passcode_required')) {
-                    const released = release().catch(() => {});
-                    if (ctx?.waitUntil) ctx.waitUntil(released);
-                    else await released;
+                // A refusal keeps its slot for the hour; an attempt that never
+                // went out, or settled the share otherwise, gives it back; one
+                // without an answer keeps it for the shorter window.
+                const refused = retried === 'passcode_required' || second?.data?.code === 41007;
+                const settle = secondTimeout === null || (retried && !refused) ? reservation.release
+                    : refused ? null : reservation.unanswered;
+                if (settle) {
+                    const settled = settle().catch(() => {});
+                    if (ctx?.waitUntil) ctx.waitUntil(settled);
+                    else await settled;
                 }
                 if (retried === 'available') {
                     status = 'available';
                     tokenData = second.data;
                     passcodeVerified = true;
-                } else if (retried === 'passcode_required' || second?.data?.code === 41007) {
+                } else if (refused) {
                     status = 'passcode_mismatch';
                 } else if (retried) {
                     status = retried;
                 } else {
                     // The passcode was never answered for: no conclusion.
-                    return { status: undefined };
+                    return { status: undefined, failure: secondTimeout === null ? (budget?.remaining === 0 ? 'budget' : 'deadline') : tokenFailure(second) };
                 }
             }
         }
-        if (!status) return { status: undefined };
+        if (!status) return { status: undefined, failure: tokenFailure(first) };
 
         const result = { status };
         if (passcodeVerified) result.passcodeVerified = true;
@@ -193,7 +218,7 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
         // names), and only when every step it depends on was answered.
         if (complete) cacheJson(ctx, cacheKey, result, CHECK_CACHE_SECONDS);
         return result;
-    } catch {
-        return { status: undefined };
+    } catch (error) {
+        return { status: undefined, failure: describeCheckFailure(error) };
     }
 }

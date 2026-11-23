@@ -290,6 +290,8 @@ function isNonVideoShare(result) {
 function buildResponse(candidates, checked, { found, matched, providers }, matchesTitle, identity) {
     const results = [];
     const hidden = {};
+    // Why the checks left unconfirmed came out that way, counted by reason.
+    const checkFailures = {};
     let unchecked = 0;
     for (const candidate of candidates) {
         const result = checked.get(candidate.id);
@@ -298,6 +300,10 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             continue;
         }
         const { status } = result;
+        if (status === undefined) {
+            const reason = result.failure || 'error';
+            checkFailures[reason] = (checkFailures[reason] || 0) + 1;
+        }
         // Reachable but holding nothing is as useless as a dead link.
         if (status === 'available' && result.totalItems === 0) {
             hidden.empty = (hidden.empty || 0) + 1;
@@ -347,6 +353,7 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             unknown,
             contentPending: results.filter(result => result.contentPending).length,
             unchecked,
+            ...(Object.keys(checkFailures).length ? { checkFailures } : {}),
             hidden,
             hiddenCount: Object.values(hidden).reduce((sum, count) => sum + count, 0)
         }
@@ -416,6 +423,7 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
             const body = buildResponse(candidates, checked, { found, matched: candidates.length, providers }, matchesTitle, identity);
             const partial = body.meta.unknown > 0 || body.meta.contentPending > 0 || body.meta.unchecked > 0 || found < THIN_INDEX_RESPONSE
                 || successful.length < indexesResult.length;
+            if (body.meta.checkFailures) logEvent('warn', 'aggregate_checks_inconclusive', { reasons: body.meta.checkFailures, candidates: candidates.length });
             const seconds = partial ? CACHE_SECONDS_PARTIAL : CACHE_SECONDS_VERIFIED;
             body.meta.cacheExpiresAt = Date.now() + seconds * 1000;
             return cacheJson(ctx, cacheKey, body, seconds);

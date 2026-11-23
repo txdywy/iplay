@@ -18,6 +18,7 @@ The Cloudflare Worker requires the following secrets (environment variables) to 
 | `ENVIRONMENT` | Production required | — | Set to `production` in the deployed Worker. When production rate-limit bindings are missing, requests fail closed with `503` instead of using an isolate-local counter. |
 | `REQUIRE_DISTRIBUTED_RATE_LIMIT` | Optional | `false` | Set to `true` to enforce the same fail-closed behavior in a non-production deployment. |
 | `WPZY_COOKIE` | Optional | — | Login cookie (`bbs_token`, `bbs_sid`) of a dedicated read-only wpzy.org account, sent only to WPZY search and thread pages. Requires the `WPZY_CACHE_SESSION` Durable Object binding in production. |
+| `QUARK_PASSCODE_ATTEMPTS` | Binding | `wrangler.toml` | Durable Object binding (reuses the `WpzyCacheSession` class under `quark-share:<id>` names) that holds each share's passcode attempts: two refused or pending per hour, an unanswered one for ten minutes. Without it, listed passcodes are not submitted to Quark and protected shares report `passcodeRequired`. |
 | `CRON_REFRESH_TITLES` | Optional | — | Comma-separated titles whose resource scans the scheduled trigger refreshes. The refresh warms the cache of the data centre the trigger runs in. |
 | `QUARK_CHANNEL_SEARCH` | Optional | `1` in `wrangler.toml` | Plain variable. `1` searches public Telegram channels for Quark posts. |
 | `QUARK_CHANNELS` | Optional | 6 measured channels | Plain variable. Comma-separated channel usernames (at most 8, case-insensitive) that override the default list. |
