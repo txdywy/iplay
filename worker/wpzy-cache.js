@@ -1,15 +1,24 @@
 import { createHttpError } from './core.js';
+import { QuarkPasscodeAttempts, QUARK_ATTEMPT_HOST } from './quark-attempts.js';
 
-// One object per credential fingerprint coordinates cache keys across edge
-// locations. The cache itself remains in the Worker Cache API.
+// Keep the existing deployed class name. Unprefixed WPZY fingerprints and
+// prefixed Quark share IDs address different SQLite objects.
 export class WpzyCacheSession {
     constructor(state) {
         this.sql = state.storage.sql;
-        this.sql.exec('CREATE TABLE IF NOT EXISTS session (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL, revoked INTEGER NOT NULL)');
-        this.sql.exec('INSERT OR IGNORE INTO session VALUES (1, 0, 0)');
+        this.state = state;
     }
 
     async fetch(request) {
+        if (new URL(request.url).hostname === QUARK_ATTEMPT_HOST) {
+            this.attempts ??= new QuarkPasscodeAttempts(this.state);
+            return this.attempts.fetch(request);
+        }
+        if (!this.sessionReady) {
+            this.sql.exec('CREATE TABLE IF NOT EXISTS session (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL, revoked INTEGER NOT NULL)');
+            this.sql.exec('INSERT OR IGNORE INTO session VALUES (1, 0, 0)');
+            this.sessionReady = true;
+        }
         if (request.method === 'POST') {
             const { generation, revoked } = await request.json();
             this.sql.exec(`UPDATE session SET generation = generation + ?, revoked = ?

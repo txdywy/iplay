@@ -49,8 +49,9 @@ const INDEX_DOWN_QUERIES = 2;
 
 async function readIndexFailures(key) {
     const cached = await serveCachedJson(key);
-    const queries = (await cached?.json().catch(() => null))?.queries;
-    return Array.isArray(queries) ? queries.filter(query => typeof query === 'string') : [];
+    const failures = (await cached?.json().catch(() => null))?.failures;
+    const cutoff = Date.now() - INDEX_DOWN_SECONDS * 1000;
+    return Array.isArray(failures) ? failures.filter(entry => typeof entry?.query === 'string' && entry.at > cutoff) : [];
 }
 // The index sometimes answers with a fraction of its usual results; such a
 // thin answer is not worth keeping for long.
@@ -233,12 +234,12 @@ function selectCandidates(items, matchesTitle, { year, mediaType }) {
 
 const STATUS_RANK = { available: 0, unknown: 1, passcode_required: 2 };
 
-async function verifyCandidates(candidates, ctx, deadline) {
+async function verifyCandidates(candidates, ctx, deadline, attempts) {
     const budget = { remaining: QUARK_REQUEST_BUDGET };
     const checked = new Map();
     const check = async candidate => {
         const probe = passcode => probeQuarkShare(candidate.id, ctx, {
-            passcode, listing: true, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS, deadline
+            passcode, listing: true, attempts, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS, deadline
         });
         const result = await probe(candidate.credential?.password);
         if (result.status !== 'passcode_mismatch' || !candidate.alternate || budget.remaining <= 0 || isDeadlineExpired(deadline)) return result;
@@ -269,9 +270,12 @@ async function verifyCandidates(candidates, ctx, deadline) {
 // passing, so the share's own title and folder names are the better evidence.
 // Releases that deliberately garble names ("流#浪#地#球") cannot be matched
 // and are kept without the badge.
-function contentNamesWork(result, matchesTitle) {
-    return [result.shareTitle, ...(result.entries || []).map(entry => entry.name)]
-        .some(text => text && matchesTitle(text));
+function contentNamesWork(result, matchesTitle, { year, mediaType }) {
+    const titles = [result.shareTitle, ...(result.entries || []).map(entry => entry.name)]
+        .filter(text => text && matchesTitle(text));
+    return titles.some(text => resourceTitleHasYear(text, year, mediaType, { strict: true }))
+        || (titles.length > 0 && titles.every(text =>
+            resourceTitleHasYear(text, year, mediaType, { strict: true, allowMissing: true })));
 }
 
 // A share is not the work when its own title says so, or when everything in
@@ -283,7 +287,7 @@ function isNonVideoShare(result) {
     return entries.length > 0 && entries.every(entry => NON_VIDEO_PATTERN.test(entry.name));
 }
 
-function buildResponse(candidates, checked, { found, matched, providers }, matchesTitle) {
+function buildResponse(candidates, checked, { found, matched, providers }, matchesTitle, identity) {
     const results = [];
     const hidden = {};
     let unchecked = 0;
@@ -318,10 +322,11 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             ...(source ? { source } : {}),
             ...(time ? { datetime: new Date(time).toISOString() } : {}),
             status: status ?? 'unknown',
+            ...(result.contentPending ? { contentPending: true } : {}),
             ...(result.passcodeVerified ? { passcodeVerified: true } : {}),
             ...(result.shareTitle ? { shareTitle: result.shareTitle } : {}),
             ...(result.entries?.length ? { entries: result.entries, totalItems: result.totalItems } : {}),
-            ...(contentNamesWork(result, matchesTitle) ? { contentMatch: true } : {}),
+            ...(contentNamesWork(result, matchesTitle, identity) ? { contentMatch: true } : {}),
             _time: time
         });
     }
@@ -340,6 +345,7 @@ function buildResponse(candidates, checked, { found, matched, providers }, match
             // Checked on Quark and reachable; unconfirmed ones are counted apart.
             verified: results.length - unknown,
             unknown,
+            contentPending: results.filter(result => result.contentPending).length,
             unchecked,
             hidden,
             hiddenCount: Object.values(hidden).reduce((sum, count) => sum + count, 0)
@@ -360,7 +366,7 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
         return jsonResponse({ enabled: false, results: [], meta: {} }, 200, { 'Cache-Control': 'no-store' });
     }
     const sources = getPansouSources(env);
-    const cacheKey = new Request(`https://aggregate-search-v1-cache.local/?base=${encodeURIComponent(base || '')}&src=${sources.join('+')}&q=${encodeURIComponent(query)}&id=${identity.id || ''}&type=${identity.mediaType || ''}&year=${identity.year || ''}${usePansousuo ? '&pansousuo=1' : ''}`);
+    const cacheKey = new Request(`https://aggregate-search-v2-cache.local/?base=${encodeURIComponent(base || '')}&src=${sources.join('+')}&q=${encodeURIComponent(query)}&id=${identity.id || ''}&type=${identity.mediaType || ''}&year=${identity.year || ''}${usePansousuo ? '&pansousuo=1' : ''}`);
     const cached = refresh ? null : await serveCachedJson(cacheKey);
     if (cacheOnly && !cached) {
         return jsonResponse({ error: '聚合结果已过期，请重新搜索。' }, 410, { 'Cache-Control': 'no-store' });
@@ -377,14 +383,18 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
             const indexesResult = await Promise.all(Object.entries(indexes).map(async ([name, index]) => {
                 // An index counts as down after two different searches failed
                 // within the window, so one hard query cannot block everyone.
-                const downKey = new Request(`https://aggregate-index-down-v2.local/?base=${encodeURIComponent(index.key)}`);
+                const downKey = new Request(`https://aggregate-index-down-v3.local/?base=${encodeURIComponent(index.key)}`);
                 const failures = await readIndexFailures(downKey);
                 if (!refresh && failures.length >= INDEX_DOWN_QUERIES) return { name, status: 'cooldown' };
                 try {
                     return { name, status: 'ok', items: await index.fetch() };
                 } catch (error) {
-                    const failedQueries = [...new Set([...failures, query])].slice(-INDEX_DOWN_QUERIES * 2);
-                    cacheJson(ctx, downKey, { queries: failedQueries }, INDEX_DOWN_SECONDS);
+                    const failedAt = Date.now();
+                    const canonical = query.normalize('NFKC').trim().toLowerCase();
+                    const recent = await readIndexFailures(downKey);
+                    const failedQueries = recent.filter(item => item.query !== canonical);
+                    failedQueries.push({ query: canonical, at: failedAt });
+                    cacheJson(ctx, downKey, { failures: failedQueries.slice(-INDEX_DOWN_QUERIES * 2) }, INDEX_DOWN_SECONDS);
                     logEvent('warn', 'aggregate_index_failed', { provider: name, error: logErrorMessage(error) });
                     return { name, status: 'failed', error };
                 }
@@ -401,10 +411,10 @@ export async function handleAggregateSearch(rawQuery, env, ctx, { refresh = fals
             const aliases = await aliasesTask;
             const matchesTitle = createResourceTitleMatcher([query, ...aliases], identity.mediaType);
             const candidates = selectCandidates(items, matchesTitle, identity);
-            const checked = await verifyCandidates(candidates, ctx, deadline);
+            const checked = await verifyCandidates(candidates, ctx, deadline, env?.QUARK_PASSCODE_ATTEMPTS);
             const found = successful.reduce((sum, index) => sum + index.items.length, 0);
-            const body = buildResponse(candidates, checked, { found, matched: candidates.length, providers }, matchesTitle);
-            const partial = body.meta.unknown > 0 || body.meta.unchecked > 0 || found < THIN_INDEX_RESPONSE
+            const body = buildResponse(candidates, checked, { found, matched: candidates.length, providers }, matchesTitle, identity);
+            const partial = body.meta.unknown > 0 || body.meta.contentPending > 0 || body.meta.unchecked > 0 || found < THIN_INDEX_RESPONSE
                 || successful.length < indexesResult.length;
             const seconds = partial ? CACHE_SECONDS_PARTIAL : CACHE_SECONDS_VERIFIED;
             body.meta.cacheExpiresAt = Date.now() + seconds * 1000;

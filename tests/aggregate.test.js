@@ -1,3 +1,4 @@
+import { testQuarkAttempts } from './helpers/quark-attempts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/_worker.js';
@@ -64,6 +65,7 @@ function mockWorld(t, { pansou, pansousuo, shares = {}, pansouFailures = 0 }) {
         const id = url.searchParams.get('pwd_id');
         calls.detail.push(id);
         const share = shares[id];
+        if (share.listingDown) return new Response(null, { status: 503 });
         return Response.json({
             code: 0,
             data: { list: (share.entries || []).map(name => ({ file_name: name, dir: !/\.\w{2,4}$/.test(name) })) },
@@ -73,7 +75,7 @@ function mockWorld(t, { pansou, pansousuo, shares = {}, pansouFailures = 0 }) {
     t.after(() => Object.assign(globalThis, previous));
     const writes = [];
     return {
-        cache, calls,
+        cache, calls, attempts: testQuarkAttempts(t),
         ctx: { waitUntil(promise) { writes.push(promise); } },
         flush: () => Promise.all(writes.splice(0))
     };
@@ -84,7 +86,7 @@ async function aggregate(world, query = '测试剧', { env = {}, extra = '&id=1&
     client += 1;
     const response = await worker.fetch(new Request(`https://worker.test/api/resource/aggregate?q=${encodeURIComponent(query)}${extra}`, {
         headers: { 'cf-connecting-ip': `203.0.113.${client}`, Origin: 'https://iplay.hackx64.eu.org' }
-    }), env, world.ctx);
+    }), { QUARK_PASSCODE_ATTEMPTS: world.attempts, ...env }, world.ctx);
     await world.flush();
     return response;
 }
@@ -176,7 +178,10 @@ test('duplicate results preserve a valid alternate passcode and accept decimal r
         pansousuo: [
             indexed('protected', '测试片 2.5GB (2023)', { access_code: 'old1' }),
             indexed('decimal', '测试片 2.5GB (2023)'),
-            indexed('sequel', '测试片 2 (2024)')
+            indexed('sequel', '测试片 2 (2024)'),
+            indexed('sequel-ordinal', '测试片 第二部 (2024)'),
+            indexed('sequel-bracketed', '测试片（2）(2024)'),
+            indexed('sequel-audio', '测试片 2国语 (2024)')
         ],
         shares: {
             protected: { passcode: 'ok12', entries: ['测试片.mkv'] },
@@ -193,7 +198,7 @@ test('duplicate results preserve a valid alternate passcode and accept decimal r
     assert.equal(share.passcodeVerified, true);
     assert.equal(share.source, 'tg:chan1');
     assert.deepEqual(world.calls.token.filter(call => call.id === 'protected' && call.passcode).map(call => call.passcode), ['old1', 'ok12']);
-    assert.ok(!world.calls.token.some(call => call.id === 'sequel'));
+    assert.ok(!world.calls.token.some(call => call.id.startsWith('sequel')));
 });
 
 test('aggregate search returns only verified shares of this work, with what is inside', async t => {
@@ -558,4 +563,34 @@ test('the deadline bounds the Quark checks, not only when each one starts', asyn
     assert.ok(elapsed < 2600, `finished in ${elapsed} ms`);
     const body = await response.json();
     assert.ok(body.meta.unchecked + body.meta.unknown > 0, 'what the deadline cut short is reported, not cached as final');
+});
+
+test('a contradictory content year suppresses the match badge and incomplete directories shorten the cache', async t => {
+    const items = Array.from({ length: 5 }, (_, i) => post(`dune-${i}`, '沙丘 (2021)'));
+    const shares = Object.fromEntries(items.map((_, i) => [`dune-${i}`, { title: i === 4 ? '沙丘' : '沙丘 (1984)', entries: ['沙丘 (1984).mkv'], listingDown: i === 0 }]));
+    const world = mockWorld(t, { pansou: items, shares });
+    const opts = { extra: '&id=1&type=movie&year=2021' };
+    const result = await (await aggregate(world, '沙丘', opts)).json();
+    assert.equal(result.results.length, 5);
+    assert.ok(result.results.every(item => !item.contentMatch));
+    assert.equal(result.meta.contentPending, 1);
+    assert.ok(result.meta.cacheExpiresAt - Date.now() <= 120_000);
+    assert.equal(result.results.find(item => item.url.endsWith('/dune-0')).contentPending, true);
+    shares['dune-0'] = { title: '沙丘 (2021)', entries: ['沙丘 (2021).mkv'] };
+    const updated = await (await aggregate(world, '沙丘', { extra: opts.extra + '&refresh=1' })).json();
+    assert.equal(updated.meta.contentPending, 0);
+    assert.equal(updated.results[0].contentMatch, true);
+});
+
+test('index failures expire individually within the rolling cooldown window', async t => {
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const world = mockWorld(t, { pansou: [], pansouFailures: 6 });
+    await aggregate(world, '第一部');
+    now += 80_000;
+    await aggregate(world, '第二部');
+    now += 80_000;
+    await aggregate(world, '第二部', { extra: '&id=1&type=tv&year=2023&refresh=1' });
+    assert.equal((await aggregate(world, '第三部')).status, 200);
+    assert.equal(world.calls.pansou.length, 7);
 });

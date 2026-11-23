@@ -64,6 +64,11 @@ crons = ["0 */6 * * *"]
 name = "WPZY_CACHE_SESSION"
 class_name = "WpzyCacheSession"
 
+# Reuse the deployed class with separately named objects for share attempts.
+[[durable_objects.bindings]]
+name = "QUARK_PASSCODE_ATTEMPTS"
+class_name = "WpzyCacheSession"
+
 [[migrations]]
 tag = "wpzy-cache-session-v1"
 new_sqlite_classes = ["WpzyCacheSession"]
@@ -76,6 +81,10 @@ QUARK_CHANNEL_SEARCH = "1"
 
 [[previews.durable_objects.bindings]]
 name = "WPZY_CACHE_SESSION"
+class_name = "WpzyCacheSession"
+
+[[previews.durable_objects.bindings]]
+name = "QUARK_PASSCODE_ATTEMPTS"
 class_name = "WpzyCacheSession"
 
 [[previews.ratelimits]]

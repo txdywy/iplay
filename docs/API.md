@@ -426,7 +426,7 @@ curl "https://iplayw.hackx64.eu.org/api/resource?q=流浪地球&id=550988&type=m
 }
 ```
 
-`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。同一标题的转帖在选择详情页时排在不同标题之后，避免占用扫描名额。三个来源的帖子标题都必须在片名边界处包含所选作品名：片名前后须是标点、空白、年份或常见发布词（如「电视剧」「全39集」「国语」「年番」），因此搜索「狂飙」不会返回《公路狂飙》《F1：狂飙飞车》，「流浪地球2」也不会作为「流浪地球」的结果。WPZY 关键词高亮插入的空格在匹配时忽略。提供 `id` 与 `type` 时，Worker 并行读取该作品的 TMDB 原名及中国大陆、港台、新加坡、美英地区别名（最多 8 个，3 秒上限，结果缓存），标题含任一名称即视为匹配，例如「哪吒之魔童闹海」也接受「哪吒2」「哪吒之魔童鬧海」「Ne Zha 2」；少于 4 个字母的拉丁别名不参与匹配。名称内部的标点与空格差异（「哈利·波特」/「哈利波特」）不影响匹配。Worker 并行查询三个来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。
+`resources`、`wpzysResources` 和 `zuidouyinResources` 分别保存 By669、WPZY 和醉都音搜索结果。同一标题的转帖在选择详情页时排在不同标题之后，避免占用扫描名额。这些来源的帖子标题都必须在片名边界处包含所选作品名：片名前后须是标点、空白、年份或常见发布词（如「电视剧」「全39集」「国语」「年番」），因此搜索「狂飙」不会返回《公路狂飙》《F1：狂飙飞车》，「流浪地球2」也不会作为「流浪地球」的结果。WPZY 关键词高亮插入的空格在匹配时忽略。提供 `id` 与 `type` 时，Worker 并行读取该作品的 TMDB 原名及中国大陆、港台、新加坡、美英地区别名（最多 8 个，3 秒上限，结果缓存），标题含任一名称即视为匹配，例如「哪吒之魔童闹海」也接受「哪吒2」「哪吒之魔童鬧海」「Ne Zha 2」；少于 4 个字母的拉丁别名不参与匹配。名称内部的标点与空格差异（「哈利·波特」/「哈利波特」）不影响匹配。Worker 并行查询各来源，再轮流从各来源选择详情页，将去重后的分享汇总到 `quarkUrls`。需要额外请求的 By669 和 WPZY 详情页合计最多 12 个。醉都音通过公开 WordPress 接口一次读取最多四篇文章及正文，这些文章不占详情页名额，扫描预算耗尽时也保留其证据。帖子标题匹配时使用整篇正文；仅 h2–h6 小标题匹配时（小标题内可含 `<strong>` 等内联标签），只提取从该小标题到下一个同级或更高级小标题之间的分享，避免合集中的其他作品混入。来源状态见 `resourceMeta.providers.zuidouyin`。Telegram 频道启用时返回 `quarkChannelResources`。个别频道失败时，`resourceMeta.failedChannels` 返回频道名，保留这些频道原有的有效快照，并标记为部分结果。
 
 详情页最多并发 6 个请求，连接空闲后立即调度下一页。每页最多采样 25 个新分享，整次请求最多返回 100 个链接。已进入全局结果的分享如果也出现在其他选中页，仍会合并密码证据并记录在页级快照中。约 15 秒总预算耗尽后停止启动新请求，保留已开始页面的证据。
 
@@ -484,11 +484,11 @@ GET /api/resource/aggregate?q={query}&id={id}&type={movie|tv}&year={year}&refres
 }
 ```
 
-`status` 为 `available`（令牌已颁发；`passcodeVerified` 表示提取码经验证可用）、`passcode_required`（需要提取码但没有可验证的提取码）或 `unknown`（检查没有结论）。`contentMatch` 表示分享自己的标题或文件夹名对得上作品名；刻意混淆的名字无法确认，仅不带这个标记。令牌、分享者等夸克返回的其他字段不会缓存或返回。
+`status` 为 `available`（令牌已颁发；`passcodeVerified` 表示提取码经验证可用）、`passcode_required`（需要提取码但没有可验证的提取码）或 `unknown`（检查没有结论）。`contentMatch` 表示分享自己的标题或文件夹名匹配作品，且没有明确的年份冲突；刻意混淆的名字无法确认，仅不带这个标记。令牌、分享者等夸克返回的其他字段不会缓存或返回。
 
-盘搜索的分享来源标为 `index:pansousuo`。`meta.providers` 分别提供候选数和 `ok`、`failed` 或 `cooldown` 状态。成功结果缓存 10 分钟，单个来源失败、候选过少或有 `unknown`、`unchecked` 时缓存 2 分钟。`refresh=1` 重新查询聚合源，单个分享的核验结果仍缓存 5 分钟。设置 `PANSOU_API_URL=off` 可关闭 PanSou，`PANSOUSUO_SEARCH=1` 启用盘搜索，`AGGREGATE_SEARCH=0` 关闭整个模块。使用资源限流器，但按 `aggregate` 单独计数：每个 IP 每分钟最多 10 次聚合搜索，与 `/api/resource` 的 10 次资源扫描互不占用。同一聚合源在 90 秒内有两个不同查询失败后，后续非 `refresh` 请求直接返回 `503`（`Retry-After: 60`），避免每个访客都等待超时；整体期限 28 秒（机器人为 20 秒），对夸克的每一步检查都受这个期限约束。
+盘搜索的分享来源标为 `index:pansousuo`。`meta.providers` 分别提供候选数和 `ok`、`failed` 或 `cooldown` 状态。成功结果缓存 10 分钟，单个来源失败、候选过少或有 `unknown`、`unchecked`、`contentPending` 时缓存 2 分钟。`refresh=1` 重新查询聚合源，单个分享的核验结果仍缓存 5 分钟。设置 `PANSOU_API_URL=off` 可关闭 PanSou，`PANSOUSUO_SEARCH=1` 启用盘搜索，`AGGREGATE_SEARCH=0` 关闭整个模块。使用资源限流器，但按 `aggregate` 单独计数：每个 IP 每分钟最多 10 次聚合搜索，与 `/api/resource` 的 10 次资源扫描互不占用。同一聚合源在 90 秒内有两个不同查询失败后暂缓访问，每个失败关键词独立到期。所有源都在冷却期时，非 `refresh` 请求返回 `503`（`Retry-After: 60`），避免每个访客都等待超时；整体期限 28 秒（机器人为 20 秒），对夸克的每一步检查都受这个期限约束。
 
-`/api/resource/quark-status` 的 `pwd` 只用于确认页面上列出的提取码：同一个分享一小时内最多接受两次错误提取码（所有调用方合计），之后不再提交，只返回 `passcodeRequired`。
+`/api/resource/quark-status` 的 `pwd` 只用于确认页面上列出的提取码：同一分享由 `QUARK_PASSCODE_ATTEMPTS` Durable Object 统一预留尝试额度。一小时内最多保留两次正在处理、已拒绝或未得到明确答复的尝试。额度用尽时返回 `passcodeRequired`。目录没有读完时，状态接口的 `contentPending` 列出待确认的分享 ID，聚合接口在相应结果与摘要中报告待确认状态。
 
 ---
 

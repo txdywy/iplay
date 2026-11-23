@@ -25,7 +25,7 @@ function parsePasscodes(entries) {
     return codes;
 }
 
-export async function handleQuarkStatus(ids, ctx, { passcodes = [], content = false } = {}) {
+export async function handleQuarkStatus(ids, ctx, { passcodes = [], content = false, attempts } = {}) {
     if (ids.length === 0 || ids.length > QUARK_CHECK_BATCH_SIZE || !ids.every(isQuarkShareId)) {
         return jsonResponse({ error: 'Invalid Quark share IDs' }, 400);
     }
@@ -37,7 +37,7 @@ export async function handleQuarkStatus(ids, ctx, { passcodes = [], content = fa
     const deadline = createDeadline(CHECK_BATCH_DEADLINE_MS);
     await forEachWithConcurrency(uniqueIds, CHECK_CONCURRENCY, async id => {
         results.set(id, await probeQuarkShare(id, ctx, {
-            passcode: codes.get(id) || '', listing: content, budget, timeoutMs: CHECK_STEP_TIMEOUT_MS, deadline
+            passcode: codes.get(id) || '', listing: content, attempts, budget, timeoutMs: CHECK_STEP_TIMEOUT_MS, deadline
         }));
     });
     const status = id => results.get(id)?.status;
@@ -54,6 +54,8 @@ export async function handleQuarkStatus(ids, ctx, { passcodes = [], content = fa
         body.passcodeMismatch = passcodeMismatch;
     }
     if (content) {
+        const pending = available.filter(id => results.get(id).contentPending);
+        if (pending.length) body.contentPending = pending;
         // Only what a visitor of the share would see: how many top-level items
         // and the first few names.
         body.content = Object.fromEntries(available
