@@ -450,7 +450,7 @@ WPZY 新上游为 `https://wpzy.org`；为兼容客户端，`wpzysResources`、`
 
 ### 6.1 夸克分享状态
 
-`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`restricted`（分享者账号被限制）、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
+`GET /api/resource/quark-status?id={shareId}&id={shareId}` 每批最多 12 个分享 ID（网页每批发送 8 个：带目录读取时每个分享最多占用 4 次平台请求，免费版 Worker 每次调用上限 50 次；达到上限时其余分享返回 `unknown`，网页稍后自动重查）。响应包含 `available`（夸克已颁发分享令牌）、`passcodeRequired`（夸克要求提取码）、`unavailable`（分享 ID 到失效原因的映射）和 `unknown`（网络或上游限制导致暂时无法判断）。失效原因包括 `missing_files`、`missing`、`deleted`、`blocked`、`restricted`（分享者账号被限制）、`invalid`、`cancelled` 和 `expired`。Worker 缓存明确状态 5 分钟，使用独立的每分钟 30 次生产限流额度。
 
 可选参数：`content=1` 同时读取每个可访问分享的顶层内容，响应多一个 `content` 对象（分享 ID → `{items, names}`，`items` 为 0 表示空分享）；`pwd={shareId}:{提取码}` 提交页面上列出的提取码（只在夸克要求提取码时尝试一次），响应多 `passcodeVerified`（提取码可用）和 `passcodeMismatch`（提取码不符）。不带这些参数时响应与之前完全相同。
 
@@ -486,7 +486,7 @@ GET /api/resource/aggregate?q={query}&id={id}&type={movie|tv}&year={year}&refres
 
 `status` 为 `available`（令牌已颁发；`passcodeVerified` 表示提取码经验证可用）、`passcode_required`（需要提取码但没有可验证的提取码）或 `unknown`（检查没有结论）。`contentMatch` 表示分享自己的标题或文件夹名匹配作品，且没有明确的年份冲突；刻意混淆的名字无法确认，仅不带这个标记。令牌、分享者等夸克返回的其他字段不会缓存或返回。
 
-盘搜索的分享来源标为 `index:pansousuo`。`meta.providers` 分别提供候选数和 `ok`、`failed` 或 `cooldown` 状态。成功结果缓存 10 分钟，单个来源失败、候选过少或有 `unknown`、`unchecked`、`contentPending` 时缓存 2 分钟。`refresh=1` 重新查询聚合源，单个分享的核验结果仍缓存 5 分钟。设置 `PANSOU_API_URL=off` 可关闭 PanSou，`PANSOUSUO_SEARCH=1` 启用盘搜索，`AGGREGATE_SEARCH=0` 关闭整个模块。使用资源限流器，但按 `aggregate` 单独计数：每个 IP 每分钟最多 10 次聚合搜索，与 `/api/resource` 的 10 次资源扫描互不占用。同一聚合源在 90 秒内有两个不同查询失败后暂缓访问，每个失败关键词独立到期。所有源都在冷却期时，非 `refresh` 请求返回 `503`（`Retry-After: 60`），避免每个访客都等待超时；整体期限 28 秒（机器人为 20 秒），对夸克的每一步检查都受这个期限约束。有 `unknown` 结果时，`meta.checkFailures` 按原因计数（如 `timeout`、`http_429`、`code_<夸克代码>`、`budget`、`deadline`、`subrequest_limit`、`network`），只含这些固定词，便于判断是夸克变慢、被限流还是 Worker 自身的上限。
+盘搜索的分享来源标为 `index:pansousuo`。`meta.providers` 分别提供候选数和 `ok`、`failed` 或 `cooldown` 状态。成功结果缓存 10 分钟，单个来源失败、候选过少或有 `unknown`、`unchecked`、`contentPending` 时缓存 2 分钟。`refresh=1` 重新查询聚合源，单个分享的核验结果仍缓存 5 分钟。设置 `PANSOU_API_URL=off` 可关闭 PanSou，`PANSOUSUO_SEARCH=1` 启用盘搜索，`AGGREGATE_SEARCH=0` 关闭整个模块。使用资源限流器，但按 `aggregate` 单独计数：每个 IP 每分钟最多 10 次聚合搜索，与 `/api/resource` 的 10 次资源扫描互不占用。同一聚合源在 90 秒内有两个不同查询失败后暂缓访问，每个失败关键词独立到期。所有源都在冷却期时，非 `refresh` 请求返回 `503`（`Retry-After: 60`），避免每个访客都等待超时；整体期限 28 秒（机器人为 20 秒），对夸克的每一步检查都受这个期限约束。有 `unknown` 结果时，`meta.checkFailures` 按原因计数（如 `timeout`、`http_429`、`code_<夸克代码>`、`budget`、`deadline`、`subrequest_limit`、`network`），只含这些固定词，便于判断是夸克变慢、被限流还是 Worker 自身的上限。聚合检查对夸克最多 32 次请求（约 16 个分享），不读写单个分享的缓存（整个聚合结果已缓存）；平台请求数到达上限时立即停止，剩余候选计入 `unchecked` 而不是 `unknown`。
 
 `/api/resource/quark-status` 的 `pwd` 只用于确认页面上列出的提取码：同一分享由 `QUARK_PASSCODE_ATTEMPTS` Durable Object 统一预留尝试额度。一小时内最多保留两次正在处理或已被拒绝的尝试；没有得到夸克答复（超时、故障）的尝试只保留 10 分钟，提取码正确或分享另有结论时立即归还。额度用尽时返回 `passcodeRequired`。目录没有读完时，状态接口的 `contentPending` 列出待确认的分享 ID，聚合接口在相应结果与摘要中报告待确认状态。
 

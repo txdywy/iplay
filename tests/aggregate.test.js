@@ -54,6 +54,8 @@ function mockWorld(t, { pansou, pansousuo, shares = {}, pansouFailures = 0 }) {
             calls.token.push({ id, passcode });
             const share = shares[id];
             if (!share) return Response.json({ code: 41011 }, { status: 400 });
+            if (share.limit) calls.limitReached = true;
+            if (calls.limitReached) throw new Error('Too many subrequests.');
             if (share.throws) throw new Error('network down');
             if (share.throwsOnce && calls.token.filter(call => call.id === id).length === 1) throw new Error('timed out once');
             if (share.passcode && passcode !== share.passcode) return Response.json({ code: 41008 }, { status: 400 });
@@ -603,4 +605,36 @@ test('inconclusive checks are described in a few fixed words', async () => {
     assert.equal(describeCheckFailure(new Error('Too many subrequests.')), 'subrequest_limit');
     assert.equal(describeCheckFailure(new Error('Network connection lost.')), 'network');
     assert.equal(describeCheckFailure(new Error('private detail https://x.test/?token=1')), 'error');
+});
+
+test('the platform request limit stops the checks: the rest are unchecked, not failed one by one', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('ok1', '测试剧 (2023) 4K'), post('cap1', '测试剧 (2023) HDR'), post('late1', '测试剧 (2023) 全集'), post('late2', '测试剧 (2023) 1080P'),
+            post('late3', '测试剧 (2023) 杜比'), post('late4', '测试剧 (2023) 国语')],
+        shares: {
+            ok1: { title: '测试剧 4K', entries: ['测试剧'] },
+            cap1: { limit: true },
+            late1: { title: '测试剧 全集', entries: ['测试剧'] }, late2: { title: '测试剧', entries: ['测试剧'] },
+            late3: { title: '测试剧', entries: ['测试剧'] }, late4: { title: '测试剧', entries: ['测试剧'] }
+        }
+    });
+    const body = await (await aggregate(world)).json();
+    assert.equal(body.meta.unknown, 0, 'nothing is reported as an unconfirmed share');
+    assert.ok(body.meta.unchecked >= 2, 'the shares after the limit are counted as unchecked');
+    assert.ok(world.calls.token.length <= 5, 'no second pass after the limit');
+    assert.ok(body.results.some(item => item.url.endsWith('/ok1')));
+});
+
+test('aggregate checks neither read nor write the per-share cache', async t => {
+    const world = mockWorld(t, {
+        pansou: [post('ok1', '测试剧 (2023) 4K')],
+        shares: { ok1: { title: '测试剧 4K', entries: ['测试剧'] } }
+    });
+    const seen = [];
+    const { match, put } = world.cache.default;
+    world.cache.default.match = async key => { seen.push(key.url); return match.call(world.cache.default, key); };
+    world.cache.default.put = async (key, value) => { seen.push(key.url); return put.call(world.cache.default, key, value); };
+    await (await aggregate(world)).json();
+    await world.flush();
+    assert.ok(!seen.some(url => url.includes('quark-share-')), seen.join(' '));
 });
