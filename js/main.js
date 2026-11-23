@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.83';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.84';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.83';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.83';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.83';
-import { RELEASE_VERSION } from './release.js?v=1.0.83';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.83';
+} from './scorer.js?v=1.0.84';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_REQUEST_SIZE } from './quark.js?v=1.0.84';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.84';
+import { RELEASE_VERSION } from './release.js?v=1.0.84';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.84';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.83';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.83';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.83';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.83';
+} from './match.js?v=1.0.84';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.84';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.84';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.84';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1529,7 +1529,7 @@ function checkQuarkRows(rows, signal) {
         .filter(row => (verification.checks.get(quarkCheckKey(row))?.expiresAt ?? 0) <= now);
     const batches = [];
     for (const row of unchecked) {
-        let batch = batches.find(batch => batch.size < QUARK_CHECK_BATCH_SIZE && !batch.has(row.id));
+        let batch = batches.find(batch => batch.size < QUARK_CHECK_REQUEST_SIZE && !batch.has(row.id));
         if (!batch) {
             batch = new Map();
             batches.push(batch);

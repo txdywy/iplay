@@ -1,7 +1,7 @@
 /**
  * API 请求封装 - Cloudflare Worker 版本
  */
-import { RELEASE_VERSION } from './release.js?v=1.0.83';
+import { RELEASE_VERSION } from './release.js?v=1.0.84';
 
 const API_BASE = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://localhost:8787'

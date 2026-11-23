@@ -38,8 +38,11 @@ const MAX_ITEMS_SCANNED = 3000;
 const MAX_CANDIDATES = 60;
 const CHECK_CONCURRENCY = 4;
 // Requests to Quark per invocation (token, passcode retry and folder listing).
-// Together with the search itself this stays well under the platform limit.
-const QUARK_REQUEST_BUDGET = 36;
+// A Worker on the free plan makes at most 50 requests per invocation, Cache
+// API reads and writes included. The searches, title aliases and this
+// module's own cache take up to about 17 of them, so the share checks get 32
+// (about 16 shares) and skip the per-share cache: this answer is cached whole.
+const QUARK_REQUEST_BUDGET = 32;
 const CACHE_SECONDS_VERIFIED = 600;
 const CACHE_SECONDS_PARTIAL = 120;
 // After the index fails, visitors in the next minute and a half are told at
@@ -239,7 +242,7 @@ async function verifyCandidates(candidates, ctx, deadline, attempts) {
     const checked = new Map();
     const check = async candidate => {
         const probe = passcode => probeQuarkShare(candidate.id, ctx, {
-            passcode, listing: true, attempts, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS, deadline
+            passcode, listing: true, attempts, budget, timeoutMs: QUARK_CHECK_TIMEOUT_MS, deadline, cache: false
         });
         const result = await probe(candidate.credential?.password);
         if (result.status !== 'passcode_mismatch' || !candidate.alternate || budget.remaining <= 0 || isDeadlineExpired(deadline)) return result;

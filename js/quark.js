@@ -1,4 +1,9 @@
 export const QUARK_CHECK_BATCH_SIZE = 12;
+// What the page sends at once. A check with its folder listing costs a Worker
+// up to four platform requests (cache read, token, listing, cache write), and
+// a free-plan Worker gets 50 per invocation; the Worker still accepts twelve
+// from a page loaded before this change.
+export const QUARK_CHECK_REQUEST_SIZE = 8;
 
 export function isQuarkShareId(id) {
     return typeof id === 'string' && /^[a-z0-9_-]{1,128}$/i.test(id);

@@ -136,11 +136,21 @@ async function passcodeKey(passcode) {
  * the allowed passcodes this hour; success is `passcodeVerified`.
  * Every request is bounded by `deadline` when one is given; a step that would
  * start after it is skipped and the check is inconclusive.
+ * `cache: false` skips the per-share cache, for a caller that caches its own
+ * answer and cannot spare the extra platform requests.
  * Only the status and a few folder names are cached or returned, and only
  * from a complete check. The token response (author, credential) never
  * leaves this function.
  */
-export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, attempts, timeoutMs = CHECK_TIMEOUT_MS, deadline = null } = {}) {
+export async function probeQuarkShare(id, ctx, options = {}) {
+    const result = await probeQuarkShareOnce(id, ctx, options);
+    // The platform refuses every further request in this invocation: stop
+    // spending, so the rest are left unchecked rather than each failing.
+    if (result.failure === 'subrequest_limit' && options.budget) options.budget.remaining = 0;
+    return result;
+}
+
+async function probeQuarkShareOnce(id, ctx, { passcode = '', listing = false, budget = null, attempts, timeoutMs = CHECK_TIMEOUT_MS, deadline = null, cache = true } = {}) {
     const extended = Boolean(passcode) || listing;
     const cacheKey = extended
         ? new Request(`https://quark-share-verify-v2-cache.local/${id}?pw=${await passcodeKey(passcode)}&list=${listing ? 1 : 0}`)
@@ -148,7 +158,7 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
     // The time a step may take, or null once the deadline has passed.
     const stepTimeout = () => (deadline ? (isDeadlineExpired(deadline) ? null : remainingDeadlineMs(deadline, timeoutMs)) : timeoutMs);
     try {
-        const cached = await serveCachedJson(cacheKey);
+        const cached = cache ? await serveCachedJson(cacheKey) : null;
         if (cached) return await cached.json();
 
         const firstTimeout = stepTimeout();
@@ -206,7 +216,10 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
             if (title) result.shareTitle = title;
             if (listing) {
                 const listTimeout = stepTimeout();
-                const top = listTimeout === null ? null : await listShareTopLevel(id, tokenData.data.stoken, budget, listTimeout).catch(() => null);
+                const top = listTimeout === null ? null : await listShareTopLevel(id, tokenData.data.stoken, budget, listTimeout).catch(error => {
+                    if (budget && describeCheckFailure(error) === 'subrequest_limit') budget.remaining = 0;
+                    return null;
+                });
                 if (top) Object.assign(result, top);
                 else {
                     complete = false;
@@ -216,7 +229,7 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
         }
         // Cache only what is safe to show (a status, a title and folder
         // names), and only when every step it depends on was answered.
-        if (complete) cacheJson(ctx, cacheKey, result, CHECK_CACHE_SECONDS);
+        if (complete && cache) cacheJson(ctx, cacheKey, result, CHECK_CACHE_SECONDS);
         return result;
     } catch (error) {
         return { status: undefined, failure: describeCheckFailure(error) };
