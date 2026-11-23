@@ -1,6 +1,7 @@
 // Each share has one coordinator across all edge locations and callers.
 const WINDOW_MS = 3600_000;
 const MAX_ATTEMPTS = 2;
+export const QUARK_ATTEMPT_HOST = 'quark-attempts.internal';
 
 export class QuarkPasscodeAttempts {
     constructor(state) {
@@ -25,8 +26,8 @@ export class QuarkPasscodeAttempts {
 
 export async function reserveQuarkAttempt(binding, id, timeoutMs) {
     if (!binding) return null;
-    const stub = binding.getByName(id);
-    const endpoint = 'https://quark-attempts.internal/';
+    const stub = binding.getByName(`quark-share:${id}`);
+    const endpoint = `https://${QUARK_ATTEMPT_HOST}/`;
     const response = await stub.fetch(endpoint, { method: 'POST', signal: globalThis.AbortSignal.timeout(timeoutMs) });
     if (!response.ok) throw new Error('Quark attempt coordination unavailable');
     const reservation = await response.json();

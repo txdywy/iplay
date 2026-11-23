@@ -231,7 +231,7 @@ try {
     checks.push('production-bindings-and-release');
 
     const attempts = await runtime.getDurableObjectNamespace('QUARK_PASSCODE_ATTEMPTS');
-    const share = attempts.get(attempts.idFromName('runtime-share'));
+    const share = attempts.get(attempts.idFromName('quark-share:runtime-share'));
     const reserve = async () => (await share.fetch('https://quark-attempts.internal/', { method: 'POST' })).json();
     const reservations = await Promise.all([reserve(), reserve(), reserve()]);
     assert.equal(reservations.filter(Boolean).length, 2);

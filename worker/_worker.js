@@ -94,7 +94,6 @@ function withCors(response, request, env) {
     });
 }
 
-export { QuarkPasscodeAttempts } from "./quark-attempts.js";
 export { WpzyCacheSession } from "./wpzy-cache.js";
 
 export default {
