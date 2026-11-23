@@ -72,7 +72,14 @@ test('several channels are searched at once, each in its own title format', asyn
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
     t.after(() => Object.assign(globalThis, previous));
     t.mock.method(console, 'warn', () => {});
-    globalThis.caches = { default: { match: async () => null } };
+    const cache = new Map();
+    globalThis.caches = { default: {
+        match: async key => cache.get(key.url)?.clone(),
+        put: async (key, response) => { cache.set(key.url, response); }
+    } };
+    const writes = [];
+    const ctx = { waitUntil(promise) { writes.push(promise); } };
+    const flush = () => Promise.all(writes.splice(0));
     globalThis.fetch = async input => {
         const url = new URL(input);
         if (url.origin === 'https://t.me') {
@@ -85,7 +92,13 @@ test('several channels are searched at once, each in its own title format', asyn
         return Response.json({ data: [] });
     };
     const env = { QUARK_CHANNEL_SEARCH: '1', QUARK_CHANNELS: 'chanAlpha, chanBravo,chanDown,bad name,x' };
-    const result = await (await handleResourceSearch('漫长的季节', env, {}, { year: '2023', id: '225008', mediaType: 'tv' })).json();
+    const identity = { year: '2023', id: '225008', mediaType: 'tv' };
+    const scan = async options => {
+        const response = await handleResourceSearch('漫长的季节', env, ctx, { ...identity, ...options });
+        await flush();
+        return response.json();
+    };
+    const result = await scan();
     assert.deepEqual(requested.sort(), ['chanAlpha', 'chanBravo', 'chanDown'], 'invalid channel names are ignored');
     assert.equal(result.resourceMeta.providers.quarkChannel, 'ok', 'one channel failing does not fail the source');
     // Newest first in each channel, alternating between channels.
@@ -95,9 +108,19 @@ test('several channels are searched at once, each in its own title format', asyn
     assert.deepEqual(result.quarkChannelResources.map(post => post.title), ['漫长的季节 全12集', '漫长的季节.4K.x265', '漫长的季节 4K', '漫长的季节 (2023)']);
     assert.deepEqual(result.quarkUrls.map(item => item.url.split('/').at(-1)).sort(), ['alphaOne', 'alphaTwo', 'bravoOne', 'bravoTwo']);
 
+    pages.chanBravo = null;
+    pages.chanAlpha = page('chanAlpha', []);
+    const partial = await scan({ refresh: true });
+    assert.equal(partial.partial, true);
+    assert.deepEqual(partial.resourceMeta.failedChannels, ['chanBravo', 'chanDown']);
+    assert.deepEqual(partial.quarkUrls.map(item => item.url.split('/').at(-1)).sort(), ['bravoOne', 'bravoTwo']);
+    assert.deepEqual((await scan({ cacheOnly: true })).quarkChannelResources, partial.quarkChannelResources);
+    pages.chanBravo = page('chanBravo', []);
+    assert.deepEqual((await scan({ refresh: true })).quarkUrls, []);
+
     pages.chanAlpha = null;
     pages.chanBravo = null;
-    const down = await (await handleResourceSearch('漫长的季节', env, {}, { year: '2023', id: '225008', mediaType: 'tv' })).json();
+    const down = await scan({ refresh: true });
     assert.equal(down.resourceMeta.providers.quarkChannel, 'failed', 'the source fails only when no channel answers');
 });
 

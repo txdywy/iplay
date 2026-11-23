@@ -66,7 +66,7 @@ printf 'Authorization: Bearer %s\n' "$TELEGRAM_SETUP_SECRET" |
 | 变量 | 必需 | 说明 |
 |------|------|------|
 | `TELEGRAM_BOT_TOKEN` | 启用 bot 时必需 | BotFather 提供的 token。未配置时 `/telegram/*` 路由返回 `404` / `503`，网页功能不受影响 |
-| `TELEGRAM_ALLOWED_USERS` | 可选 | 逗号分隔的用户 ID 白名单；为空时公开使用 |
+| `TELEGRAM_ALLOWED_USERS` | 可选 | 逗号分隔的用户 ID 白名单。未设置或为空时公开使用，已配置但没有有效 ID 时拒绝用户访问 |
 | `TELEGRAM_SETUP_SECRET` | 注册时必需 | 独立管理密钥（至少 16 位，不能与 token 相同），用于注册 webhook |
 | `TELEGRAM_WEBHOOK_SECRET` | 可选 | 自定义 webhook 校验密钥（16–256 位字母、数字、`_`、`-`）。默认由 token 派生，修改后需重新执行第 3 步 |
 

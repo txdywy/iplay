@@ -1,3 +1,4 @@
+import { reserveQuarkAttempt } from './quark-attempts.js';
 import {
     cacheJson, fetchUpstream, isDeadlineExpired, readJsonWithLimit, releaseUpstreamResponse, remainingDeadlineMs, serveCachedJson
 } from './core.js';
@@ -108,21 +109,6 @@ async function passcodeKey(passcode) {
     return [...new Uint8Array(digest).slice(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-// Wrong passcodes a share may take from all callers together in an hour.
-// The check exists to confirm a passcode a page listed, not to guess one.
-const MAX_FAILED_PASSCODES = 2;
-const FAILED_PASSCODE_WINDOW_SECONDS = 3600;
-
-function failedPasscodeKey(id) {
-    return new Request(`https://quark-passcode-failures-v1.local/${id}`);
-}
-
-async function failedPasscodeCount(id) {
-    const cached = await serveCachedJson(failedPasscodeKey(id));
-    const count = Number((await cached?.json().catch(() => null))?.count);
-    return Number.isInteger(count) && count > 0 ? count : 0;
-}
-
 /**
  * Checks a Quark share the way a visitor's browser would.
  *
@@ -130,17 +116,17 @@ async function failedPasscodeCount(id) {
  * unavailable reason (see UNAVAILABLE_BY_CODE), or undefined when the check
  * was inconclusive. When the share asks for a passcode and one is supplied,
  * it is submitted once, unless the share has already refused
- * MAX_FAILED_PASSCODES passcodes this hour; success is `passcodeVerified`.
+ * the allowed passcodes this hour; success is `passcodeVerified`.
  * Every request is bounded by `deadline` when one is given; a step that would
  * start after it is skipped and the check is inconclusive.
  * Only the status and a few folder names are cached or returned, and only
  * from a complete check. The token response (author, credential) never
  * leaves this function.
  */
-export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, timeoutMs = CHECK_TIMEOUT_MS, deadline = null } = {}) {
+export async function probeQuarkShare(id, ctx, { passcode = '', listing = false, budget = null, attempts, timeoutMs = CHECK_TIMEOUT_MS, deadline = null } = {}) {
     const extended = Boolean(passcode) || listing;
     const cacheKey = extended
-        ? new Request(`https://quark-share-verify-v1-cache.local/${id}?pw=${await passcodeKey(passcode)}&list=${listing ? 1 : 0}`)
+        ? new Request(`https://quark-share-verify-v2-cache.local/${id}?pw=${await passcodeKey(passcode)}&list=${listing ? 1 : 0}`)
         : new Request('https://quark-share-status-v2-cache.local/' + id);
     // The time a step may take, or null once the deadline has passed.
     const stepTimeout = () => (deadline ? (isDeadlineExpired(deadline) ? null : remainingDeadlineMs(deadline, timeoutMs)) : timeoutMs);
@@ -156,21 +142,28 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
         let passcodeVerified = false;
         let complete = true;
         if (status === 'passcode_required' && passcode) {
-            if (await failedPasscodeCount(id) >= MAX_FAILED_PASSCODES) {
+            const reserveTimeout = stepTimeout();
+            if (reserveTimeout === null || budget?.remaining === 0) return { status: undefined };
+            const release = await reserveQuarkAttempt(attempts, id, reserveTimeout);
+            if (!release) {
                 // Not tried: report what Quark said, and do not remember it.
                 complete = false;
             } else {
-                const secondTimeout = stepTimeout();
+                const secondTimeout = budget?.remaining === 0 ? null : stepTimeout();
                 const second = secondTimeout === null ? undefined : await requestShareToken(id, passcode, budget, secondTimeout);
                 const retried = classifyToken(second);
+                // Keep reservations for rejected or uncertain attempts.
+                if (secondTimeout === null || (retried && retried !== 'passcode_required')) {
+                    const released = release().catch(() => {});
+                    if (ctx?.waitUntil) ctx.waitUntil(released);
+                    else await released;
+                }
                 if (retried === 'available') {
                     status = 'available';
                     tokenData = second.data;
                     passcodeVerified = true;
                 } else if (retried === 'passcode_required' || second?.data?.code === 41007) {
                     status = 'passcode_mismatch';
-                    const failures = await failedPasscodeCount(id);
-                    cacheJson(ctx, failedPasscodeKey(id), { count: failures + 1 }, FAILED_PASSCODE_WINDOW_SECONDS);
                 } else if (retried) {
                     status = retried;
                 } else {
@@ -190,7 +183,10 @@ export async function probeQuarkShare(id, ctx, { passcode = '', listing = false,
                 const listTimeout = stepTimeout();
                 const top = listTimeout === null ? null : await listShareTopLevel(id, tokenData.data.stoken, budget, listTimeout).catch(() => null);
                 if (top) Object.assign(result, top);
-                else complete = false;
+                else {
+                    complete = false;
+                    result.contentPending = true;
+                }
             }
         }
         // Cache only what is safe to show (a status, a title and folder

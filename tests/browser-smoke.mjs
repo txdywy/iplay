@@ -522,6 +522,11 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 if (!mode) return json({ enabled: false, results: [], meta: {} });
                 if (mode === 'error-then-ok' && aggregateCalls.length === 1) return json({ error: 'Aggregate search unavailable' }, 502);
                 if (mode === 'thin') return json({ enabled: true, results: [], meta: { provider: 'pansou', found: 1, matched: 0, verified: 0, unknown: 0, unchecked: 0, hidden: {}, hiddenCount: 0 } });
+                if (mode === 'verified-duplicate') return json({
+                    enabled: true,
+                    results: [{ title: 'Agg Verified Duplicate', url: 'https://pan.quark.cn/s/large-3', status: 'available', password: 'new1', passcodeVerified: true }],
+                    meta: { found: 5, matched: 1, verified: 1 }
+                });
                 if (mode === 'duplicates') return json({
                     enabled: true,
                     results: [{ title: 'Agg Duplicate', url: 'https://pan.quark.cn/s/large-3', status: 'available' }],
@@ -565,11 +570,13 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                 const reasons = { 'prior-gone': 'deleted', 'new-cancelled': 'cancelled' };
                 if (!firstProbe) reasons['still-present'] = 'expired';
                 const ids = url.searchParams.getAll('id');
+                const protectedVerified = url.searchParams.getAll('pwd').includes('protected:fresh1');
                 return json({
                     unavailable: Object.fromEntries(ids.filter(id => reasons[id]).map(id => [id, reasons[id]])),
                     unknown: firstProbe && ids.includes('still-present') ? ['still-present'] : [],
-                    available: [],
-                    passcodeRequired: ids.filter(id => id === 'protected')
+                    available: protectedVerified ? ['protected'] : [],
+                    passcodeVerified: protectedVerified ? ['protected'] : [],
+                    passcodeRequired: protectedVerified ? [] : ids.filter(id => id === 'protected')
                 });
             }
             if (url.pathname === '/api/resource') {
@@ -580,7 +587,7 @@ await command('Page.addScriptToEvaluateOnNewDocument', {
                         window.__smoke.cachedResources = {
                             resources: [...cachedResources.resources, { title: 'A new source', url: 'https://zuidouyin.com/?p=42' }],
                             wpzysResources: [...cachedResources.wpzysResources, { title: 'A new forum post', url: 'https://wpzy.org/thread-701.htm' }],
-                            quarkUrls: [...cachedResources.quarkUrls, { title: 'A new share', url: 'https://pan.quark.cn/s/new-cancelled' }]
+                            quarkUrls: [...cachedResources.quarkUrls.map(item => item.url.endsWith('/protected') ? { ...item, password: 'fresh1' } : item), { title: 'A new share', url: 'https://pan.quark.cn/s/new-cancelled' }]
                         };
                     }
                     if (window.__smoke.resourceCalls === 2) {
@@ -1511,6 +1518,14 @@ async function runTypingDuringSearchFlow() {
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await evaluate("document.activeElement === document.querySelector('#searchInput')"), true,
         'a late result must not take focus from someone typing');
+    await command('Page.navigate', { url: baseUrl });
+    await search('Slow Movie');
+    await evaluate("document.querySelector('#clearSearch').click()");
+    await assertSearchReady('Slow Movie');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await evaluate("document.activeElement === document.querySelector('#searchInput')"), true,
+        'a late result must not take focus after a user clears the search');
+
 }
 
 // The aggregate module loads beside the forum scan: verified shares with what
@@ -1525,6 +1540,9 @@ async function runAggregateModuleFlow() {
         await evaluate("document.querySelector('#resourcesSection').scrollIntoView({ block: 'start' })");
     };
 
+    await open('verified-duplicate', 'Test Movie');
+    await waitFor("document.querySelectorAll('#quarkUrlList .link-item').length > 0");
+    await waitFor("document.querySelector('#aggregateList').textContent.includes('提取码：new1')");
     await open('unchecked', 'Test Movie');
     await waitFor("document.querySelectorAll('#aggregateList .link-item').length === 3");
     assert.equal(await evaluate("!document.getElementById('aggregatePanel').hidden"), true);
@@ -1819,8 +1837,6 @@ async function runResourceCacheAndQuarkStatusFlow() {
     await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-status')?.textContent === '暂未确认'");
     assert.match(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"]').textContent"), /需要提取码.*频道 @Quark_Movies/s);
     const copy = "document.querySelector('#quarkUrlList [data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-copy')";
-    // Advance beyond the unknown-status retry window while keeping known statuses cached.
-    await evaluate("(() => { const now = Date.now.bind(Date); Date.now = () => now() + 3100; })()");
     await evaluate(copy + '.focus(); window.__smoke.releaseResourceRefresh()');
     await waitFor("document.querySelector('#resourcesStatus').textContent.includes('本次新增 3 条')");
     assert.equal(await evaluate('document.activeElement === ' + copy), true);
@@ -1829,6 +1845,7 @@ async function runResourceCacheAndQuarkStatusFlow() {
     await waitFor("document.querySelector('#quarkUrlList .link-tag-unavailable:not([hidden])')?.textContent === '分享已取消'");
     await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/still-present\"] .link-tag-unavailable')?.textContent === '分享已过期'");
     assert.equal(await evaluate("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-unavailable')"), null);
+    await waitFor("document.querySelector('[data-link-url=\"https://pan.quark.cn/s/protected\"] .link-tag-status')?.textContent === '提取码可用'");
     assert.equal(await evaluate("window.__smoke.calls.filter(call => call.startsWith('/api/resource/quark-status?') && call.includes('id=prior-gone')).length"), 1);
 
     const queries = await evaluate("window.__smoke.requestOptions.filter(call => ['/api/resource/cache', '/api/resource'].includes(call.path))");

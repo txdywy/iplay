@@ -446,7 +446,7 @@ const RESOURCE_QUALITY_SUFFIX_PATTERN = /^(?:hdr|uhd|hd|bd|web|dv|4k|8k|1080|216
 // A sequel number after a movie's name: "冰雪奇缘 2", "冰雪奇缘.2.2019", "《冰雪奇缘》2",
 // "frozen ii". "1" is the first film itself ("流浪地球 1+2 合集"), and a decimal
 // such as "4.5G" is a size, unless what follows the dot is a year.
-const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:：.·・_》」』）)\]】–—-]*(?:[2-9]|[1-9]\d|i{2,3}|iv)(?![\p{L}\p{N}]|\.(?!(?:19|20)\d{2}(?!\d))\d)/u;
+const MOVIE_NUMBER_SUFFIX_PATTERN = /^[\s:：.·・_《》「」『』(（)）[\]【】–—-]*(?:第(?:[2-9]|[1-9]\d|[二三四五六七八九十]+)[部卷篇]|(?:[2-9]|[1-9]\d|i{2,3}|iv)(?:(?=国语|粤语|中字|双语|高清|蓝光|修复)|(?![\p{L}\p{N}]|\.(?!(?:19|20)\d{2}(?!\d))\d)))/u;
 
 export function createResourceTitleMatcher(names, mediaType = null) {
     const patterns = (Array.isArray(names) ? names : [names]).map(createResourceTitlePattern).filter(Boolean);
@@ -481,19 +481,21 @@ export function createResourceTitleMatcher(names, mediaType = null) {
 // local release, e.g. a December premiere shown the next year) or a covered
 // range such as "（2019-2023年）". Series threads usually state the latest
 // season's year, so any later year, or no year at all, is consistent.
-export function resourceTitleHasYear(text, releaseYear, mediaType = null) {
+export function resourceTitleHasYear(text, releaseYear, mediaType = null, { strict = false, allowMissing = false } = {}) {
     if (!releaseYear) return true;
     // Share tokens, resolutions ("1920x1080") and bitrates are not years.
     const value = String(text || "")
         .replace(/https?:\/\/\S+|(?:pan|drive)\.quark\.cn\/s\/\S+/giu, " ")
         .replace(/\d{3,4}\s*[x×*]\s*\d{3,4}|\d+\s*kbps/giu, " ");
     const year = Number(releaseYear);
+    const tolerance = strict ? 0 : 1;
     for (const range of value.matchAll(/(?:^|\D)((?:19|20)\d{2})\s*(?:-|–|—|~|～|至|到)\s*((?:19|20)\d{2})(?!\d)/gu)) {
-        if (Number(range[1]) - 1 <= year && year <= Number(range[2]) + 1) return true;
+        if (Number(range[1]) - tolerance <= year && year <= Number(range[2]) + tolerance) return true;
     }
     const years = Array.from(value.matchAll(/(?:^|\D)((?:19|20)\d{2})(?!\d)/gu), match => Number(match[1]));
-    if (years.some(value => Math.abs(value - year) <= 1)) return true;
-    return mediaType === "tv" && (years.length === 0 || years.some(value => value >= year));
+    if (years.some(value => Math.abs(value - year) <= tolerance)) return true;
+    return (allowMissing && years.length === 0)
+        || (mediaType === "tv" && ((!strict && years.length === 0) || years.some(value => value >= year)));
 }
 
 function isQuarkResourceText(text) {
@@ -885,7 +887,7 @@ async function fetchQuarkChannelPosts(query, deadline, releaseYear, mediaType, t
             }
         }
     }
-    return posts;
+    return { posts, failedChannels: channels.filter((_, index) => results[index].status === "rejected") };
 }
 
 async function collectQuarkUrlsFromResources(resources, deadline = null, wpzySession = null) {
@@ -1218,7 +1220,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
         const resources = by669Result.value ?? [];
         const wpzysResources = wpzysResult.value ?? [];
         const zuidouyinPosts = zuidouyinResult.value ?? [];
-        const channelPosts = channelResult.value ?? [];
+        const { posts: channelPosts = [], failedChannels = [] } = channelResult.value ?? {};
         const zuidouyinResources = zuidouyinPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
         const quarkChannelResources = channelPosts.map(({ title, url, isQuark, source }) => ({ title, url, isQuark, source }));
         const detailResources = selectResourceDetails(
@@ -1251,7 +1253,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
             .map(({ url, source }) => ({ url, source, status: "unattempted" }));
 
         if (superseded) cached = null;
-        const isPartial = loginRequired || superseded || failedProviders.length > 0
+        const isPartial = loginRequired || superseded || failedProviders.length > 0 || failedChannels.length > 0
             || detailResult.failedPages > 0
             || detailResult.attemptedPages < detailResources.length;
         let result = {
@@ -1265,6 +1267,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 partial: isPartial,
                 providers: Object.fromEntries(providerResults.map(([source, result]) =>
                     [source, result.status === "fulfilled" ? "ok" : "failed"])),
+                ...(failedChannels.length ? { failedChannels } : {}),
                 providerIssues: loginRequired || superseded ? { wpzys: "login_required" }
                     : wpzysResult.status === "rejected" ? { wpzys: "upstream_unavailable" } : {},
                 selectedPages: detailResources.length,
@@ -1298,7 +1301,7 @@ async function handleResourceSearchUncoalesced(query, ctx, { refresh = false, ca
                 try {
                     // Merge successful pages without extending the age of anything
                     // carried forward from the previous snapshot.
-                    const ttl = retainedEvidence ? remaining : Math.min(maxAge, remaining);
+                    const ttl = retainedEvidence && !failedChannels.length ? remaining : Math.min(maxAge, remaining);
                     snapshot.resourceMeta.cacheExpiresAt = now + ttl * 1000;
                     return cacheJson(ctx, cacheKey, snapshot, ttl, { maxBytes: RESOURCE_MAX_RESPONSE_BYTES });
                 } catch (error) {

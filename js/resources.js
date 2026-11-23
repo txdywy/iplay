@@ -119,12 +119,15 @@ export function mergeResourceState(previous, incoming, starredUrls = null) {
     const hasPageEvidence = Array.isArray(incoming.resourceMeta?.pages);
     const currentPages = hasPageEvidence ? incoming.resourceMeta.pages : legacyPages(incoming, previous);
     const expiredSources = new Set(currentPages.filter(page => page.status === 'login_required').map(page => page.source));
+    const failedChannels = new Set(asArray(incoming.resourceMeta?.failedChannels).map(name => name.toLowerCase()));
+    const channelFailed = url => failedChannels.has(/^https:\/\/t\.me\/s\/([^/]+)\/\d+$/i.exec(url)?.[1].toLowerCase());
     const pageUpdates = new Map(currentPages.map(page => [pageKey(page), page]));
     const lists = {};
     for (const [source, field] of Object.entries(PROVIDER_LISTS)) {
         lists[field] = providers[source] === 'failed' || (partial && !providers[source])
             ? mergeLists(previous?.result?.[field], incoming[field])
-            : mergeLists([], incoming[field]);
+            : mergeLists(source === 'quarkChannel'
+                ? asArray(previous?.result?.[field]).filter(item => channelFailed(item.url)) : [], incoming[field]);
     }
     const sourceUrls = new Map(Object.entries(PROVIDER_LISTS).map(([source, field]) =>
         [source, new Set(asArray(incoming[field]).map(item => item.url))]));
@@ -134,7 +137,7 @@ export function mergeResourceState(previous, incoming, starredUrls = null) {
         const status = providers[page.source];
         const update = pageUpdates.get(pageKey(page));
         if (['ok', 'restricted', 'login_required'].includes(update?.status)) continue;
-        const retain = status === 'failed'
+        const retain = (page.source === 'quarkChannel' && channelFailed(page.url)) || status === 'failed'
             || (partial && !status)
             || (sourceUrls.get(page.source)?.has(page.url) && (hasPageEvidence || partial));
         if (retain) pages.set(pageKey(page), page);

@@ -230,6 +230,16 @@ try {
     assert.equal((await detail.json()).id, 603);
     checks.push('production-bindings-and-release');
 
+    const attempts = await runtime.getDurableObjectNamespace('QUARK_PASSCODE_ATTEMPTS');
+    const share = attempts.get(attempts.idFromName('runtime-share'));
+    const reserve = async () => (await share.fetch('https://quark-attempts.internal/', { method: 'POST' })).json();
+    const reservations = await Promise.all([reserve(), reserve(), reserve()]);
+    assert.equal(reservations.filter(Boolean).length, 2);
+    await share.fetch('https://quark-attempts.internal/', { method: 'DELETE', body: reservations.find(Boolean) });
+    assert.equal(typeof await reserve(), 'string');
+    checks.push('native-quark-attempt-coordination');
+
+
     const aggregate = await request('/api/resource/aggregate?q=Runtime%20Index%20Movie&type=movie&year=2023&id=603', 'runtime-aggregate-index');
     assert.equal(aggregate.status, 200);
     const indexed = await aggregate.json();

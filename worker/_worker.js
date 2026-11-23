@@ -94,6 +94,7 @@ function withCors(response, request, env) {
     });
 }
 
+export { QuarkPasscodeAttempts } from "./quark-attempts.js";
 export { WpzyCacheSession } from "./wpzy-cache.js";
 
 export default {
@@ -185,6 +186,7 @@ export default {
             if (path === "/api/resource/quark-status") {
                 return withCors(await handleQuarkStatus(url.searchParams.getAll("id"), ctx, {
                     passcodes: url.searchParams.getAll("pwd"),
+                    attempts: env.QUARK_PASSCODE_ATTEMPTS,
                     content: url.searchParams.get("content") === "1"
                 }), request, env);
             }

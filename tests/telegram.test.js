@@ -16,7 +16,10 @@ import { tmdbDetail } from './fixtures/tmdb.js';
 import { WPZY_EMPTY_SEARCH_HTML } from './fixtures/wpzy-search.js';
 
 const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ';
-const ENV = { TMDB_API_KEY: 'test', TELEGRAM_BOT_TOKEN: TOKEN };
+const testAttempts = { getByName: () => ({
+    fetch: async (_url, { method }) => method === 'POST' ? Response.json('test-reservation') : new Response(null, { status: 204 })
+}) };
+const ENV = { QUARK_PASSCODE_ATTEMPTS: testAttempts, TMDB_API_KEY: 'test', TELEGRAM_BOT_TOKEN: TOKEN };
 
 const FANHUA = tmdbDetail({
     id: 106841,
@@ -244,6 +247,8 @@ test('an allow-list blocks other users and tells them their id', async t => {
     const { sent } = setup(t);
     await deliver(textMessage('繁花', { userId: 777 }), { ...ENV, TELEGRAM_ALLOWED_USERS: '42, 43' });
     assert.match(sent()[0].body.text, /<code>777<\/code>/);
+    await deliver(textMessage('繁花', { userId: 778 }), { ...ENV, TELEGRAM_ALLOWED_USERS: 'invalid' });
+    assert.match(sent().at(-1).body.text, /<code>778<\/code>/);
 });
 
 test('group chats only answer commands', async t => {

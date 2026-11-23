@@ -1,4 +1,4 @@
-import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.81';
+import { TmdbAPI, DoubanAPI, WikiAPI, ResourceAPI, PosterAPI } from './api.js?v=1.0.82';
 import {
     calculateRecommendationScore,
     getRecommendationLabel,
@@ -6,20 +6,20 @@ import {
     normalizeGenres,
     resetPreferenceWeights,
     savePreferenceWeights
-} from './scorer.js?v=1.0.81';
-import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.81';
-import { formatRating, toFiniteNumber } from './format.js?v=1.0.81';
-import { RELEASE_VERSION } from './release.js?v=1.0.81';
-import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.81';
+} from './scorer.js?v=1.0.82';
+import { copyQuarkShare, formatQuarkCopyText, quarkShareId, QUARK_CHECK_BATCH_SIZE } from './quark.js?v=1.0.82';
+import { formatRating, toFiniteNumber } from './format.js?v=1.0.82';
+import { RELEASE_VERSION } from './release.js?v=1.0.82';
+import { DEFAULT_AMBIENT, pickAmbientColor } from './ambient.js?v=1.0.82';
 import {
     findExactMatch,
     pickBestTmdbMatch,
     rankTmdbCandidates,
     shouldConfirmTmdbCandidate
-} from './match.js?v=1.0.81';
-import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.81';
-import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.81';
-import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.81';
+} from './match.js?v=1.0.82';
+import { formatSeasonEpisodeCounts, formatSeasonTotals } from './seasons.js?v=1.0.82';
+import { mergeResourceState, newResourceUrls, resourceQueryKey, selectResourceShares } from './resources.js?v=1.0.82';
+import { createResourceHistory, OPENED_LINKS_KEY, OPENED_LINK_COUNTS_KEY, STARRED_LINKS_KEY } from './resource-history.js?v=1.0.82';
 
 document.getElementById('releaseVersion')?.append(`v${RELEASE_VERSION}`);
 // The font stylesheet loads as print media so it never blocks rendering. The
@@ -1316,6 +1316,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
     const meta = resourceResult?.resourceMeta || {};
     const providers = meta.providers || {};
     const providerLabels = { by669: 'By669', wpzys: 'WPZY', zuidouyin: '醉都音', quarkChannel: 'Telegram 频道' };
+    const failedChannels = Array.isArray(meta.failedChannels) ? meta.failedChannels.length : 0;
     const failedProviders = Object.entries(providers)
         .filter(([, status]) => status === 'failed')
         .map(([provider]) => providerLabels[provider] || provider);
@@ -1327,6 +1328,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
     const attemptedPages = Number(meta.attemptedPages);
     const unattemptedSources = Number.isFinite(attemptedPages) ? Math.max(0, totalSources - attemptedPages) : 0;
     const notes = [];
+    if (failedChannels) notes.push(`${failedChannels} 个 Telegram 频道暂未完成扫描。`);
     if (loginRequired) notes.push('WPZY 登录态不可用，需要维护者更新登录；其他可用结果已保留。');
     const unavailableProviders = failedProviders.filter(provider => !loginRequired || provider !== 'WPZY');
     if (unavailableProviders.length) notes.push(`${unavailableProviders.join('、')}暂时没有响应，已保留其他可用结果。`);
@@ -1335,7 +1337,7 @@ function renderResourceNotice(resourceResult, totalSources, onRetry, { refreshFa
     if (unattemptedSources > 0) notes.push(`另有 ${unattemptedSources} 个来源未扫描，可直接打开原帖查看。`);
     const detail = refreshFailed ? '已保留上次找到的资源，可再次扫描。'
         : notes.join(' ') || '部分资源尚未完成提取，已保留当前可用结果。';
-    const canRetry = refreshFailed || failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
+    const canRetry = refreshFailed || failedChannels > 0 || failedProviders.length > 0 || unavailablePages > 0 || loginRequiredPages > 0
         || (Number(meta.attemptedPages) || 0) < (Number(meta.selectedPages) || 0) || notes.length === 0;
 
     // With links in hand, an incomplete scan is a footnote, not a warning.
@@ -1511,6 +1513,10 @@ function paintQuarkBadge(badge, outcome) {
     else badge.removeAttribute('title');
 }
 
+function quarkCheckKey({ id, password }) {
+    return JSON.stringify([id, password || '']);
+}
+
 function checkQuarkRows(rows, signal) {
     if (!rows.length || !signal || signal.aborted) return;
     let verification = quarkChecksBySignal.get(signal);
@@ -1519,32 +1525,41 @@ function checkQuarkRows(rows, signal) {
         quarkChecksBySignal.set(signal, verification);
     }
     const now = Date.now();
-    const unchecked = [...new Map(rows.map(row => [row.id, row])).values()]
-        .filter(row => (verification.checks.get(row.id)?.expiresAt ?? 0) <= now);
-    for (let offset = 0; offset < unchecked.length; offset += QUARK_CHECK_BATCH_SIZE) {
-        const batchRows = unchecked.slice(offset, offset + QUARK_CHECK_BATCH_SIZE);
-        const ids = batchRows.map(row => row.id);
-        const passcodes = batchRows.filter(row => row.password).map(row => `${row.id}:${row.password}`);
+    const unchecked = [...new Map(rows.map(row => [quarkCheckKey(row), row])).values()]
+        .filter(row => (verification.checks.get(quarkCheckKey(row))?.expiresAt ?? 0) <= now);
+    const batches = [];
+    for (const row of unchecked) {
+        let batch = batches.find(batch => batch.size < QUARK_CHECK_BATCH_SIZE && !batch.has(row.id));
+        if (!batch) {
+            batch = new Map();
+            batches.push(batch);
+        }
+        batch.set(row.id, row);
+    }
+    for (const batchRows of batches) {
+        const ids = [...batchRows.keys()];
+        const passcodes = [...batchRows.values()].filter(row => row.password).map(row => `${row.id}:${row.password}`);
         const batch = verification.queue
             .then(() => ResourceAPI.checkQuarkLinks(ids, { signal }, { passcodes, content: true }))
             .then(result => result, () => null);
         verification.queue = batch;
-        for (const id of ids) {
+        for (const row of batchRows.values()) {
             const check = { expiresAt: Infinity };
             check.result = batch.then(result => {
-                const outcome = describeQuarkCheck(result, id);
-                check.unknown = outcome.status === 'unknown';
-                check.expiresAt = Date.now() + (check.unknown ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
+                const outcome = describeQuarkCheck(result, row.id);
+                check.needsRetry = outcome.status === 'unknown' || (Array.isArray(result?.contentPending) && result.contentPending.includes(row.id));
+                check.expiresAt = Date.now() + (check.needsRetry ? QUARK_CHECK_RETRY_MS : QUARK_CHECK_TTL_MS);
                 return outcome;
             });
-            verification.checks.set(id, check);
+            verification.checks.set(quarkCheckKey(row), check);
         }
     }
     for (const row of rows) {
-        void verification.checks.get(row.id).result.then(outcome => {
+        const check = verification.checks.get(quarkCheckKey(row));
+        void check.result.then(outcome => {
             if (signal.aborted || !row.badge.isConnected) return;
             paintQuarkBadge(row.badge, outcome);
-            if (outcome.status === 'unknown' && !row.recheck) scheduleQuarkRecheck(verification, row, signal);
+            if (check.needsRetry && !row.recheck) scheduleQuarkRecheck(verification, row, signal);
         });
     }
 }
@@ -1553,14 +1568,29 @@ function checkQuarkRows(rows, signal) {
 // shortly after, in one batch with the others from the same moment.
 function scheduleQuarkRecheck(verification, row, signal) {
     verification.recheck = verification.recheck || new Map();
-    verification.recheck.set(row.id, { ...row, recheck: true });
+    verification.recheck.set(row.badge, { ...row, recheck: true });
     if (verification.recheckTimer) return;
-    verification.recheckTimer = setTimeout(() => {
-        const rows = [...verification.recheck.values()].filter(entry => entry.badge.isConnected);
-        verification.recheck.clear();
+    const drain = () => {
         verification.recheckTimer = null;
-        if (!signal.aborted && rows.length) checkQuarkRows(rows, signal);
-    }, QUARK_CHECK_RETRY_MS + 200);
+        if (signal.aborted) {
+            verification.recheck.clear();
+            return;
+        }
+        const rows = [];
+        let next = Infinity;
+        const now = Date.now();
+        for (const [badge, entry] of verification.recheck) {
+            const expiresAt = verification.checks.get(quarkCheckKey(entry))?.expiresAt ?? 0;
+            if (!badge.isConnected || expiresAt <= now) {
+                verification.recheck.delete(badge);
+                if (badge.isConnected) rows.push(entry);
+            } else if (expiresAt !== Infinity) next = Math.min(next, expiresAt);
+            else verification.recheck.delete(badge); // A refresh already started it.
+        }
+        if (Number.isFinite(next)) verification.recheckTimer = setTimeout(drain, Math.max(1, next - now));
+        if (rows.length) checkQuarkRows(rows, signal);
+    };
+    verification.recheckTimer = setTimeout(drain, QUARK_CHECK_RETRY_MS + 200);
 }
 
 function resourceLinkUrls() {
@@ -2786,6 +2816,7 @@ function resetAggregateModule() {
 function aggregateSummaryText(meta, duplicates) {
     const parts = [`聚合源返回 ${meta.found ?? 0} 条`, `标题匹配 ${meta.matched ?? 0} 条`, `通过核验 ${meta.verified ?? 0} 条`];
     if (duplicates) parts.push(`${duplicates} 条已在上方其他来源中`);
+    if (meta.contentPending) parts.push(`${meta.contentPending} 条目录待读取`);
     if (meta.unknown) parts.push(`${meta.unknown} 条暂未确认`);
     const hidden = AGGREGATE_HIDDEN_LABELS
         .map(([label, reasons]) => [label, reasons.reduce((sum, reason) => sum + (Number(meta.hidden?.[reason]) || 0), 0)])
@@ -2832,10 +2863,22 @@ function renderAggregate(retry) {
     if (!els.aggregatePanel || !data) return;
     els.aggregatePanel.hidden = false;
     // The other columns list their own Quark links; show only what is new here.
-    const direct = new Set(RESOURCE_LIST_IDS.filter(id => id !== 'aggregateList')
-        .flatMap(id => linkListRenders.get(els[id])?.urls || []));
+    const direct = new Map();
+    for (const id of RESOURCE_LIST_IDS) {
+        if (id === 'aggregateList') continue;
+        for (const item of linkListRenders.get(els[id])?.items || []) {
+            const url = toSafeHttpUrl(item?.url);
+            if (!url) continue;
+            const key = quarkShareId(url) || url;
+            if (!direct.has(key)) direct.set(key, new Set());
+            direct.get(key).add(formatQuarkCopyText(item));
+        }
+    }
     const all = Array.isArray(data.results) ? data.results : [];
-    const items = all.filter(item => !direct.has(item.url));
+    const items = all.filter(item => {
+        const existing = direct.get(quarkShareId(item.url) || item.url);
+        return !existing || (item.passcodeVerified && !existing.has(formatQuarkCopyText(item)));
+    });
     const meta = data.meta || {};
     // A live region re-announces every write; write only when it changes.
     const summary = aggregateSummaryText(meta, all.length - items.length);
@@ -2865,6 +2908,7 @@ function renderAggregate(retry) {
     // The public index answers with very different amounts from one call to the next.
     if ((meta.found ?? 0) < 5 && retry) actions.push({ label: '聚合源返回偏少，重新搜索', onClick: () => retry({ refresh: true }) });
     if (meta.unchecked > 0 && retry) actions.push({ label: `继续核验剩余 ${meta.unchecked} 条`, onClick: () => retry({ refresh: true }) });
+    if (meta.contentPending > 0 && retry) actions.push({ label: '重试读取分享目录', onClick: () => retry({ refresh: true }) });
     if (meta.unknown > 0 && retry) actions.push({ label: `重新核验 ${meta.unknown} 条未确认`, onClick: () => retry({ refresh: true }) });
     setAggregateActions(...actions);
 }
@@ -3138,7 +3182,7 @@ async function loadResources(candidate, searchId, searchOptions, loadId, useCach
             newUrls: refreshFailed ? previous?.newUrls : previous && newResourceUrls(previous.result, merged.result, previous.pages)
         };
         for (const check of quarkChecksBySignal.get(searchOptions.signal)?.checks.values() || []) {
-            if (check.unknown) check.expiresAt = 0;
+            if (check.needsRetry) check.expiresAt = 0;
         }
         renderResourceResult(resourceResultState, retry, searchOptions.signal);
     } catch (error) {
@@ -3279,7 +3323,6 @@ async function loadCandidateDetails(candidate, query, searchId, searchOptions, {
     resourceLoadStarted = false;
     if (!retained) {
         resourceResultState = null;
-        resetAggregateModule();
         resetAggregateModule();
     }
     const selectedCandidate = {
@@ -3855,6 +3898,7 @@ els.quickSearches?.parentElement.addEventListener('keydown', event => {
 });
 
 document.getElementById('clearSearch')?.addEventListener('click', () => {
+    searchInputEditedSinceSubmit = true;
     els.input.value = '';
     els.input.focus();
     showQuickSearches();

@@ -105,7 +105,7 @@ function getAllowedUserIds(env) {
 
 function isUserAllowed(env, userId) {
     const allowed = getAllowedUserIds(env);
-    return allowed.size === 0 || allowed.has(String(userId));
+    return !env?.TELEGRAM_ALLOWED_USERS?.trim() || allowed.has(String(userId));
 }
 
 function timingSafeEqual(left, right) {
@@ -215,7 +215,7 @@ export async function handleTelegramSetup(request, env) {
             bot: me?.username ? `@${me.username}` : null,
             webhook: info?.url || webhookUrl,
             pendingUpdates: info?.pending_update_count ?? 0,
-            access: getAllowedUserIds(env).size ? "allow-list" : "public"
+            access: env?.TELEGRAM_ALLOWED_USERS?.trim() ? "allow-list" : "public"
         });
     } catch (error) {
         logEvent("error", "telegram_setup_failed", { error: logErrorMessage(error) });
@@ -1025,7 +1025,7 @@ export function buildAggregatePage(detail, data, page) {
         .filter(Boolean);
     const copyRows = [];
     for (let index = 0; index < copyButtons.length; index += 2) copyRows.push(copyButtons.slice(index, index + 2));
-    const more = Number(meta.unchecked) > 0 || Number(meta.unknown) > 0;
+    const more = Number(meta.unchecked) > 0 || Number(meta.unknown) > 0 || Number(meta.contentPending) > 0;
     const markup = keyboard([
         ...copyRows,
         paginationRow(current, totalPages, next => callbackData("g", detail.mediaType, detail.id, next)),

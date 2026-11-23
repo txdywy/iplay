@@ -1,8 +1,10 @@
+import { testQuarkAttempts } from './helpers/quark-attempts.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from '../worker/_worker.js';
 
 test('Quark status distinguishes accessible, protected, unavailable and unknown shares without caching account data', async t => {
+    const coordinator = testQuarkAttempts(t);
     const entries = new Map();
     const writes = [];
     const calls = new Map();
@@ -42,7 +44,7 @@ test('Quark status distinguishes accessible, protected, unavailable and unknown 
         const request = new Request('https://worker.test/api/resource/quark-status?' + params, {
             headers: { 'cf-connecting-ip': 'quark-test', Origin: 'https://iplay.hackx64.eu.org' }
         });
-        const response = await worker.fetch(request, { RESOURCE_RATE_LIMITER: limiter }, {
+        const response = await worker.fetch(request, { RESOURCE_RATE_LIMITER: limiter, QUARK_PASSCODE_ATTEMPTS: coordinator }, {
             waitUntil(promise) { writes.push(promise); }
         });
         await Promise.all(writes.splice(0));
@@ -79,6 +81,7 @@ test('Quark status distinguishes accessible, protected, unavailable and unknown 
 });
 
 test('Quark status can read what a share holds and verify a listed passcode', async t => {
+    const coordinator = testQuarkAttempts(t);
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
     t.after(() => Object.assign(globalThis, previous));
     const entries = new Map();
@@ -113,7 +116,7 @@ test('Quark status can read what a share holds and verify a listed passcode', as
     ]);
     const response = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?' + params, {
         headers: { 'cf-connecting-ip': 'quark-content' }
-    }), {}, { waitUntil() {} });
+    }), { QUARK_PASSCODE_ATTEMPTS: coordinator }, { waitUntil() {} });
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.deepEqual(body.available, ['full', 'empty', 'locked']);
@@ -131,11 +134,12 @@ test('Quark status can read what a share holds and verify a listed passcode', as
     // Without the new parameters the answer is unchanged.
     const plain = await (await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=full', {
         headers: { 'cf-connecting-ip': 'quark-plain' }
-    }), {}, { waitUntil() {} })).json();
+    }), { QUARK_PASSCODE_ATTEMPTS: coordinator }, { waitUntil() {} })).json();
     assert.deepEqual(plain, { unavailable: {}, unknown: [], available: ['full'], passcodeRequired: [] });
 });
 
 test('a share refuses passcode guesses after two wrong ones, whoever asks', async t => {
+    const coordinator = testQuarkAttempts(t);
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
     t.after(() => Object.assign(globalThis, previous));
     const entries = new Map();
@@ -154,7 +158,7 @@ test('a share refuses passcode guesses after two wrong ones, whoever asks', asyn
         const writes = [];
         const response = await worker.fetch(new Request(`https://worker.test/api/resource/quark-status?id=guessme&pwd=guessme:${code}`, {
             headers: { 'cf-connecting-ip': client }
-        }), {}, { waitUntil(promise) { writes.push(promise); } });
+        }), { QUARK_PASSCODE_ATTEMPTS: coordinator }, { waitUntil(promise) { writes.push(promise); } });
         await Promise.all(writes);
         return response.json();
     };
@@ -169,6 +173,7 @@ test('a share refuses passcode guesses after two wrong ones, whoever asks', asyn
 });
 
 test('a passcode Quark never answered for is not remembered as needing one', async t => {
+    const coordinator = testQuarkAttempts(t);
     const previous = { fetch: globalThis.fetch, caches: globalThis.caches };
     t.after(() => Object.assign(globalThis, previous));
     const entries = new Map();
@@ -187,7 +192,7 @@ test('a passcode Quark never answered for is not remembered as needing one', asy
         const writes = [];
         const response = await worker.fetch(new Request('https://worker.test/api/resource/quark-status?id=busy1&pwd=busy1:Ab12', {
             headers: { 'cf-connecting-ip': '198.51.100.9' }
-        }), {}, { waitUntil(promise) { writes.push(promise); } });
+        }), { QUARK_PASSCODE_ATTEMPTS: coordinator }, { waitUntil(promise) { writes.push(promise); } });
         await Promise.all(writes);
         return response.json();
     };
@@ -196,4 +201,16 @@ test('a passcode Quark never answered for is not remembered as needing one', asy
     assert.ok(![...entries.keys()].some(key => key.includes('quark-share-verify')), 'and nothing is cached');
     fail = false;
     assert.deepEqual((await probe()).passcodeVerified, ['busy1'], 'the next check asks again');
+});
+
+
+test('the share coordinator atomically reserves slots and releases a completed one', async t => {
+    const binding = testQuarkAttempts(t);
+    const share = binding.getByName('local-share');
+    const reserve = async () => (await share.fetch('https://local.test/', { method: 'POST' })).json();
+    const reservations = await Promise.all([reserve(), reserve(), reserve()]);
+    assert.equal(reservations.filter(Boolean).length, 2);
+    assert.equal(await reserve(), null);
+    await share.fetch('https://local.test/', { method: 'DELETE', body: reservations.find(Boolean) });
+    assert.equal(typeof await reserve(), 'string');
 });
